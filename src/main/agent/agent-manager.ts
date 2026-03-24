@@ -4,11 +4,13 @@ import type { AgentSpawnRequest } from '../../shared/ipc-types';
 import { IPC_CHANNELS } from '../../shared/constants';
 import { PtyManager } from '../pty/pty-manager';
 import { getDefaultAgentConfig } from './agent-config';
+import { AgentRecorder } from './agent-recorder';
 
 export class AgentManager {
   private readonly agents = new Map<string, AgentInfo>();
   private readonly ptyManager: PtyManager;
   private readonly sendToRenderer: (channel: string, ...args: unknown[]) => void;
+  private readonly recorder: AgentRecorder;
 
   constructor(
     ptyManager: PtyManager,
@@ -16,6 +18,7 @@ export class AgentManager {
   ) {
     this.ptyManager = ptyManager;
     this.sendToRenderer = sendToRenderer;
+    this.recorder = new AgentRecorder();
   }
 
   spawnAgent(request: AgentSpawnRequest): AgentInfo {
@@ -27,7 +30,10 @@ export class AgentManager {
 
     const session = this.ptyManager.spawn(sessionId, labelledConfig);
 
+    this.recorder.startRecording(agentId, sessionId);
+
     session.onData((data) => {
+      this.recorder.writeChunk(agentId, data);
       this.sendToRenderer(IPC_CHANNELS.PTY_DATA, { sessionId, data });
     });
 
@@ -60,6 +66,7 @@ export class AgentManager {
       throw new Error(`Agent not found: ${agentId}`);
     }
 
+    this.recorder.stopRecording(agentId);
     this.ptyManager.kill(agent.sessionId);
     this.updateAgentStatus(agentId, 'stopped');
   }
@@ -72,7 +79,12 @@ export class AgentManager {
     return this.agents.get(agentId);
   }
 
+  getRecorder(): AgentRecorder {
+    return this.recorder;
+  }
+
   disposeAll(): void {
+    this.recorder.disposeAll();
     for (const agent of this.agents.values()) {
       try {
         this.ptyManager.kill(agent.sessionId);

@@ -1,4 +1,6 @@
 import type { AgentConfig, AgentInfo, AgentStatus, AgentType } from './agent-types';
+import type { LayoutNode } from './layout-types';
+import type { SessionRecording } from './session-types';
 
 export interface PtySpawnRequest {
   readonly agentId: string;
@@ -45,6 +47,22 @@ export interface AgentExitEvent {
   readonly exitCode: number;
 }
 
+export interface AppState {
+  readonly window: {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+    readonly isMaximized: boolean;
+  };
+  readonly layout: LayoutNode | null;
+  readonly agents: ReadonlyArray<{
+    readonly type: AgentType;
+    readonly cwd: string;
+    readonly label?: string;
+  }>;
+}
+
 export interface VibeIDEApi {
   pty: {
     spawn(request: PtySpawnRequest): Promise<PtySpawnResponse>;
@@ -59,5 +77,12 @@ export interface VibeIDEApi {
     list(): Promise<AgentInfo[]>;
     onStatus(callback: (event: AgentStatusEvent) => void): () => void;
     onExit(callback: (event: AgentExitEvent) => void): () => void;
+  };
+  session: {
+    list(agentId?: string): Promise<SessionRecording[]>;
+  };
+  state: {
+    load(): Promise<AppState | null>;
+    save(state: AppState): Promise<void>;
   };
 }

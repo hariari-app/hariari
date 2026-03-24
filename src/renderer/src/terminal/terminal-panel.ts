@@ -4,7 +4,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { DEFAULT_SCROLLBACK } from '../../../shared/constants';
-import { darkTheme } from './terminal-theme';
+import { getTheme, loadSavedTheme } from './terminal-theme';
+import { TerminalSearch } from './terminal-search';
 
 export class TerminalPanel {
   private readonly terminal: Terminal;
@@ -15,9 +16,12 @@ export class TerminalPanel {
   private container: HTMLElement | null = null;
   private unsubscribeData: (() => void) | null = null;
   private connected = false;
+  private terminalSearch: TerminalSearch | null = null;
 
   constructor(sessionId: string) {
     this._sessionId = sessionId;
+
+    const savedTheme = loadSavedTheme();
 
     this.terminal = new Terminal({
       fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', Menlo, monospace",
@@ -25,7 +29,7 @@ export class TerminalPanel {
       scrollback: DEFAULT_SCROLLBACK,
       cursorBlink: true,
       cursorStyle: 'block',
-      theme: darkTheme,
+      theme: getTheme(savedTheme).terminal,
     });
 
     this.fitAddon = new FitAddon();
@@ -50,6 +54,8 @@ export class TerminalPanel {
       console.warn('WebGL addon failed to load, using default canvas renderer');
       this.webglAddon = null;
     }
+
+    this.terminalSearch = new TerminalSearch(this);
 
     this.fit();
   }
@@ -104,6 +110,31 @@ export class TerminalPanel {
     this.searchAddon.findNext(query);
   }
 
+  searchNext(query: string): void {
+    this.searchAddon.findNext(query);
+  }
+
+  searchPrevious(query: string): void {
+    this.searchAddon.findPrevious(query);
+  }
+
+  clearSearch(): void {
+    this.searchAddon.clearDecorations();
+  }
+
+  toggleSearch(): void {
+    this.terminalSearch?.toggle();
+  }
+
+  setTheme(name: string): void {
+    const theme = getTheme(name);
+    this.terminal.options.theme = theme.terminal;
+  }
+
+  getContainer(): HTMLElement | null {
+    return this.container;
+  }
+
   getSessionId(): string {
     return this._sessionId;
   }
@@ -114,6 +145,8 @@ export class TerminalPanel {
       this.unsubscribeData = null;
     }
     this.connected = false;
+    this.terminalSearch?.dispose();
+    this.terminalSearch = null;
     this.webglAddon?.dispose();
     this.fitAddon.dispose();
     this.searchAddon.dispose();

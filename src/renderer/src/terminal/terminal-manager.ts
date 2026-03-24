@@ -43,6 +43,20 @@ export class TerminalManager {
     }
   }
 
+  setThemeAll(name: string): void {
+    for (const panel of this.panels.values()) {
+      panel.setTheme(name);
+    }
+  }
+
+  toggleSearchOnFocused(focusedSessionId: string | null): void {
+    if (!focusedSessionId) return;
+    const panel = this.panels.get(focusedSessionId);
+    if (panel) {
+      panel.toggleSearch();
+    }
+  }
+
   disposeAll(): void {
     for (const panel of this.panels.values()) {
       panel.dispose();

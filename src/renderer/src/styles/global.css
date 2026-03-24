@@ -4,11 +4,29 @@
   box-sizing: border-box;
 }
 
+:root {
+  --bg: #1a1b26;
+  --bg-deep: #16161e;
+  --fg: #c0caf5;
+  --fg-dim: #565f89;
+  --fg-faint: #414868;
+  --border: #2a2b3d;
+  --accent: #7aa2f7;
+  --surface: #1a1b26;
+  --surface-hover: #2a2b3d;
+  --error: #f7768e;
+  --success: #9ece6a;
+  --warning: #e0af68;
+  --scrollbar-track: #1a1b26;
+  --scrollbar-thumb: #414868;
+  --scrollbar-thumb-hover: #565f89;
+}
+
 html, body {
   height: 100%;
   overflow: hidden;
-  background: #1a1b26;
-  color: #c0caf5;
+  background: var(--bg);
+  color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 14px;
 }
@@ -31,14 +49,14 @@ html, body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #1a1b26;
+  background: var(--scrollbar-track);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #414868;
+  background: var(--scrollbar-thumb);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #565f89;
+  background: var(--scrollbar-thumb-hover);
 }

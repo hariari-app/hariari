@@ -9,6 +9,10 @@ export const IPC_CHANNELS = {
   AGENT_LIST: 'agent:list',
   AGENT_STATUS: 'agent:status',
   AGENT_EXIT: 'agent:exit',
+  SESSION_LIST: 'session:list',
+  SESSION_GET: 'session:get',
+  STATE_SAVE: 'state:save',
+  STATE_LOAD: 'state:load',
 } as const;
 
 export const FRAME_COALESCE_MS = 16;

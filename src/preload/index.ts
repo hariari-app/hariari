@@ -38,4 +38,11 @@ contextBridge.exposeInMainWorld('api', {
       };
     },
   },
+  session: {
+    list: (agentId?: string) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_LIST, agentId),
+  },
+  state: {
+    load: () => ipcRenderer.invoke(IPC_CHANNELS.STATE_LOAD),
+    save: (state: unknown) => ipcRenderer.invoke(IPC_CHANNELS.STATE_SAVE, state),
+  },
 });

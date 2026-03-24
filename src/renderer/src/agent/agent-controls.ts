@@ -27,6 +27,10 @@ export class AgentControls {
     this.agentList = agentList;
   }
 
+  markRestored(): void {
+    this.isFirstAgent = false;
+  }
+
   async spawnAgent(type: AgentType, direction?: 'horizontal' | 'vertical'): Promise<void> {
     try {
       const info: AgentInfo = await window.api.agent.spawn({ type });
@@ -88,10 +92,54 @@ export class AgentControls {
         this.tracked.set(event.agentId, { ...tracked, info: updatedInfo });
         tracked.statusBar.updateStatus('stopped');
         this.agentList.updateAgent(updatedInfo);
+
+        if (event.exitCode !== 0) {
+          this.showRestartPrompt(event.agentId, {
+            exitCode: event.exitCode,
+            type: tracked.info.config.type,
+            sessionId: tracked.info.sessionId,
+          });
+        }
       }
     });
 
     this.unsubscribers.push(unsubStatus, unsubExit);
+  }
+
+  private showRestartPrompt(
+    agentId: string,
+    info: { readonly exitCode: number; readonly type: AgentType; readonly sessionId: string },
+  ): void {
+    const leaf = this.layoutManager.findLeafBySessionId(info.sessionId);
+    if (!leaf) return;
+
+    const leafEl = document.querySelector(`[data-leaf-id="${leaf.id}"]`);
+    if (!leafEl) return;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'restart-overlay';
+
+    const card = document.createElement('div');
+    card.className = 'restart-card';
+
+    const message = document.createElement('p');
+    message.className = 'restart-message';
+    message.textContent = `Agent exited unexpectedly (code: ${info.exitCode})`;
+
+    const restartBtn = document.createElement('button');
+    restartBtn.className = 'restart-btn';
+    restartBtn.textContent = 'Restart';
+    restartBtn.addEventListener('click', () => {
+      overlay.remove();
+      this.spawnAgent(info.type).catch((error) => {
+        console.error('Failed to restart agent:', error);
+      });
+    });
+
+    card.appendChild(message);
+    card.appendChild(restartBtn);
+    overlay.appendChild(card);
+    leafEl.appendChild(overlay);
   }
 
   dispose(): void {

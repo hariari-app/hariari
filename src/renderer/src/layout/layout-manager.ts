@@ -33,8 +33,14 @@ export class LayoutManager {
     this.onFitAll = callback;
   }
 
-  getLayout(): LayoutNode | null {
+  getLayoutTree(): LayoutNode | null {
     return this.layout;
+  }
+
+  restoreLayout(tree: LayoutNode): void {
+    this.layout = tree;
+    this.focusedLeafId = this.findFirstLeaf(tree)?.id ?? null;
+    this.render();
   }
 
   getFocusedLeafId(): string | null {
