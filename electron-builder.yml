@@ -1,0 +1,14 @@
+appId: com.vibeide.app
+productName: VibeIDE
+directories:
+  buildResources: resources
+  output: dist
+files:
+  - out/**/*
+  - "!**/*.map"
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development
+  icon: resources/icon.png

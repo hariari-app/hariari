@@ -1,0 +1,9 @@
+node_modules/
+out/
+dist/
+.vite/
+*.js.map
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*
