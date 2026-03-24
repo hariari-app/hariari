@@ -1,0 +1,1049 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VibeIDE Phase 2 — UX Research &amp; Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0f172a;
+    --bg-surface: #1e293b;
+    --bg-card: #1e293b;
+    --bg-code: #0d1117;
+    --text: #e2e8f0;
+    --text-muted: #94a3b8;
+    --text-heading: #f1f5f9;
+    --accent: #3b82f6;
+    --accent-light: #60a5fa;
+    --green: #22c55e;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --blue: #3b82f6;
+    --purple: #a78bfa;
+    --border: #334155;
+    --shadow: rgba(0,0,0,0.4);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 16px;
+  }
+
+  .container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+  }
+
+  /* Header */
+  .hero {
+    text-align: center;
+    padding: 3rem 0 2rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 3rem;
+  }
+  .hero h1 {
+    font-size: 2.5rem;
+    font-weight: 800;
+    color: var(--text-heading);
+    letter-spacing: -0.02em;
+    margin-bottom: 0.5rem;
+  }
+  .hero .subtitle {
+    font-size: 1.15rem;
+    color: var(--accent-light);
+    font-weight: 500;
+    margin-bottom: 1rem;
+  }
+  .hero .meta {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+
+  /* TOC */
+  .toc {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem 2rem;
+    margin-bottom: 3rem;
+  }
+  .toc h2 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+  }
+  .toc ol {
+    list-style: none;
+    counter-reset: toc;
+  }
+  .toc ol li {
+    counter-increment: toc;
+    margin-bottom: 0.4rem;
+  }
+  .toc ol li::before {
+    content: counter(toc) ".";
+    color: var(--accent);
+    font-weight: 600;
+    margin-right: 0.5rem;
+    font-size: 0.9rem;
+  }
+  .toc a {
+    color: var(--text);
+    text-decoration: none;
+    font-size: 0.95rem;
+    transition: color 0.2s;
+  }
+  .toc a:hover { color: var(--accent-light); }
+
+  /* Sections */
+  section { margin-bottom: 3rem; }
+
+  h2 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--text-heading);
+    margin-bottom: 1.25rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--accent);
+    display: inline-block;
+  }
+  h2::after {
+    content: "";
+    display: block;
+    clear: both;
+  }
+
+  h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-heading);
+    margin-top: 2rem;
+    margin-bottom: 0.75rem;
+  }
+
+  h4 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--accent-light);
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  p { margin-bottom: 1rem; }
+
+  strong { color: var(--text-heading); }
+
+  blockquote {
+    border-left: 3px solid var(--accent);
+    padding: 0.75rem 1.25rem;
+    margin: 1rem 0;
+    background: rgba(59,130,246,0.08);
+    border-radius: 0 8px 8px 0;
+    font-style: italic;
+    color: var(--text-muted);
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0 1.5rem;
+    font-size: 0.9rem;
+  }
+  thead th {
+    background: var(--bg-surface);
+    color: var(--accent-light);
+    font-weight: 600;
+    text-align: left;
+    padding: 0.75rem 1rem;
+    border-bottom: 2px solid var(--accent);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tbody td {
+    padding: 0.65rem 1rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tbody tr:nth-child(even) { background: rgba(30,41,59,0.5); }
+  tbody tr:hover { background: rgba(59,130,246,0.08); }
+
+  /* Code blocks */
+  pre {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    overflow-x: auto;
+    margin: 1rem 0 1.5rem;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: #c9d1d9;
+  }
+  code {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.875em;
+  }
+  :not(pre) > code {
+    background: var(--bg-surface);
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    color: var(--accent-light);
+    font-size: 0.85em;
+  }
+
+  /* Callout */
+  .callout {
+    border: 2px solid var(--accent);
+    background: rgba(59,130,246,0.06);
+    border-radius: 12px;
+    padding: 1.5rem 2rem;
+    margin: 2rem 0;
+  }
+  .callout h3 {
+    color: var(--accent-light);
+    margin-top: 0;
+    margin-bottom: 1rem;
+    font-size: 1.15rem;
+  }
+  .callout ol { padding-left: 1.5rem; }
+  .callout li { margin-bottom: 0.5rem; }
+
+  /* Status dots */
+  .dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .dot-green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot-amber { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+  .dot-red { background: var(--red); box-shadow: 0 0 6px var(--red); }
+  .dot-blue { background: var(--blue); box-shadow: 0 0 6px var(--blue); }
+  .dot-gray { background: #64748b; }
+  .dot-purple { background: var(--purple); box-shadow: 0 0 6px var(--purple); }
+
+  /* Status labels */
+  .status {
+    display: inline-block;
+    padding: 0.15rem 0.6rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .status-validated { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
+  .status-planned { background: rgba(59,130,246,0.15); color: var(--accent-light); border: 1px solid rgba(59,130,246,0.3); }
+  .status-deferred { background: rgba(100,116,139,0.2); color: #94a3b8; border: 1px solid rgba(100,116,139,0.3); }
+
+  /* Lists */
+  ul, ol { padding-left: 1.5rem; margin-bottom: 1rem; }
+  li { margin-bottom: 0.35rem; }
+
+  /* Links */
+  a { color: var(--accent-light); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* Divider */
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 2.5rem 0;
+  }
+
+  /* Validation card */
+  .validation-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    padding: 1.25rem 1.5rem;
+    margin: 1rem 0;
+  }
+  .validation-card .question {
+    font-weight: 600;
+    color: var(--text-heading);
+    margin-bottom: 0.5rem;
+  }
+  .validation-card .answer {
+    color: var(--green);
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+  }
+  .validation-card .implication {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+
+  /* Architecture diagram */
+  .arch-block {
+    background: var(--bg-code);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin: 1rem 0;
+  }
+
+  /* Wireframe container */
+  .wireframe {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem 1.25rem;
+    margin: 1rem 0 1.5rem;
+    overflow-x: auto;
+  }
+  .wireframe pre {
+    border: none;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    font-size: 0.78rem;
+    line-height: 1.45;
+  }
+
+  /* Print styles */
+  @media print {
+    body { background: #fff; color: #1a1a1a; font-size: 12pt; }
+    .container { max-width: 100%; padding: 0; }
+    .hero { padding: 1rem 0; }
+    .hero h1 { font-size: 1.5rem; color: #1a1a1a; }
+    .hero .subtitle { color: #333; }
+    h2 { color: #1a1a1a; border-bottom-color: #333; font-size: 1.3rem; }
+    h3 { color: #1a1a1a; font-size: 1.1rem; }
+    pre, .wireframe pre { border-color: #ccc; background: #f5f5f5; color: #1a1a1a; font-size: 9pt; }
+    table { font-size: 9pt; }
+    thead th { background: #eee; color: #333; border-bottom-color: #333; }
+    tbody td { border-bottom-color: #ddd; }
+    tbody tr:nth-child(even) { background: #f9f9f9; }
+    .toc, .callout, .validation-card { border-color: #ccc; background: #f5f5f5; }
+    .callout { border-color: #333; }
+    a { color: #333; }
+    .dot { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    .status { border-color: #999; }
+    .status-validated { background: #e6f7ed; color: #1a7a3a; }
+  }
+
+  @media (max-width: 640px) {
+    .hero h1 { font-size: 1.75rem; }
+    .container { padding: 1rem; }
+    pre { font-size: 0.75rem; }
+    table { font-size: 0.8rem; }
+    thead th, tbody td { padding: 0.5rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+<!-- HERO -->
+<header class="hero">
+  <h1>VibeIDE Phase 2</h1>
+  <p class="subtitle">UX Research, Persona Validation &amp; Native Architecture</p>
+  <p class="meta">Research Date: March 24, 2026 &nbsp;|&nbsp; Methodology: Web research, competitive analysis, codebase review, founder validation</p>
+</header>
+
+<!-- TOC -->
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#executive-summary">Executive Summary</a></li>
+    <li><a href="#persona">The Vibe Coder Persona</a></li>
+    <li><a href="#journeys">Core User Journeys</a></li>
+    <li><a href="#competitive">Competitive Analysis</a></li>
+    <li><a href="#validation">Founder Validation</a></li>
+    <li><a href="#ia">Information Architecture</a></li>
+    <li><a href="#wireframes">UI Wireframes</a></li>
+    <li><a href="#architecture">Phase 2 Technical Architecture</a></li>
+    <li><a href="#sources">Sources</a></li>
+  </ol>
+</nav>
+
+<!-- ================================================================ -->
+<!-- 1. EXECUTIVE SUMMARY -->
+<!-- ================================================================ -->
+<section id="executive-summary">
+  <h2>1. Executive Summary</h2>
+
+  <p>VibeIDE is a <strong>GPU-native terminal orchestrator</strong> purpose-built for vibe coders &mdash; senior developers who run multiple AI agents in parallel across several projects and review their output as an air-traffic controller rather than a typist. The target user actively monitors 3&ndash;5 projects, uses voice as a primary input method, and demands sub-100ms latency on every interaction.</p>
+
+  <p>Phase 2 transitions from the Electron MVP to a <strong>native Rust application</strong> built on a crate-based architecture (wgpu + egui + alacritty_terminal) delivering 120 fps GPU rendering, integrated local voice (whisper-rs), and a WASM plugin system &mdash; targeting Linux, macOS, and Windows.</p>
+
+  <div class="callout">
+    <h3>Key Decisions (Founder-Validated)</h3>
+    <ol>
+      <li><strong>Sidebar is sufficient</strong> for 3&ndash;5 projects &mdash; must be efficient and collapsible. No separate dashboard needed.</li>
+      <li><strong>Notifications must be BOTH visual AND auditory</strong>, configurable per event type. Non-negotiable requirement.</li>
+      <li><strong>Workspace templates are a key feature</strong> &mdash; ECC-based template presets shared across projects.</li>
+      <li><strong>File viewer as modal overlay</strong> is confirmed &mdash; not accessed often, but needed for confidence (Cursor/Windsurf parity).</li>
+      <li><strong>Voice is the PRIMARY input method</strong>, not secondary. Built-in local Whisper + cloud STT. No good voice app exists for Linux &mdash; this is a market differentiator. Cross-platform: Linux, macOS, Windows.</li>
+    </ol>
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<!-- 2. PERSONA -->
+<!-- ================================================================ -->
+<section id="persona">
+  <h2>2. The Vibe Coder Persona</h2>
+
+  <h3>2.1 Who They Are</h3>
+  <p>The vibe coder is a developer who has shifted from <strong>code writer</strong> to <strong>orchestrator</strong>. They describe what they want built in natural language and AI agents build it. Collins Dictionary named &ldquo;vibe coding&rdquo; the Word of the Year for 2025, signaling this is no longer a niche practice.</p>
+
+  <h4>Demographics</h4>
+  <ul>
+    <li>Senior developers and technical founders (3&ndash;15+ years experience)</li>
+    <li>Comfortable in terminals; many have tmux/Zellij muscle memory</li>
+    <li>Run their own projects or lead small teams (1&ndash;5 people)</li>
+    <li>Work across 2&ndash;5 codebases simultaneously</li>
+    <li>Skew toward Linux and macOS power users</li>
+    <li>Early adopters who treat AI agents as multipliers, not toys</li>
+  </ul>
+  <p><strong>Identity:</strong> They think of themselves as architects, reviewers, and directors, not typists. The terminal is their command center, not a secondary tool.</p>
+
+  <h3>2.2 Daily Workflow</h3>
+  <p>A typical work session follows a four-phase cycle, repeated 3&ndash;5 times per day:</p>
+
+  <table>
+    <thead><tr><th>Phase</th><th>Duration</th><th>Activity</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Decompose</strong></td><td>5 min</td><td>Break work into parallel-safe tasks with clear boundaries</td></tr>
+      <tr><td><strong>Launch</strong></td><td>3 min</td><td>Spin up agents with focused prompts (voice or typed)</td></tr>
+      <tr><td><strong>Review</strong></td><td>17+ min</td><td>Monitor progress, validate scope, catch errors</td></tr>
+      <tr><td><strong>Integrate</strong></td><td>10 min</td><td>Merge branches, resolve conflicts, run tests</td></tr>
+    </tbody>
+  </table>
+
+  <p><strong>Key behavioral pattern:</strong> The vibe coder does NOT stare at one terminal continuously. They glance across multiple agent outputs, looking for signals: errors, completion messages, questions that need answers. The workflow is more like an air traffic controller than a pilot.</p>
+
+  <h3>2.3 Tools Currently Used</h3>
+  <table>
+    <thead><tr><th>Tool</th><th>Role</th><th>Pain Point</th></tr></thead>
+    <tbody>
+      <tr><td>Claude Code</td><td>Primary AI agent (terminal)</td><td>Rate limits when running 3+ instances; no native multi-session UI</td></tr>
+      <tr><td>Codex CLI</td><td>Secondary agent, async tasks</td><td>Separate tool, no unified view</td></tr>
+      <tr><td>Cursor / Windsurf</td><td>AI-first IDE for visual work</td><td>Context switches between terminal and IDE</td></tr>
+      <tr><td>tmux / Zellij</td><td>Terminal multiplexer</td><td>No agent awareness; panes are just dumb shells</td></tr>
+      <tr><td>claude-squad</td><td>Multi-agent orchestrator</td><td>TUI-only, limited UI richness</td></tr>
+      <tr><td>Git worktrees</td><td>Isolation per agent</td><td>Manual setup, easy to lose track</td></tr>
+      <tr><td>Wispr Flow</td><td>Voice dictation</td><td>Separate tool, not integrated</td></tr>
+      <tr><td>Raycast / command palette</td><td>Quick actions</td><td>Per-app, not unified across agents</td></tr>
+    </tbody>
+  </table>
+
+  <h3>2.4 Pain Points (Ranked by Impact)</h3>
+  <ol>
+    <li><strong>Review is the bottleneck.</strong> Five agents completing simultaneously creates a cognitive pile-up. No tool helps triage which agent output to review first.</li>
+    <li><strong>No unified multi-project view.</strong> Developers lose ~23 minutes of productivity per context switch.</li>
+    <li><strong>Agents start fresh every time.</strong> Persistent memory across sessions is the #2 most-requested agentic IDE feature (RedMonk 2025).</li>
+    <li><strong>Terminal multiplexers have no agent awareness.</strong> tmux and Zellij treat every pane identically.</li>
+    <li><strong>Rate limits and cost opacity.</strong> No tool shows real-time cost/token usage across agents.</li>
+    <li><strong>Voice input is bolted on, not integrated.</strong> Voice is 5x faster than typing (220 WPM vs 45 WPM) but no tool makes voice a first-class dispatch mechanism.</li>
+    <li><strong>File browsing requires context switching.</strong> Reviewing agent work requires opening VS Code or running <code>cat</code> in a separate terminal.</li>
+  </ol>
+
+  <h3>2.5 What They Value</h3>
+  <ul>
+    <li><strong>Speed.</strong> Sub-100ms latency on everything. GPU rendering. Instant startup.</li>
+    <li><strong>Keyboard-first, mouse-optional.</strong> Everything reachable via keybinding or command palette.</li>
+    <li><strong>Glanceability.</strong> Status at a glance without reading terminal output.</li>
+    <li><strong>Minimal chrome.</strong> Maximum terminal real estate. Sidebars collapsible.</li>
+    <li><strong>Session persistence.</strong> Close the app, reopen, everything exactly where it was.</li>
+    <li><strong>Opinionated defaults, deep customization.</strong> Works perfectly out of the box; extensible when needed.</li>
+  </ul>
+</section>
+
+<!-- ================================================================ -->
+<!-- 3. JOURNEYS -->
+<!-- ================================================================ -->
+<section id="journeys">
+  <h2>3. Core User Journeys</h2>
+
+  <h3>Journey 1: Starting a Work Session</h3>
+  <p><strong>Current behavior:</strong> Open terminal, <code>cd</code> to project, run <code>tmux</code>, manually open panes, start agents. Takes 2&ndash;5 minutes.</p>
+  <h4>Optimal VibeIDE Experience</h4>
+  <ol>
+    <li>Launch VibeIDE. Previous session restores instantly (layout, agents, scrollback).</li>
+    <li><strong>Dashboard view</strong> shows all projects with status summary.</li>
+    <li>Click/select a project to enter its workspace. Agents resume where they left off.</li>
+    <li>If starting fresh: <code>Ctrl+Shift+P</code> &rarr; &ldquo;New Project&rdquo; &rarr; select directory &rarr; choose agent template.</li>
+  </ol>
+  <p><strong>Design implication:</strong> VibeIDE needs a <strong>project-level abstraction</strong> above the current flat agent list. The sidebar should group agents by project.</p>
+
+  <h3>Journey 2: Deep Work on a Single Project</h3>
+  <p><strong>Typical setup:</strong> 2&ndash;4 agents active. Common configurations: builder + reviewer (side by side), feature A + feature B + shell, or 2&times;2 grid.</p>
+  <h4>Key Insight</h4>
+  <p>The &ldquo;needs input&rdquo; state is the most time-critical notification. If an agent is blocked waiting for a yes/no, every second of delay wastes agent capacity. VibeIDE must make this state <strong>impossible to miss</strong>.</p>
+  <p><strong>Design implication:</strong> Each terminal pane needs a thin <strong>agent status strip</strong> showing: agent type, status (running/idle/needs-input/error/complete), and elapsed time.</p>
+
+  <h3>Journey 3: Multi-Project Monitoring</h3>
+  <p><strong>Current tools fail here.</strong> tmux windows per project means you can only see one at a time.</p>
+  <h4>Optimal Experience</h4>
+  <ol>
+    <li><strong>Sidebar shows all projects</strong> with traffic-light summary: <span class="dot dot-green"></span>running normally, <span class="dot dot-amber"></span>needs input, <span class="dot dot-red"></span>error, <span class="dot dot-blue"></span>completed.</li>
+    <li><strong>Notification badges</strong> on project entries show unread events.</li>
+    <li>Clicking a project switches the workspace area instantly (pre-rendered in background).</li>
+    <li><strong>Optional: Overview mode</strong> &mdash; compact view of all project workspaces (like macOS Mission Control for terminals).</li>
+  </ol>
+
+  <h3>Journey 4: File Exploration and Code Review</h3>
+  <p><strong>Key principle:</strong> VibeIDE is NOT an IDE. It does not need a full editor. A fast read-only viewer with diff support covers 90% of the use case.</p>
+  <h4>Optimal Experience</h4>
+  <ol>
+    <li><code>Ctrl+P</code> opens fuzzy file finder scoped to current project.</li>
+    <li>File opens in a <strong>read-only viewer pane</strong> (syntax highlighted, line numbers).</li>
+    <li>Diff view via command palette or keybinding.</li>
+    <li>Search across files (<code>Ctrl+Shift+F</code>) with ripgrep-speed results.</li>
+    <li>File viewer is a <strong>temporary pane</strong> &mdash; dismisses with <code>Escape</code>.</li>
+  </ol>
+
+  <h3>Journey 5: Voice-Driven Workflow</h3>
+  <p><strong>Current state (March 2026):</strong> Claude Code shipped push-to-talk voice mode (March 3, 2026, 5% rollout). Codex shipped voice via Wispr engine. Voice is 5x faster than typing for natural language prompts.</p>
+  <h4>Optimal VibeIDE Voice Experience</h4>
+  <ol>
+    <li><strong>Push-to-talk hotkey</strong> (configurable). Audio transcribed locally via Whisper.</li>
+    <li>Transcript appears in a <strong>voice input bar</strong>. User reviews before sending.</li>
+    <li>Voice commands are <strong>context-aware</strong>: focused agent pane receives the command; otherwise it is global.</li>
+    <li><strong>Command prefix detection:</strong> &ldquo;vibeide&rdquo; or &ldquo;app&rdquo; prefix routes to app commands; otherwise routes to focused agent.</li>
+  </ol>
+  <p><strong>Founder validation:</strong> Voice is the <strong>PRIMARY</strong> input method via Lotus Q. The founder wants built-in voice with local Whisper or cloud STT. No good voice app exists for Linux &mdash; <strong>this is a market differentiator</strong>.</p>
+</section>
+
+<!-- ================================================================ -->
+<!-- 4. COMPETITIVE -->
+<!-- ================================================================ -->
+<section id="competitive">
+  <h2>4. Competitive Analysis</h2>
+
+  <h3>Comparison Matrix</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Capability</th>
+        <th>VibeIDE</th>
+        <th>BridgeSpace</th>
+        <th>claude-squad</th>
+        <th>Agents UI</th>
+        <th>Warp 2.0</th>
+        <th>Zellij</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Multi-project orchestration</td>
+        <td><span class="dot dot-green"></span>Yes</td>
+        <td><span class="dot dot-amber"></span>Tabs</td>
+        <td><span class="dot dot-red"></span>No</td>
+        <td><span class="dot dot-red"></span>No</td>
+        <td><span class="dot dot-red"></span>No</td>
+        <td><span class="dot dot-red"></span>No</td>
+      </tr>
+      <tr>
+        <td>Agent-aware terminal panes</td>
+        <td><span class="dot dot-green"></span>Yes</td>
+        <td><span class="dot dot-amber"></span>Basic</td>
+        <td><span class="dot dot-green"></span>Yes</td>
+        <td><span class="dot dot-green"></span>Yes</td>
+        <td><span class="dot dot-amber"></span>Partial</td>
+        <td><span class="dot dot-red"></span>No</td>
+      </tr>
+      <tr>
+        <td>GPU-native rendering</td>
+        <td><span class="dot dot-green"></span>wgpu</td>
+        <td><span class="dot dot-red"></span>WebKitGTK</td>
+        <td><span class="dot dot-red"></span>TUI</td>
+        <td><span class="dot dot-red"></span>Tauri</td>
+        <td><span class="dot dot-green"></span>Metal</td>
+        <td><span class="dot dot-red"></span>TUI</td>
+      </tr>
+      <tr>
+        <td>Voice input (built-in)</td>
+        <td><span class="dot dot-green"></span>Whisper</td>
+        <td><span class="dot dot-red"></span>No</td>
+        <td><span class="dot dot-red"></span>No</td>
+        <td><span class="dot dot-red"></span>No</td>
+        <td><span class="dot dot-amber"></span>AI input</td>
+        <td><span class="dot dot-red"></span>No</td>
+      </tr>
+      <tr>
+        <td>File viewer (read-only)</td>
+        <td><span class="dot dot-green"></span>Modal</td>
+        <td><span class="dot dot-green"></span>Cmd+P</td>
+        <td><span class="dot dot-red"></span>No</td>
+        <td><span class="dot dot-green"></span>Monaco</td>
+        <td><span class="dot dot-amber"></span>Editor</td>
+        <td><span class="dot dot-red"></span>No</td>
+      </tr>
+      <tr>
+        <td>Linux support</td>
+        <td><span class="dot dot-green"></span>Primary</td>
+        <td><span class="dot dot-amber"></span>Laggy</td>
+        <td><span class="dot dot-green"></span>Yes</td>
+        <td><span class="dot dot-red"></span>macOS only</td>
+        <td><span class="dot dot-red"></span>macOS only</td>
+        <td><span class="dot dot-green"></span>Yes</td>
+      </tr>
+      <tr>
+        <td>Cross-platform</td>
+        <td><span class="dot dot-green"></span>All 3</td>
+        <td><span class="dot dot-green"></span>All 3</td>
+        <td><span class="dot dot-green"></span>All 3</td>
+        <td><span class="dot dot-red"></span>macOS</td>
+        <td><span class="dot dot-amber"></span>macOS + Linux</td>
+        <td><span class="dot dot-green"></span>All 3</td>
+      </tr>
+      <tr>
+        <td>WASM plugin system</td>
+        <td><span class="dot dot-blue"></span>Planned</td>
+        <td><span class="dot dot-red"></span>No</td>
+        <td><span class="dot dot-red"></span>No</td>
+        <td><span class="dot dot-red"></span>No</td>
+        <td><span class="dot dot-red"></span>No</td>
+        <td><span class="dot dot-green"></span>Yes</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>What VibeIDE Must Do Better Than All Competitors</h3>
+  <ol>
+    <li><strong>Multi-project orchestration in one window</strong> &mdash; no competitor does this well</li>
+    <li><strong>Agent-aware terminal panes</strong> &mdash; status, notifications, and priority signals per pane</li>
+    <li><strong>GPU-native speed</strong> &mdash; 120fps, sub-5ms latency</li>
+    <li><strong>Voice as a first-class input</strong> &mdash; not bolted on; Linux differentiator</li>
+    <li><strong>Fast file viewer for code review</strong> &mdash; not a full editor</li>
+    <li><strong>Glanceable status</strong> &mdash; know the state of all agents across all projects without reading terminal output</li>
+  </ol>
+
+  <h3>Detailed Competitor Notes</h3>
+
+  <h4>BridgeSpace</h4>
+  <p>Tauri v2 + React 19 + xterm.js. Laggy on Linux due to WebKitGTK. Tries to be everything (terminal + editor + task board + swarm orchestrator). VibeIDE should be laser-focused on <strong>terminal orchestration</strong> at native speed.</p>
+
+  <h4>claude-squad</h4>
+  <p>Go TUI using tmux for session isolation and git worktrees for code isolation. No GPU rendering, no rich UI, no file viewer. VibeIDE has a strictly superior rendering surface.</p>
+
+  <h4>Agents UI</h4>
+  <p>Tauri + Rust, bundled Zellij. macOS-only. Auto-detected AI CLIs with branded icons is worth adopting.</p>
+
+  <h4>Warp 2.0</h4>
+  <p>Block-based command output is the killer feature. Rebranded as &ldquo;Agentic Development Environment.&rdquo; Core weakness: single-project focus, no multi-project orchestration.</p>
+
+  <h4>Zellij</h4>
+  <p>Mode-based interaction with discoverable keybindings. Floating panes pattern is perfect for file viewer, command palette, and voice transcript. WASM plugin system is a model for Phase 2.</p>
+</section>
+
+<!-- ================================================================ -->
+<!-- 5. FOUNDER VALIDATION -->
+<!-- ================================================================ -->
+<section id="validation">
+  <h2>5. Founder Validation</h2>
+  <p>The following open research questions were validated directly by the founder (ND). These answers confirm or redirect key design decisions.</p>
+
+  <div class="validation-card">
+    <p class="question">Q1: How many projects do you actively monitor in a single session?</p>
+    <p class="answer">Answer: 3&ndash;4 actively, can stretch to 5&ndash;7.</p>
+    <p class="implication"><strong>Design implication:</strong> Sidebar is sufficient &mdash; no separate dashboard view needed. Must be efficient and collapsible. Project list must scale gracefully from 3 to 7 entries with agent sub-items.</p>
+  </div>
+
+  <div class="validation-card">
+    <p class="question">Q2: Notification preference &mdash; visual only or forced interruption?</p>
+    <p class="answer">Answer: Wants BOTH visual AND auditory feedback. Must be configurable per notification type. Strongly wants this.</p>
+    <p class="implication"><strong>Design implication:</strong> Implement a full notification configuration UI. Each event type (needs input, complete, error, build done) gets independent visual style, sound toggle, and focus-steal toggle. This is a non-negotiable requirement.</p>
+  </div>
+
+  <div class="validation-card">
+    <p class="question">Q3: Do you use the same agent layout for every project?</p>
+    <p class="answer">Answer: Uses common plugin templates (ECC &mdash; Everything Claude Code) across projects. Starts with template presets. Workspace templates are a key feature.</p>
+    <p class="implication"><strong>Design implication:</strong> Implement a template system at <code>~/.vibeide/templates/</code>. Ship with ECC default template. Templates define agent config, layout arrangement, and plugin set. &ldquo;New Project&rdquo; flow offers template selection.</p>
+  </div>
+
+  <div class="validation-card">
+    <p class="question">Q4: How often do you read files during agent work?</p>
+    <p class="answer">Answer: Not often, but values having the capability for confidence (like Cursor/Windsurf). Confirms modal overlay approach.</p>
+    <p class="implication"><strong>Design implication:</strong> File viewer is a modal overlay (not persistent sidebar). Optimize for rare-but-important use. Keep the implementation lean &mdash; read-only, syntax highlighted, dismissible with Escape. Parity with Cursor/Windsurf in capability, not in prominence.</p>
+  </div>
+
+  <div class="validation-card">
+    <p class="question">Q5: What is your most common voice command? Is voice primary or secondary?</p>
+    <p class="answer">Answer: Uses voice for EVERYTHING via Lotus Q (external app). Voice is the PRIMARY input method, not secondary. Wants built-in voice with local Whisper or cloud STT. Key insight: NO good voice app exists for Linux &mdash; this is a market differentiator. Building for Linux, macOS, AND Windows.</p>
+    <p class="implication"><strong>Design implication:</strong> Voice is promoted from &ldquo;nice-to-have&rdquo; to <strong>core feature</strong>. Integrate whisper-rs for local STT with cloud fallback. Voice command router must handle both app commands and agent prompts. The voice input bar is a primary UI element, not a secondary overlay. Linux voice support is a unique selling point &mdash; no competitor offers this.</p>
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<!-- 6. INFORMATION ARCHITECTURE -->
+<!-- ================================================================ -->
+<section id="ia">
+  <h2>6. Information Architecture</h2>
+
+  <h3>6.1 Sidebar Design</h3>
+  <p>Project-centric hierarchy with collapsible sections. Projects sorted by last activity; pinned projects stick to top.</p>
+
+  <div class="wireframe"><pre>SIDEBAR
++--------------------------------------------------+
+| [VibeIDE logo/icon]            [collapse button]  |
++--------------------------------------------------+
+| PROJECTS                              [+ New]     |
+|                                                   |
+| &gt; vibeide (3 agents)                    [*] [2]  |
+|   |-- Claude Code         [running]   |||         |
+|   |-- Claude Code #2      [needs input] !         |
+|   |-- Shell               [idle]                  |
+|                                                   |
+| &gt; client-app (2 agents)                [*] [1]   |
+|   |-- Gemini CLI          [running]   |||         |
+|   |-- Shell               [idle]                  |
+|                                                   |
+| &gt; api-server (1 agent)                 [ok]      |
+|   |-- Claude Code         [complete]   ✓          |
+|                                                   |
++--------------------------------------------------+
+| QUICK ACTIONS                                     |
+| [New Project]  [New Agent]  [Settings]            |
++--------------------------------------------------+</pre></div>
+
+  <h4>Agent Status Visual Language</h4>
+  <table>
+    <thead><tr><th>Status</th><th>Color</th><th>Symbol</th><th>Priority</th></tr></thead>
+    <tbody>
+      <tr><td><span class="dot dot-amber"></span>Needs Input</td><td>Amber/Yellow</td><td><code>!</code> pulsing</td><td>HIGHEST &mdash; agent is blocked</td></tr>
+      <tr><td><span class="dot dot-red"></span>Error</td><td>Red</td><td><code>x</code></td><td>HIGH &mdash; agent crashed</td></tr>
+      <tr><td><span class="dot dot-green"></span>Running</td><td>Green</td><td><code>|||</code> animated</td><td>NORMAL</td></tr>
+      <tr><td><span class="dot dot-blue"></span>Complete</td><td>Blue</td><td>Checkmark</td><td>LOW &mdash; review when ready</td></tr>
+      <tr><td><span class="dot dot-gray"></span>Idle</td><td>Gray</td><td><code>-</code></td><td>LOWEST</td></tr>
+    </tbody>
+  </table>
+
+  <h3>6.2 Workspace Area</h3>
+  <p>Flexible split-based layout with focus mode and overview mode.</p>
+
+  <table>
+    <thead><tr><th>Mode</th><th>Trigger</th><th>Behavior</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Split mode</strong> (default)</td><td>Normal state</td><td>Multiple panes visible, resizable dividers</td></tr>
+      <tr><td><strong>Focus mode</strong></td><td><code>Ctrl+Shift+M</code></td><td>One pane maximized; status bar shows &ldquo;Focused on Agent X&rdquo;</td></tr>
+      <tr><td><strong>Overview mode</strong></td><td><code>Ctrl+Shift+O</code></td><td>All panes in reduced grid with large status indicators</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Grid Presets</h4>
+  <table>
+    <thead><tr><th>Preset</th><th>Layout</th><th>Use Case</th></tr></thead>
+    <tbody>
+      <tr><td>Single</td><td>1 pane full width</td><td>Focused agent work</td></tr>
+      <tr><td>Side-by-side</td><td>2 panes horizontal</td><td>Builder + reviewer</td></tr>
+      <tr><td>Triple</td><td>1 large left + 2 stacked right</td><td>Main agent + auxiliary</td></tr>
+      <tr><td>Quad</td><td>2&times;2 grid</td><td>Parallel agents</td></tr>
+      <tr><td>Custom</td><td>User-defined splits</td><td>Power users</td></tr>
+    </tbody>
+  </table>
+
+  <h3>6.3 File Explorer</h3>
+  <p>Modal overlay panel &mdash; appears on demand (<code>Ctrl+P</code>), disappears when done. Behaves like Raycast.</p>
+
+  <table>
+    <thead><tr><th>Operation</th><th>Trigger</th><th>Behavior</th></tr></thead>
+    <tbody>
+      <tr><td>Open file (read-only)</td><td>Enter</td><td>Floating pane with syntax highlighting</td></tr>
+      <tr><td>View diff</td><td>Ctrl+D</td><td>Git diff in floating pane</td></tr>
+      <tr><td>Search in files</td><td>Ctrl+G</td><td>Ripgrep-style search across project</td></tr>
+      <tr><td>Open in external editor</td><td>Ctrl+E</td><td>Launches <code>$EDITOR</code> or configured IDE</td></tr>
+    </tbody>
+  </table>
+
+  <h3>6.4 Voice Input System</h3>
+  <p>Voice is a <strong>primary input method</strong> (validated by founder). Push-to-talk with local Whisper transcription and cloud STT fallback.</p>
+  <ul>
+    <li><strong>Push-to-talk hotkey</strong> (configurable, e.g., hold <code>Caps Lock</code>)</li>
+    <li>Transcript appears in a <strong>voice input bar</strong> docked at bottom</li>
+    <li><strong>Context-aware routing:</strong> focused agent pane receives the command; otherwise global</li>
+    <li><strong>Prefix detection:</strong> &ldquo;vibeide&rdquo; prefix routes to app commands; otherwise to focused agent</li>
+    <li><strong>Linux market differentiator:</strong> No good voice coding app exists for Linux</li>
+  </ul>
+
+  <h3>6.5 Notification System (Configurable)</h3>
+  <p>Three-tier notifications with per-event-type configuration for both visual and auditory feedback.</p>
+
+  <table>
+    <thead><tr><th>Event</th><th>Visual</th><th>Sound</th><th>Steal Focus</th></tr></thead>
+    <tbody>
+      <tr><td><span class="dot dot-amber"></span>Needs Input</td><td>Pulse</td><td>Chime</td><td>Configurable</td></tr>
+      <tr><td><span class="dot dot-blue"></span>Agent Complete</td><td>Badge</td><td>Ding</td><td>Never</td></tr>
+      <tr><td><span class="dot dot-red"></span>Agent Error</td><td>Red dot</td><td>Alert</td><td>Configurable</td></tr>
+      <tr><td><span class="dot dot-green"></span>Build Done</td><td>Badge</td><td>None</td><td>Never</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Notification Tiers</h4>
+  <table>
+    <thead><tr><th>Tier</th><th>Where</th><th>When</th><th>User Action</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Inline</strong></td><td>Agent status strip</td><td>Always</td><td>Glance at pane</td></tr>
+      <tr><td><strong>Badge</strong></td><td>Sidebar project entry</td><td>Agent completes, errors, or needs input</td><td>Click to investigate</td></tr>
+      <tr><td><strong>Toast</strong></td><td>Top-right corner (5s auto-dismiss)</td><td>Error or needs input (unfocused project)</td><td>Click to switch</td></tr>
+    </tbody>
+  </table>
+
+  <h3>6.6 Command Palette</h3>
+  <p>Instant (<50ms), fuzzy-searchable, context-aware, extensible. Categories: Agent, Layout, File, Project, Theme, Voice, Settings.</p>
+</section>
+
+<!-- ================================================================ -->
+<!-- 7. WIREFRAMES -->
+<!-- ================================================================ -->
+<section id="wireframes">
+  <h2>7. UI Wireframes</h2>
+
+  <h3>7.1 Default Workspace (Multi-Project, Sidebar Visible)</h3>
+  <div class="wireframe"><pre>+---+--------------------------------------------------------------------+
+|   |                                                                    |
+| S |   +-----------------------------+  +-----------------------------+ |
+| I |   | [Claude] running  3:42 /proj|  | [Shell]  idle     0:15 /proj| |
+| D |   +-----------------------------+  +-----------------------------+ |
+| E |   |                             |  |                             | |
+| B |   | $ claude                    |  | $ _                         | |
+| A |   |                             |  |                             | |
+| R |   | I'll implement the          |  |                             | |
+|   |   | pagination feature. Let me  |  |                             | |
+| P |   | start by reading the        |  |                             | |
+| R |   | existing API endpoint...    |  |                             | |
+| O |   |                             |  |                             | |
+| J |   | Reading src/api/users.ts    |  |                             | |
+| E |   | ...                         |  |                             | |
+| C |   |                             |  |                             | |
+| T |   +-----------------------------+  +-----------------------------+ |
+| S |                                                                    |
+|   |   +-----------------------------+  +-----------------------------+ |
+|   |   | [Claude] needs-input  7:21  |  | [Gemini] complete  2:05    | |
+|   |   +====AMBER PULSE=============+  +-----------------------------+ |
+|   |   |                             |  |                             | |
+|   |   | I found 3 potential         |  | Done. Created 4 test       | |
+|   |   | approaches for the cache    |  | files with 92% coverage.   | |
+|   |   | layer:                      |  |                             | |
+|   |   | 1. Redis                    |  | Summary:                    | |
+|   |   | 2. In-memory LRU            |  |  - users.test.ts           | |
+|   |   | 3. SQLite                   |  |  - api.test.ts             | |
+|   |   |                             |  |  - cache.test.ts           | |
+|   |   | Which approach should I     |  |  - integration.test.ts     | |
+|   |   | use?                        |  |                             | |
+|   |   | &gt; _                         |  |                             | |
+|   |   +-----------------------------+  +-----------------------------+ |
+|   |                                                                    |
++---+--------------------------------------------------------------------+</pre></div>
+
+  <h3>7.2 Focus Mode (Single Agent)</h3>
+  <div class="wireframe"><pre>+---+--------------------------------------------------------------------+
+|   |                                                                    |
+| S |   +--------------------------------------------------------------+ |
+| I |   | [Claude] Claude Code  |  running  |  12:34  |  ~/project/api | |
+| D |   +--------------------------------------------------------------+ |
+| E |   |                                                              | |
+| B |   | I'll implement the pagination feature for the users API.     | |
+| A |   |                                                              | |
+| R |   | Let me start by reading the existing endpoint...             | |
+|   |   |                                                              | |
+|   |   | Reading src/api/users.ts                                     | |
+|   |   | Reading src/models/user.ts                                   | |
+|   |   | Reading src/middleware/pagination.ts                          | |
+|   |   |                                                              | |
+|   |   | I see the current implementation uses offset-based           | |
+|   |   | pagination. I'll add cursor-based pagination support:        | |
+|   |   |                                                              | |
+|   |   | Writing src/api/users.ts                                     | |
+|   |   | Writing src/middleware/cursor-pagination.ts                   | |
+|   |   | Writing tests/api/users-pagination.test.ts                   | |
+|   |   |                                                              | |
+|   |   | Running tests...                                             | |
+|   |   |  PASS  tests/api/users-pagination.test.ts (3.2s)             | |
+|   |   |   12 passed, 0 failed                                       | |
+|   |   |                                                              | |
+|   |   +--------------------------------------------------------------+ |
+|   |   | [Esc: exit focus]  [Ctrl+P: files]  [Ctrl+Shift+O: overview] | |
+|   |   +--------------------------------------------------------------+ |
+|   |                                                                    |
++---+--------------------------------------------------------------------+</pre></div>
+
+  <h3>7.3 File Explorer Overlay</h3>
+  <div class="wireframe"><pre>+---+--------------------------------------------------------------------+
+|   |                                                                    |
+| S |   (dimmed terminal content behind overlay)                         |
+| I |                                                                    |
+| D |   +------- File Explorer (centered, 60% width) ----------------+ |
+| E |   | &gt; [search: user___]                                         | |
+| B |   |                                                             | |
+| A |   |   src/api/users.ts                            234 lines    | |
+| R |   |   src/models/user.ts                          89 lines     | |
+|   |   | &gt; src/middleware/                                            | |
+|   |   |     cursor-pagination.ts                      156 lines    | |
+|   |   |   tests/api/users-pagination.test.ts          312 lines    | |
+|   |   |   src/types/user-types.ts                     45 lines     | |
+|   |   |                                                             | |
+|   |   +-------------------------------------------------------------+ |
+|   |   | [Enter: Open]  [Ctrl+D: Diff]  [Ctrl+G: Grep]  [Esc: Close]| |
+|   |   +-------------------------------------------------------------+ |
+|   |                                                                    |
++---+--------------------------------------------------------------------+</pre></div>
+
+  <h3>7.4 Notification Toast</h3>
+  <div class="wireframe"><pre>+---+--------------------------------------------------------------------+
+|   |                                                   +--------------+ |
+| S |                                                   | ! Claude #2  | |
+| I |   (normal terminal workspace)                     | needs input  | |
+| D |                                                   | in vibeide   | |
+| E |                                                   | [Go to]      | |
+| B |                                                   +--------------+ |
+| A |                                                                    |
+| R |   +-----------------------------+  +-----------------------------+ |
+|   |   | (terminal pane 1)           |  | (terminal pane 2)           | |
+|   |   |                             |  |                             | |
+|   |   ...                                                              |</pre></div>
+
+  <h3>7.5 Command Palette</h3>
+  <div class="wireframe"><pre>+---+--------------------------------------------------------------------+
+|   |                                                                    |
+| S |   (dimmed terminal content)                                        |
+| I |                                                                    |
+| D |          +---- Command Palette (50% width, top) --------+         |
+| E |          | &gt; [split v___]                                |         |
+| B |          |                                               |         |
+| A |          | LAYOUT                                        |         |
+| R |          |   &gt; Split Vertical            Ctrl+Shift+D   |         |
+|   |          |     Split Horizontal          Ctrl+Shift+E   |         |
+|   |          |                                               |         |
+|   |          | RECENT                                        |         |
+|   |          |     New Claude Agent           Ctrl+Shift+1   |         |
+|   |          |     Close Pane                 Ctrl+Shift+W   |         |
+|   |          +-----------------------------------------------+         |
+|   |                                                                    |
+|   |   +-----------------------------+  +-----------------------------+ |
+|   |   | (terminal pane 1, dimmed)   |  | (terminal pane 2, dimmed)   | |
+|   |   ...                                                              |</pre></div>
+
+  <h3>7.6 Voice Input Active</h3>
+  <div class="wireframe"><pre>+---+--------------------------------------------------------------------+
+|   |                                                                    |
+| S |   (normal terminal workspace, slightly dimmed)                     |
+| I |                                                                    |
+| D |   +-----------------------------+  +-----------------------------+ |
+| E |   | (terminal pane 1)           |  | (terminal pane 2)           | |
+| B |   |                             |  |                             | |
+| A |   ...                                                              |
+| R |                                                                    |
+|   |   +------------------------------------------------------------+ |
+|   |   | 🎙 VOICE [recording...]                                     | |
+|   |   | "Add pagination to the users API endpoint using cursor..."  | |
+|   |   |                                      [Send] [Cancel] [Edit] | |
+|   |   +------------------------------------------------------------+ |
+|   |                                                                    |
++---+--------------------------------------------------------------------+</pre></div>
+  <p>The voice transcript bar sits at the bottom, docked. It appears when push-to-talk is held and shows the live transcript. On release, the user can review, edit, send, or cancel.</p>
+</section>
+
+<!-- ================================================================ -->
+<!-- 8. ARCHITECTURE -->
+<!-- ================================================================ -->
+<section id="architecture">
+  <h2>8. Phase 2 Technical Architecture</h2>
+
+  <p>Phase 2 uses a <strong>crate-based approach</strong> (NOT a WezTerm fork). Each responsibility is handled by a focused, battle-tested Rust crate composed into a unified application.</p>
+
+  <h3>Core Crates</h3>
+  <div class="arch-block"><pre><code>Core crates:
+├── wgpu              → GPU rendering (WebGPU backend)
+├── portable-pty      → PTY management (from WezTerm)
+├── alacritty_terminal → VT parser + terminal state machine
+├── cosmic-text       → Text shaping + glyph cache (System76)
+├── egui              → UI chrome (sidebar, file explorer, notifications)
+├── tokio             → Async I/O for PTY streams
+├── notify            → File system watching for explorer
+└── whisper-rs        → Local speech-to-text (voice engine)</code></pre></div>
+
+  <h3>Architecture Principles</h3>
+  <ul>
+    <li>Terminal grid and UI chrome share the <strong>same wgpu render pass</strong></li>
+    <li>egui renders sidebar, file explorer, notifications on the <strong>same GPU context</strong></li>
+    <li>Voice engine runs as a <strong>separate async task</strong>, feeds into command router</li>
+    <li>Project data model: <strong>Project &rarr; Agents &rarr; Terminals</strong> (hierarchical)</li>
+    <li><strong>WASM plugin system</strong> for extensibility (wasmtime)</li>
+  </ul>
+
+  <h3>Voice Input Flow</h3>
+  <div class="arch-block"><pre><code>Microphone → Whisper (local) or Cloud STT
+  → Command router
+    → If app command ("vibeide split vertical"): execute
+    → If agent prompt: pipe to focused terminal's stdin
+    → If ambiguous: show in command palette for confirmation</code></pre></div>
+
+  <h3>Notification System Configuration</h3>
+  <table>
+    <thead><tr><th>Event</th><th>Visual</th><th>Sound</th><th>Steal Focus</th></tr></thead>
+    <tbody>
+      <tr><td><span class="dot dot-amber"></span>Needs Input</td><td>Pulse</td><td>Chime</td><td>Configurable</td></tr>
+      <tr><td><span class="dot dot-blue"></span>Agent Complete</td><td>Badge</td><td>Ding</td><td>Never</td></tr>
+      <tr><td><span class="dot dot-red"></span>Agent Error</td><td>Red dot</td><td>Alert</td><td>Configurable</td></tr>
+      <tr><td><span class="dot dot-green"></span>Build Done</td><td>Badge</td><td>None</td><td>Never</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Workspace Templates</h3>
+  <div class="arch-block"><pre><code>~/.vibeide/templates/
+├── default/          ← ECC + standard skills
+│   ├── agents.json   ← Which agents to spawn
+│   ├── layout.json   ← Terminal arrangement
+│   └── plugins/      ← Shared plugins
+├── frontend/         ← React project template
+└── backend/          ← API project template</code></pre></div>
+</section>
+
+<!-- ================================================================ -->
+<!-- 9. SOURCES -->
+<!-- ================================================================ -->
+<section id="sources">
+  <h2>9. Sources</h2>
+  <ul>
+    <li><a href="https://stormy.ai/blog/10x-vibe-coder-workflow-claude-code-cursor" target="_blank">The 10x Vibe Coder Workflow: Claude Code and Cursor Simultaneously</a></li>
+    <li><a href="https://www.sitepoint.com/vibe-coding-complete-developers-guide/" target="_blank">Vibe Coding: The Complete Developer's Guide (2026)</a></li>
+    <li><a href="https://redreamality.com/blog/ai-coding-tools-war-vibe-coding-mainstream/" target="_blank">The AI Coding Tools War of 2026</a></li>
+    <li><a href="https://code.claude.com/docs/en/agent-teams" target="_blank">Claude Code Agent Teams Documentation</a></li>
+    <li><a href="https://github.com/smtg-ai/claude-squad" target="_blank">claude-squad: Manage Multiple AI Terminal Agents</a></li>
+    <li><a href="https://simonwillison.net/2025/Oct/5/parallel-coding-agents/" target="_blank">Embracing the Parallel Coding Agent Lifestyle &mdash; Simon Willison</a></li>
+    <li><a href="https://vibecoding.app/blog/agentmaxxing" target="_blank">Agentmaxxing: Run Multiple AI Agents in Parallel (2026)</a></li>
+    <li><a href="https://www.bridgemind.ai/products/bridgespace" target="_blank">BridgeSpace: Agentic Development Environment</a></li>
+    <li><a href="https://agents-ui.com/" target="_blank">Agents UI: AI Coding Agent Terminal for macOS</a></li>
+    <li><a href="https://thenewstack.io/how-warp-went-from-terminal-to-agentic-development-environment/" target="_blank">How Warp Went From Terminal to Agentic Development Environment</a></li>
+    <li><a href="https://www.warp.dev/blog/reimagining-coding-agentic-development-environment" target="_blank">Warp 2.0: The Agentic Development Environment</a></li>
+    <li><a href="https://github.com/zellij-org/zellij" target="_blank">Zellij: A Terminal Workspace with Batteries Included</a></li>
+    <li><a href="https://redmonk.com/kholterhoff/2025/12/22/10-things-developers-want-from-their-agentic-ides-in-2025/" target="_blank">10 Things Developers Want from their Agentic IDEs in 2025 &mdash; RedMonk</a></li>
+    <li><a href="https://www.digitalapplied.com/blog/claude-code-voice-mode-batch-hands-free-coding-workflow" target="_blank">Claude Code Voice Mode: Hands-Free Coding Workflow</a></li>
+    <li><a href="https://murmur-app.com/en/blog/voice-coding-complete-guide" target="_blank">Voice Coding in 2026: The Complete Guide &mdash; Murmur</a></li>
+    <li><a href="https://wisprflow.ai/vibe-coding" target="_blank">Vibe Coding: AI + Voice = The New Developer Workflow &mdash; Wispr Flow</a></li>
+    <li><a href="https://medium.com/@haberlah/configure-claude-code-to-power-your-agent-team-90c8d3bca392" target="_blank">Configure Claude Code to Power Your Agent Team &mdash; David Haberlah</a></li>
+    <li><a href="https://devcontext.io/blog/complete-guide-development-context-management-2025" target="_blank">Complete Guide to Development Context Management 2025</a></li>
+    <li><a href="https://www.raycast.com/" target="_blank">Raycast: Your Shortcut to Everything</a></li>
+  </ul>
+</section>
+
+<hr>
+<p style="text-align: center; color: var(--text-muted); font-size: 0.85rem;">VibeIDE Phase 2 Research &mdash; March 2026 &mdash; Confidential</p>
+
+</div>
+</body>
+</html>
