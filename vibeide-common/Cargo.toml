@@ -1,0 +1,11 @@
+[package]
+name = "vibeide-common"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
