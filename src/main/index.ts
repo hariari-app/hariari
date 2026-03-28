@@ -126,14 +126,14 @@ app.whenReady().then(() => {
     });
   });
 
-  // Allow microphone and speech recognition access for voice input
+  // Allow microphone, speech, and clipboard access
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    const allowedPermissions = ['media', 'audioCapture', 'speech', 'microphone'];
+    const allowedPermissions = ['media', 'audioCapture', 'speech', 'microphone', 'clipboard-read', 'clipboard-write', 'clipboard-sanitized-write'];
     callback(allowedPermissions.includes(permission));
   });
 
   session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
-    const allowedPermissions = ['media', 'audioCapture', 'speech', 'microphone'];
+    const allowedPermissions = ['media', 'audioCapture', 'speech', 'microphone', 'clipboard-read', 'clipboard-write', 'clipboard-sanitized-write'];
     return allowedPermissions.includes(permission);
   });
 

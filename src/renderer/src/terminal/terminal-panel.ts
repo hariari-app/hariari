@@ -39,6 +39,8 @@ export class TerminalPanel {
       cursorBlink: true,
       cursorStyle: 'block',
       theme: getTheme(savedTheme).terminal,
+      rightClickSelectsWord: true,
+      allowProposedApi: true,
     });
 
     this.fitAddon = new FitAddon();
@@ -74,6 +76,36 @@ export class TerminalPanel {
     }
 
     this.terminalSearch = new TerminalSearch(this);
+
+    // Clipboard: copy selection on Ctrl+Shift+C, paste on Ctrl+Shift+V
+    this.terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key === 'C' && e.type === 'keydown') {
+        const selection = this.terminal.getSelection();
+        if (selection) {
+          navigator.clipboard.writeText(selection);
+        }
+        return false; // prevent xterm from handling
+      }
+      if (e.ctrlKey && e.shiftKey && e.key === 'V' && e.type === 'keydown') {
+        navigator.clipboard.readText().then((text) => {
+          if (text) {
+            window.api.pty.write({ sessionId: this._sessionId, data: text });
+          }
+        });
+        return false;
+      }
+      return true;
+    });
+
+    // Right-click: paste from clipboard
+    element.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      navigator.clipboard.readText().then((text) => {
+        if (text) {
+          window.api.pty.write({ sessionId: this._sessionId, data: text });
+        }
+      });
+    });
 
     this.fit();
   }

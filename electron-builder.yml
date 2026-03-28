@@ -23,6 +23,7 @@ linux:
   desktop:
     StartupWMClass: vibeide
 deb:
+  afterInstall: scripts/post-install.sh
   depends:
     - libgtk-3-0
     - libnotify4

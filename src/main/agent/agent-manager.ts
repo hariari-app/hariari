@@ -46,18 +46,34 @@ export class AgentManager {
       this.sendToRenderer(IPC_CHANNELS.PTY_DATA, { sessionId, data });
     });
 
-    // Periodically check if the agent is waiting for input
+    // Track whether output is actively flowing
+    let lastOutputTime = Date.now();
+    const originalAppend = outputBuffer.append.bind(outputBuffer);
+    outputBuffer.append = (data: string) => {
+      lastOutputTime = Date.now();
+      originalAppend(data);
+    };
+
+    // Periodically check agent state
     const inputCheckTimer = setInterval(() => {
       const agent = this.agents.get(agentId);
-      if (!agent || agent.status === 'stopped' || agent.status === 'error') {
+      if (!agent || agent.status === 'complete' || agent.status === 'error' || agent.status === 'stopped') {
         this.clearInputCheck(agentId);
         return;
       }
 
       const needsInput = detectNeedsInput(outputBuffer.getRecent());
+      const timeSinceOutput = Date.now() - lastOutputTime;
+
       if (needsInput && agent.status !== 'needs-input') {
         this.updateAgentStatus(agentId, 'needs-input');
       } else if (!needsInput && agent.status === 'needs-input') {
+        this.updateAgentStatus(agentId, 'running');
+      } else if (!needsInput && agent.status === 'running' && timeSinceOutput > 3000) {
+        // No output for 3 seconds and no input prompt — agent is idle (shell at prompt)
+        this.updateAgentStatus(agentId, 'idle');
+      } else if (agent.status === 'idle' && timeSinceOutput < 1000) {
+        // Output resumed — back to running
         this.updateAgentStatus(agentId, 'running');
       }
     }, INPUT_CHECK_INTERVAL_MS);
@@ -66,7 +82,9 @@ export class AgentManager {
     session.onExit((exitCode) => {
       this.clearInputCheck(agentId);
       this.outputBuffers.delete(agentId);
-      this.updateAgentStatus(agentId, 'stopped');
+      // Exit code 0 = complete (blue), non-zero = error (red)
+      const exitStatus = exitCode === 0 ? 'complete' : 'error';
+      this.updateAgentStatus(agentId, exitStatus);
       this.sendToRenderer(IPC_CHANNELS.AGENT_EXIT, { agentId, exitCode });
     });
 

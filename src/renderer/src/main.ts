@@ -273,7 +273,8 @@ function main(): void {
 
   const unsubExit = window.api.agent.onExit((event) => {
     workspaceSwitcher.handleAgentExit(event.agentId, event.exitCode);
-    projectSidebar.updateAgentStatus(event.agentId, 'stopped');
+    const exitStatus = event.exitCode === 0 ? 'complete' : 'error';
+    projectSidebar.updateAgentStatus(event.agentId, exitStatus as any);
 
     // Desktop notification for agent completion/error
     const activeId = workspaceSwitcher.getActiveProjectId();

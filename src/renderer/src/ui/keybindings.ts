@@ -25,13 +25,19 @@ export class KeybindingManager {
   }
 
   private handleKeydown(e: KeyboardEvent): void {
+    // Let clipboard shortcuts through to native inputs and terminals
+    const target = e.target as HTMLElement;
+    const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
+    const isClipboard = e.ctrlKey && !e.altKey && (e.key === 'c' || e.key === 'v' || e.key === 'x' || e.key === 'a');
+    const isTerminalClipboard = e.ctrlKey && e.shiftKey && (e.key === 'C' || e.key === 'V');
+
+    if (isInput && isClipboard) return; // native copy/paste/cut/select-all in inputs
+    if (isTerminalClipboard) return; // Ctrl+Shift+C/V handled by xterm.js
+
     const key = this.normalizeEvent(e);
     if (!key) return;
 
     const action = this.bindings.get(key);
-    if (!action && (e.ctrlKey || e.key.startsWith('F'))) {
-      console.log(`[Keybindings] Unmatched key: "${key}" (e.key="${e.key}")`);
-    }
     if (action) {
       e.preventDefault();
       e.stopPropagation();

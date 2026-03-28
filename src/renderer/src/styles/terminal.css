@@ -234,8 +234,15 @@
 }
 
 /* ============================================
-   Status dots
+   Status indicators (dot + symbol)
    ============================================ */
+.status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
 .status-dot {
   width: 8px;
   height: 8px;
@@ -244,19 +251,60 @@
   flex-shrink: 0;
 }
 
+.status-symbol {
+  font-size: 9px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  line-height: 1;
+}
+
+/* Running — green dot + ||| animated */
 .status-running { background: var(--success); }
-.status-starting { background: var(--warning); }
+.status-symbol-running {
+  color: var(--success);
+  animation: bars-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes bars-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Needs Input — amber dot pulsing + ! */
 .status-needs-input {
   background: var(--warning);
   animation: pulse-input 1s ease-in-out infinite;
 }
-.status-error { background: var(--error); }
-.status-stopped { background: var(--fg-faint); }
+.status-symbol-needs-input {
+  color: var(--warning);
+  animation: pulse-input 1s ease-in-out infinite;
+  font-size: 11px;
+}
 
 @keyframes pulse-input {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(224, 175, 104, 0.4); }
-  50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(224, 175, 104, 0); }
+  50% { opacity: 0.5; box-shadow: 0 0 0 4px rgba(224, 175, 104, 0); }
 }
+
+/* Error — red dot + x */
+.status-error { background: var(--error); }
+.status-symbol-error { color: var(--error); }
+
+/* Complete — blue dot + ✓ */
+.status-complete { background: var(--accent); }
+.status-symbol-complete { color: var(--accent); }
+
+/* Idle — gray dot + - */
+.status-idle { background: var(--fg-faint); }
+.status-symbol-idle { color: var(--fg-faint); }
+
+/* Starting — amber dot */
+.status-starting { background: var(--warning); }
+.status-symbol-starting { color: var(--warning); }
+
+/* Stopped — gray dot (legacy, same as idle visually) */
+.status-stopped { background: var(--fg-faint); }
+.status-symbol-stopped { color: var(--fg-faint); }
 
 /* ============================================
    Agent status bar (per-terminal)
@@ -282,6 +330,26 @@
 
 .agent-status-bar.needs-input .status-bar-status {
   color: var(--warning);
+  font-weight: 600;
+}
+
+.agent-status-bar.status-bar-error {
+  background: rgba(247, 118, 142, 0.1);
+  border-bottom-color: var(--error);
+}
+
+.agent-status-bar.status-bar-error .status-bar-status {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.agent-status-bar.status-bar-complete {
+  background: rgba(122, 162, 247, 0.1);
+  border-bottom-color: var(--accent);
+}
+
+.agent-status-bar.status-bar-complete .status-bar-status {
+  color: var(--accent);
   font-weight: 600;
 }
 

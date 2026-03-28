@@ -202,12 +202,13 @@ export class ProjectWorkspace {
     tracked.statusBar.updateStatus(status);
   }
 
-  handleAgentExit(agentId: string, _exitCode: number): void {
+  handleAgentExit(agentId: string, exitCode: number): void {
     const tracked = this.tracked.get(agentId);
     if (!tracked) return;
-    const updatedInfo: AgentInfo = { ...tracked.info, status: 'stopped' };
+    const exitStatus = exitCode === 0 ? 'complete' : 'error';
+    const updatedInfo: AgentInfo = { ...tracked.info, status: exitStatus };
     this.tracked.set(agentId, { ...tracked, info: updatedInfo });
-    tracked.statusBar.updateStatus('stopped');
+    tracked.statusBar.updateStatus(exitStatus);
   }
 
   hasAgent(agentId: string): boolean {

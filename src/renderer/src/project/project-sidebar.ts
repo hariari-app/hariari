@@ -1,5 +1,7 @@
 import type { ProjectInfo } from '../../../shared/ipc-types';
 import type { AgentInfo, AgentType } from '../../../shared/agent-types';
+import { createStatusIndicator, updateStatusIndicator } from '../ui/status-indicator';
+import { createAgentIcon } from '../ui/agent-icons';
 
 export interface ProjectSidebarCallbacks {
   readonly onProjectSelect: (project: ProjectInfo) => void;
@@ -140,19 +142,19 @@ export class ProjectSidebar {
         // Targeted: update status dot only
         this.updateProjectDot(projectId);
 
-        // Update the specific agent's dot in the expanded list
+        // Update the specific agent's indicator in the expanded list
         if (entry.expanded) {
-          const agentDot = this.container.querySelector(
-            `[data-agent-id="${agentId}"] .status-dot`,
+          const agentIndicator = this.container.querySelector(
+            `[data-agent-id="${agentId}"] .status-indicator`,
           ) as HTMLElement | null;
-          if (agentDot) {
-            agentDot.className = `status-dot status-${status}`;
+          if (agentIndicator) {
+            updateStatusIndicator(agentIndicator, status);
           }
         }
 
         // Add notification badge if this is a non-active project
         if (projectId !== this.activeProjectId &&
-            (status === 'needs-input' || status === 'stopped' || status === 'error')) {
+            (status === 'needs-input' || status === 'complete' || status === 'error')) {
           this.incrementNotification(projectId);
         }
         return;
@@ -260,8 +262,7 @@ export class ProjectSidebar {
       this.renderAgentList(entry.project.id);
     });
 
-    const dot = document.createElement('span');
-    dot.className = `status-dot status-${this.getAggregateStatus(entry.agents)}`;
+    const dot = createStatusIndicator(this.getAggregateStatus(entry.agents));
 
     const pinIndicator = document.createElement('span');
     pinIndicator.className = 'project-pin-indicator';
@@ -344,8 +345,8 @@ export class ProjectSidebar {
         this.callbacks.onAgentSelect(agent.id, agent.sessionId);
       });
 
-      const agentDot = document.createElement('span');
-      agentDot.className = `status-dot status-${agent.status}`;
+      const agentDot = createStatusIndicator(agent.status);
+      const agentIcon = createAgentIcon(agent.config.type, 13);
 
       const agentLabel = document.createElement('span');
       agentLabel.className = 'agent-label';
@@ -356,6 +357,7 @@ export class ProjectSidebar {
       agentBadge.textContent = agent.config.type;
 
       agentEl.appendChild(agentDot);
+      agentEl.appendChild(agentIcon);
       agentEl.appendChild(agentLabel);
       agentEl.appendChild(agentBadge);
       agentList.appendChild(agentEl);
@@ -370,7 +372,7 @@ export class ProjectSidebar {
     const refs = this.domRefs.get(projectId);
     const entry = this.entries.get(projectId);
     if (!refs || !entry) return;
-    refs.dot.className = `status-dot status-${this.getAggregateStatus(entry.agents)}`;
+    updateStatusIndicator(refs.dot, this.getAggregateStatus(entry.agents));
   }
 
   private updateCountBadge(projectId: string): void {
@@ -616,11 +618,12 @@ export class ProjectSidebar {
   // --- Private: Helpers ---
 
   private getAggregateStatus(agents: AgentInfo[]): string {
-    if (agents.length === 0) return 'stopped';
+    if (agents.length === 0) return 'idle';
     if (agents.some((a) => a.status === 'needs-input')) return 'needs-input';
     if (agents.some((a) => a.status === 'error')) return 'error';
     if (agents.some((a) => a.status === 'running')) return 'running';
     if (agents.some((a) => a.status === 'starting')) return 'starting';
-    return 'stopped';
+    if (agents.some((a) => a.status === 'complete')) return 'complete';
+    return 'idle';
   }
 }

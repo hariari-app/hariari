@@ -1,8 +1,20 @@
 import type { AgentInfo, AgentStatus } from '../../../shared/agent-types';
+import { createStatusIndicator, updateStatusIndicator } from '../ui/status-indicator';
+import { createAgentIcon } from '../ui/agent-icons';
+
+const STATUS_LABELS: Record<string, string> = {
+  'running': 'RUNNING',
+  'needs-input': 'NEEDS INPUT',
+  'error': 'ERROR',
+  'complete': 'COMPLETE',
+  'idle': 'IDLE',
+  'starting': 'STARTING',
+  'stopped': 'STOPPED',
+};
 
 export class AgentStatusBar {
   private readonly element: HTMLElement;
-  private readonly dotEl: HTMLElement;
+  private readonly indicatorEl: HTMLElement;
   private readonly statusTextEl: HTMLElement;
   private readonly uptimeEl: HTMLElement;
   private uptimeInterval: ReturnType<typeof setInterval> | null = null;
@@ -16,16 +28,17 @@ export class AgentStatusBar {
     this.element = document.createElement('div');
     this.element.className = 'agent-status-bar';
 
+    const agentIcon = createAgentIcon(agentInfo.config.type, 14);
+
     const typeLabel = document.createElement('span');
     typeLabel.className = 'status-bar-type';
     typeLabel.textContent = agentInfo.config.label || agentInfo.config.type;
 
-    this.dotEl = document.createElement('span');
-    this.dotEl.className = `status-dot status-${agentInfo.status}`;
+    this.indicatorEl = createStatusIndicator(agentInfo.status);
 
     this.statusTextEl = document.createElement('span');
     this.statusTextEl.className = 'status-bar-status';
-    this.statusTextEl.textContent = agentInfo.status;
+    this.statusTextEl.textContent = STATUS_LABELS[agentInfo.status] ?? agentInfo.status;
 
     this.uptimeEl = document.createElement('span');
     this.uptimeEl.className = 'status-bar-uptime';
@@ -39,7 +52,8 @@ export class AgentStatusBar {
       this.onKill();
     });
 
-    this.element.appendChild(this.dotEl);
+    this.element.appendChild(this.indicatorEl);
+    this.element.appendChild(agentIcon);
     this.element.appendChild(typeLabel);
     this.element.appendChild(this.statusTextEl);
     this.element.appendChild(this.uptimeEl);
@@ -53,16 +67,20 @@ export class AgentStatusBar {
   }
 
   updateStatus(status: AgentStatus): void {
-    this.dotEl.className = `status-dot status-${status}`;
-    this.statusTextEl.textContent = status === 'needs-input' ? 'NEEDS INPUT' : status;
+    updateStatusIndicator(this.indicatorEl, status);
+    this.statusTextEl.textContent = STATUS_LABELS[status] ?? status;
 
+    // Highlight bar for needs-input and error
+    this.element.classList.remove('needs-input', 'status-bar-error', 'status-bar-complete');
     if (status === 'needs-input') {
       this.element.classList.add('needs-input');
-    } else {
-      this.element.classList.remove('needs-input');
+    } else if (status === 'error') {
+      this.element.classList.add('status-bar-error');
+    } else if (status === 'complete') {
+      this.element.classList.add('status-bar-complete');
     }
 
-    if (status === 'stopped' || status === 'error') {
+    if (status === 'stopped' || status === 'error' || status === 'complete') {
       this.stopUptimeCounter();
     }
   }
