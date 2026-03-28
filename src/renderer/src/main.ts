@@ -11,6 +11,7 @@ import { applyTheme, loadSavedTheme } from './terminal/terminal-theme';
 import { LAYOUT_PRESETS } from './layout/layout-presets';
 import { FileViewer } from './file/file-viewer';
 import { VoiceCapture } from './voice/voice-capture';
+import { VoiceRouter } from './voice/voice-router';
 import type { ProjectInfo, AppState } from '../../shared/ipc-types';
 import type { AgentType } from '../../shared/agent-types';
 
@@ -351,21 +352,65 @@ function main(): void {
   });
 
   // Voice input
+  // Voice command router — detects "vibeide <command>" vs terminal text
+  const voiceRouter = new VoiceRouter((text) => {
+    const workspace = workspaceSwitcher.getActiveWorkspace();
+    if (!workspace) return;
+    const leafId = workspace.layoutManager.getFocusedLeafId();
+    if (!leafId) return;
+    const leafEl = document.querySelector(`[data-leaf-id="${leafId}"]`) as HTMLElement | null;
+    const sessionId = leafEl?.dataset.sessionId ?? null;
+    if (sessionId) {
+      window.api.pty.write({ sessionId, data: text });
+    }
+  });
+
+  // Register voice commands for app actions
+  voiceRouter.registerCommand({ id: 'split-vertical', aliases: ['split vertical', 'split vertically', 'vertical split'], action: () => spawnInActiveProject('shell', 'vertical') });
+  voiceRouter.registerCommand({ id: 'split-horizontal', aliases: ['split horizontal', 'split horizontally', 'horizontal split'], action: () => spawnInActiveProject('shell', 'horizontal') });
+  voiceRouter.registerCommand({ id: 'new-shell', aliases: ['new shell', 'new terminal', 'open shell', 'open terminal'], action: () => spawnInActiveProject('shell') });
+  voiceRouter.registerCommand({ id: 'new-claude', aliases: ['new claude', 'open claude', 'start claude', 'claude agent', 'new cloud', 'open cloud'], action: () => spawnInActiveProject('claude') });
+  voiceRouter.registerCommand({ id: 'new-gemini', aliases: ['new gemini', 'open gemini', 'start gemini', 'gemini agent'], action: () => spawnInActiveProject('gemini') });
+  voiceRouter.registerCommand({ id: 'new-codex', aliases: ['new codex', 'open codex', 'start codex', 'codex agent'], action: () => spawnInActiveProject('codex') });
+  voiceRouter.registerCommand({ id: 'close-pane', aliases: ['close pane', 'close terminal', 'close this', 'close tab'], action: () => closeFocused() });
+  voiceRouter.registerCommand({ id: 'toggle-sidebar', aliases: ['toggle sidebar', 'hide sidebar', 'show sidebar', 'sidebar'], action: () => projectSidebar.toggleCollapse() });
+  voiceRouter.registerCommand({ id: 'command-palette', aliases: ['command palette', 'commands', 'open commands', 'show commands'], action: () => commandPalette.toggle() });
+  voiceRouter.registerCommand({ id: 'file-viewer', aliases: ['open files', 'file viewer', 'show files', 'browse files', 'file browser'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) fileViewer.toggle(ws.projectPath); } });
+  voiceRouter.registerCommand({ id: 'search', aliases: ['search', 'find', 'search terminal', 'find in terminal'], action: () => toggleSearchOnFocused() });
+  voiceRouter.registerCommand({ id: 'zoom-in', aliases: ['zoom in', 'make bigger', 'increase size'], action: () => window.api.window.zoomIn() });
+  voiceRouter.registerCommand({ id: 'zoom-out', aliases: ['zoom out', 'make smaller', 'decrease size'], action: () => window.api.window.zoomOut() });
+  voiceRouter.registerCommand({ id: 'zoom-reset', aliases: ['reset zoom', 'normal size', 'default size'], action: () => window.api.window.zoomReset() });
+  voiceRouter.registerCommand({ id: 'font-increase', aliases: ['bigger font', 'increase font', 'larger font', 'font bigger'], action: () => changeTerminalFontSize(1) });
+  voiceRouter.registerCommand({ id: 'font-decrease', aliases: ['smaller font', 'decrease font', 'font smaller'], action: () => changeTerminalFontSize(-1) });
+
+  // Theme commands
+  const themeNames = ['tokyo night', 'tokyo night light', 'solarized dark', 'dracula', 'nord', 'gruvbox dark', 'one dark', 'catppuccin mocha', 'monokai'];
+  const themeIds = ['tokyoNight', 'tokyoNightLight', 'solarizedDark', 'dracula', 'nord', 'gruvboxDark', 'oneDark', 'catppuccinMocha', 'monokai'];
+  for (let i = 0; i < themeNames.length; i++) {
+    const id = themeIds[i];
+    voiceRouter.registerCommand({ id: `theme-${id}`, aliases: [`theme ${themeNames[i]}`, themeNames[i], `switch to ${themeNames[i]}`], action: () => switchTheme(id) });
+  }
+
+  // Layout presets
+  for (const preset of LAYOUT_PRESETS) {
+    voiceRouter.registerCommand({ id: `preset-${preset.id}`, aliases: [`layout ${preset.label.toLowerCase()}`, preset.label.toLowerCase()], action: () => { applyPresetToActive(preset.id).catch(() => {}); } });
+  }
+
+  // Voice mode: 'dictation' types into terminal, 'command' matches app commands
+  let voiceMode: 'dictation' | 'command' = 'dictation';
+
   const voiceCapture = new VoiceCapture(
     (text) => {
-      console.log(`[Voice] Transcript received: "${text}"`);
-      // Type transcribed text into the focused terminal
-      const workspace = workspaceSwitcher.getActiveWorkspace();
-      if (!workspace) { console.log('[Voice] No active workspace'); return; }
-      const leafId = workspace.layoutManager.getFocusedLeafId();
-      if (!leafId) { console.log('[Voice] No focused leaf'); return; }
-      const leafEl = document.querySelector(`[data-leaf-id="${leafId}"]`) as HTMLElement | null;
-      const sessionId = leafEl?.dataset.sessionId ?? null;
-      if (sessionId) {
-        console.log(`[Voice] Writing to session ${sessionId}`);
-        window.api.pty.write({ sessionId, data: text });
+      console.log(`[Voice] Transcript (${voiceMode}): "${text}"`);
+      if (voiceMode === 'command') {
+        const result = voiceRouter.routeCommand(text);
+        if (result.matched) {
+          console.log(`[Voice] Command matched: ${result.command}`);
+        } else {
+          console.log(`[Voice] No command match for: "${text}"`);
+        }
       } else {
-        console.log('[Voice] No sessionId on leaf');
+        voiceRouter.routeDictation(text);
       }
     },
     (_state) => {
@@ -378,7 +423,7 @@ function main(): void {
 
   commandPalette.register({
     id: 'voice-toggle',
-    label: 'Toggle Voice Input',
+    label: 'Voice Dictation (hold to talk)',
     shortcut: 'Ctrl+Shift+M (hold)',
     action: () => voiceCapture.toggle(),
   });
@@ -527,7 +572,11 @@ function main(): void {
     'close-pane': { action: () => closeFocused() },
     'search-terminal': { action: () => toggleSearchOnFocused() },
     'voice-push-to-talk': {
-      action: () => voiceCapture.startListening(),
+      action: () => { voiceMode = 'dictation'; voiceCapture.startListening(); },
+      holdUp: () => voiceCapture.stopListening(),
+    },
+    'voice-command': {
+      action: () => { voiceMode = 'command'; voiceCapture.startListening(); },
       holdUp: () => voiceCapture.stopListening(),
     },
     'font-increase': { action: () => changeTerminalFontSize(1) },
