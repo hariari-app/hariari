@@ -1,4 +1,5 @@
 import { postProcessTranscription, type PostProcessMode } from './voice-postprocessor';
+import { formatWithLLM } from './voice-formatter';
 
 export type VoiceState = 'idle' | 'listening' | 'processing' | 'error';
 export type VoiceTranscriptCallback = (text: string) => void;
@@ -85,6 +86,8 @@ export class VoiceCapture {
   private indicatorEl: HTMLElement | null = null;
   private useMediaRecorder = false;
   private postProcessMode: PostProcessMode = 'command';
+  private warmStream: MediaStream | null = null;
+  private stopTailTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(onTranscript: VoiceTranscriptCallback, onStateChange: VoiceStateCallback) {
     this.onTranscript = onTranscript;
@@ -157,8 +160,14 @@ export class VoiceCapture {
       this.setState('processing');
       this.recognition.stop();
     } else if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
-      this.setState('processing');
-      this.mediaRecorder.stop();
+      // Tail delay — keep recording for 500ms after key release to capture final words
+      this.stopTailTimer = setTimeout(() => {
+        this.stopTailTimer = null;
+        if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+          this.setState('processing');
+          this.mediaRecorder.stop();
+        }
+      }, 500);
     }
   }
 
@@ -171,6 +180,10 @@ export class VoiceCapture {
   }
 
   forceStop(): void {
+    if (this.stopTailTimer) {
+      clearTimeout(this.stopTailTimer);
+      this.stopTailTimer = null;
+    }
     if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
       this.mediaRecorder.stop();
     } else if (this.recognition) {
@@ -181,6 +194,10 @@ export class VoiceCapture {
   }
 
   dispose(): void {
+    if (this.stopTailTimer) {
+      clearTimeout(this.stopTailTimer);
+      this.stopTailTimer = null;
+    }
     if (this.recognition) {
       this.recognition.abort();
       this.recognition = null;
@@ -190,6 +207,10 @@ export class VoiceCapture {
         this.mediaRecorder.stop();
       }
       this.mediaRecorder = null;
+    }
+    if (this.warmStream) {
+      this.warmStream.getTracks().forEach((t) => t.stop());
+      this.warmStream = null;
     }
     this.indicatorEl?.remove();
     this.indicatorEl = null;
@@ -258,6 +279,22 @@ export class VoiceCapture {
 
   // --- MediaRecorder + Cloud STT path ---
 
+  // Pre-warm the microphone stream so PTT starts instantly
+  private async ensureWarmStream(): Promise<MediaStream> {
+    if (this.warmStream) {
+      // Check if stream is still active
+      const tracks = this.warmStream.getAudioTracks();
+      if (tracks.length > 0 && tracks[0].readyState === 'live') {
+        return this.warmStream;
+      }
+    }
+    const audioConstraints: boolean | MediaTrackConstraints = voiceSettings.deviceId
+      ? { deviceId: { exact: voiceSettings.deviceId } }
+      : true;
+    this.warmStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+    return this.warmStream;
+  }
+
   private async startMediaRecorder(): Promise<void> {
     // Ensure settings are loaded before checking API key
     await loadVoiceSettings();
@@ -268,11 +305,14 @@ export class VoiceCapture {
       return;
     }
 
+    // Cancel any pending tail stop from a previous recording
+    if (this.stopTailTimer) {
+      clearTimeout(this.stopTailTimer);
+      this.stopTailTimer = null;
+    }
+
     try {
-      const audioConstraints: boolean | MediaTrackConstraints = voiceSettings.deviceId
-        ? { deviceId: { exact: voiceSettings.deviceId } }
-        : true;
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+      const stream = await this.ensureWarmStream();
       this.audioChunks = [];
       this.mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
 
@@ -283,8 +323,7 @@ export class VoiceCapture {
       };
 
       this.mediaRecorder.onstop = async () => {
-        // Stop all tracks
-        stream.getTracks().forEach((t) => t.stop());
+        // Don't kill the warm stream — keep it alive for next PTT press
 
         if (this.audioChunks.length === 0) {
           this.setState('idle');
@@ -297,12 +336,11 @@ export class VoiceCapture {
       };
 
       this.mediaRecorder.onerror = () => {
-        stream.getTracks().forEach((t) => t.stop());
         this.setState('error');
         setTimeout(() => { if (this.state === 'error') this.setState('idle'); }, 2000);
       };
 
-      this.mediaRecorder.start();
+      this.mediaRecorder.start(100); // Collect data every 100ms for faster chunks
       this.setState('listening');
     } catch (error) {
       console.error('[VoiceCapture] MediaRecorder failed:', error);
@@ -349,11 +387,26 @@ export class VoiceCapture {
       throw new Error(`Transcription error: ${result.error}`);
     }
 
-    const text = result.text?.trim();
-    if (text) {
-      this.onTranscript(text);
+    const rawText = result.text?.trim();
+    if (rawText) {
+      const formatted = await this.applyFormatting(rawText);
+      this.onTranscript(formatted);
     }
     this.setState('idle');
+  }
+
+  private async applyFormatting(rawText: string): Promise<string> {
+    if (this.postProcessMode === 'command' || this.postProcessMode === 'code') {
+      const apiKey = this.getApiKey();
+      const provider = this.getProvider();
+      if (apiKey && (provider === 'groq' || provider === 'openai')) {
+        try {
+          const llmResult = await formatWithLLM(rawText, apiKey, provider);
+          if (llmResult && llmResult !== rawText) return llmResult;
+        } catch { /* fall through */ }
+      }
+    }
+    return postProcessTranscription(rawText, this.postProcessMode);
   }
 
   private async transcribeOpenAI(audioBlob: Blob, apiKey: string): Promise<void> {
@@ -421,8 +474,8 @@ export class VoiceCapture {
     const result = await response.json();
     const rawText = result.text?.trim();
     if (rawText) {
-      const processed = postProcessTranscription(rawText, this.postProcessMode);
-      this.onTranscript(processed);
+      const formatted = await this.applyFormatting(rawText);
+      this.onTranscript(formatted);
     }
     this.setState('idle');
   }

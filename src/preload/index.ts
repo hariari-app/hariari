@@ -66,10 +66,14 @@ contextBridge.exposeInMainWorld('api', {
   voice: {
     transcribe: (request: { provider: string; apiKey: string; audioBase64: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.VOICE_TRANSCRIBE, request),
+    formatLLM: (request: { provider: string; apiKey: string; messages: Array<{ role: string; content: string }> }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.VOICE_FORMAT_LLM, request),
   },
   file: {
     listDir: (dirPath: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_LIST_DIR, dirPath),
+    listAll: (rootPath: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_LIST_ALL, rootPath),
     read: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_READ, filePath),
+    write: (filePath: string, content: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_WRITE, { path: filePath, content }),
   },
   notify: {
     show: (request: { title: string; body: string; urgency?: string }) =>

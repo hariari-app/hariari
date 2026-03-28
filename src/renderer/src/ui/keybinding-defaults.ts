@@ -8,6 +8,7 @@ export interface KeybindingDefinition {
 export const KEYBINDING_DEFAULTS: readonly KeybindingDefinition[] = [
   { id: 'command-palette', label: 'Command Palette', defaultKey: 'ctrl+shift+p' },
   { id: 'toggle-sidebar', label: 'Toggle Sidebar', defaultKey: 'ctrl+b' },
+  { id: 'file-finder', label: 'Quick Open File', defaultKey: 'ctrl+p' },
   { id: 'file-viewer', label: 'Open File Viewer', defaultKey: 'ctrl+shift+g' },
   { id: 'add-project', label: 'Add Project', defaultKey: 'ctrl+shift+o' },
   { id: 'new-shell', label: 'New Shell', defaultKey: 'ctrl+shift+n' },

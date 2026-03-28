@@ -218,6 +218,27 @@ export function registerIpcHandlers(
     }
   });
 
+  ipcMain.handle(IPC_CHANNELS.FILE_WRITE, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'object' || raw === null) return { error: 'invalid_request' };
+      const req = raw as Record<string, unknown>;
+      if (typeof req.path !== 'string' || typeof req.content !== 'string') {
+        return { error: 'invalid_request' };
+      }
+      // Safety: only write within home directory
+      const resolved = path.resolve(req.path);
+      const home = os.homedir();
+      if (!resolved.startsWith(home + path.sep) && resolved !== home) {
+        return { error: 'path_outside_home' };
+      }
+      fs.writeFileSync(resolved, req.content, 'utf-8');
+      return { success: true };
+    } catch (error) {
+      console.error('[IPC][file:write]', error);
+      return { error: 'write_failed' };
+    }
+  });
+
   // NOTE: keybindings and settings handlers are registered early in index.ts
   // to avoid race conditions with the renderer.
 
@@ -293,6 +314,59 @@ export function registerIpcHandlers(
     }
   });
 
+  // Voice LLM formatter (runs in main process to bypass CSP)
+  ipcMain.handle(IPC_CHANNELS.VOICE_FORMAT_LLM, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'object' || raw === null) return { error: 'invalid_request' };
+      const req = raw as Record<string, unknown>;
+      const provider = req.provider as string;
+      const apiKey = req.apiKey as string;
+      const messages = req.messages as Array<{ role: string; content: string }>;
+      if (!provider || !apiKey || !messages) return { error: 'missing_fields' };
+
+      let url: string;
+      let model: string;
+
+      if (provider === 'groq') {
+        url = 'https://api.groq.com/openai/v1/chat/completions';
+        model = 'llama-3.1-8b-instant';
+      } else if (provider === 'openai') {
+        url = 'https://api.openai.com/v1/chat/completions';
+        model = 'gpt-4o-mini';
+      } else {
+        return { error: 'unsupported_provider' };
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature: 0.1,
+          max_tokens: 500,
+        }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error(`[IPC][voice:format-llm] ${provider} error ${response.status}:`, errText);
+        return { error: `llm_error_${response.status}` };
+      }
+
+      const result = await response.json() as Record<string, unknown>;
+      const choices = result.choices as Array<{ message: { content: string } }>;
+      const text = choices?.[0]?.message?.content?.trim() ?? '';
+      return { text };
+    } catch (error) {
+      console.error('[IPC][voice:format-llm]', error);
+      return { error: 'format_failed' };
+    }
+  });
+
   // Notification handlers
   // File handlers
   ipcMain.handle(IPC_CHANNELS.FILE_LIST_DIR, async (_event, raw: unknown) => {
@@ -317,6 +391,64 @@ export function registerIpcHandlers(
     } catch (error) {
       console.error('[IPC][file:list-dir]', error);
       return { error: 'list_dir_failed' };
+    }
+  });
+
+  // Recursive file listing (respects .gitignore patterns)
+  ipcMain.handle(IPC_CHANNELS.FILE_LIST_ALL, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'string') return { error: 'invalid_path' };
+      const rootPath = raw;
+      const results: string[] = [];
+      const MAX_FILES = 5000;
+
+      // Load .gitignore patterns
+      const ignorePatterns = new Set([
+        'node_modules', '.git', 'dist', 'out', 'build', '.next',
+        '__pycache__', '.pytest_cache', 'target', '.cache',
+        'coverage', '.nyc_output', '.turbo', '.vercel',
+        'vendor', 'venv', '.venv', 'env',
+      ]);
+
+      try {
+        const gitignorePath = path.join(rootPath, '.gitignore');
+        if (fs.existsSync(gitignorePath)) {
+          const content = fs.readFileSync(gitignorePath, 'utf-8');
+          for (const line of content.split('\n')) {
+            const trimmed = line.trim();
+            if (trimmed && !trimmed.startsWith('#')) {
+              ignorePatterns.add(trimmed.replace(/\/$/, '').replace(/^\//,''));
+            }
+          }
+        }
+      } catch { /* ignore */ }
+
+      const walk = (dir: string, depth: number) => {
+        if (results.length >= MAX_FILES || depth > 15) return;
+        let entries: fs.Dirent[];
+        try {
+          entries = fs.readdirSync(dir, { withFileTypes: true, encoding: 'utf-8' }) as fs.Dirent[];
+        } catch { return; }
+
+        for (const entry of entries) {
+          if (results.length >= MAX_FILES) break;
+          if (entry.name.startsWith('.')) continue;
+          if (ignorePatterns.has(entry.name)) continue;
+
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            walk(fullPath, depth + 1);
+          } else if (entry.isFile()) {
+            results.push(path.relative(rootPath, fullPath));
+          }
+        }
+      };
+
+      walk(rootPath, 0);
+      return results.sort();
+    } catch (error) {
+      console.error('[IPC][file:list-all]', error);
+      return { error: 'list_all_failed' };
     }
   });
 

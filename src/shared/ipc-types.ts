@@ -151,10 +151,13 @@ export interface VibeIDEApi {
   };
   voice: {
     transcribe(request: { provider: string; apiKey: string; audioBase64: string }): Promise<{ text?: string; error?: string }>;
+    formatLLM(request: { provider: string; apiKey: string; messages: Array<{ role: string; content: string }> }): Promise<{ text?: string; error?: string }>;
   };
   file: {
     listDir(dirPath: string): Promise<FileEntry[]>;
+    listAll(rootPath: string): Promise<string[]>;
     read(filePath: string): Promise<FileContent>;
+    write(filePath: string, content: string): Promise<{ success?: boolean; error?: string }>;
   };
   notify: {
     show(request: { title: string; body: string; urgency?: 'low' | 'normal' | 'critical' }): Promise<void>;

@@ -10,6 +10,7 @@ import { KEYBINDING_DEFAULTS, loadUserKeybindings, loadUserKeybindingsAsync, get
 import { applyTheme, loadSavedTheme } from './terminal/terminal-theme';
 import { LAYOUT_PRESETS } from './layout/layout-presets';
 import { FileViewer } from './file/file-viewer';
+import { FileFinder } from './file/file-finder';
 import { VoiceCapture } from './voice/voice-capture';
 import { VoiceRouter } from './voice/voice-router';
 import type { ProjectInfo, AppState } from '../../shared/ipc-types';
@@ -139,10 +140,12 @@ function main(): void {
   hintBar.className = 'workspace-hint-bar';
   hintBar.innerHTML = `
     <span class="hint-item"><kbd>Ctrl+Shift+P</kbd> Commands</span>
+    <span class="hint-item"><kbd>Ctrl+P</kbd> Open File</span>
     <span class="hint-item"><kbd>Ctrl+Shift+D</kbd> Split</span>
     <span class="hint-item"><kbd>Ctrl+Shift+W</kbd> Close</span>
     <span class="hint-item"><kbd>Ctrl+B</kbd> Sidebar</span>
-    <span class="hint-item"><kbd>Ctrl+Shift+G</kbd> Files</span>
+    <span class="hint-item"><kbd>F3</kbd> Dictate</span>
+    <span class="hint-item"><kbd>F4</kbd> Voice Cmd</span>
   `;
   appEl.appendChild(hintBar);
 
@@ -339,6 +342,25 @@ function main(): void {
   // File viewer
   const fileViewer = new FileViewer();
 
+  // Fuzzy file finder — opens file in viewer
+  const fileFinder = new FileFinder(async (filePath) => {
+    const ws = workspaceSwitcher.getActiveWorkspace();
+    if (ws) {
+      await fileViewer.show(ws.projectPath);
+      fileViewer.openFile(filePath);
+    }
+  });
+
+  commandPalette.register({
+    id: 'file-finder',
+    label: 'Quick Open File',
+    shortcut: 'Ctrl+P',
+    action: () => {
+      const workspace = workspaceSwitcher.getActiveWorkspace();
+      if (workspace) fileFinder.toggle(workspace.projectPath);
+    },
+  });
+
   commandPalette.register({
     id: 'file-viewer',
     label: 'Open File Viewer',
@@ -375,6 +397,7 @@ function main(): void {
   voiceRouter.registerCommand({ id: 'close-pane', aliases: ['close pane', 'close terminal', 'close this', 'close tab'], action: () => closeFocused() });
   voiceRouter.registerCommand({ id: 'toggle-sidebar', aliases: ['toggle sidebar', 'hide sidebar', 'show sidebar', 'sidebar'], action: () => projectSidebar.toggleCollapse() });
   voiceRouter.registerCommand({ id: 'command-palette', aliases: ['command palette', 'commands', 'open commands', 'show commands'], action: () => commandPalette.toggle() });
+  voiceRouter.registerCommand({ id: 'file-finder', aliases: ['open file', 'quick open', 'find file', 'go to file'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) fileFinder.toggle(ws.projectPath); } });
   voiceRouter.registerCommand({ id: 'file-viewer', aliases: ['open files', 'file viewer', 'show files', 'browse files', 'file browser'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) fileViewer.toggle(ws.projectPath); } });
   voiceRouter.registerCommand({ id: 'search', aliases: ['search', 'find', 'search terminal', 'find in terminal'], action: () => toggleSearchOnFocused() });
   voiceRouter.registerCommand({ id: 'zoom-in', aliases: ['zoom in', 'make bigger', 'increase size'], action: () => window.api.window.zoomIn() });
@@ -559,6 +582,12 @@ function main(): void {
   const keybindingActions: Record<string, { action: () => void; holdUp?: () => void }> = {
     'command-palette': { action: () => commandPalette.toggle() },
     'toggle-sidebar': { action: () => projectSidebar.toggleCollapse() },
+    'file-finder': {
+      action: () => {
+        const ws = workspaceSwitcher.getActiveWorkspace();
+        if (ws) fileFinder.toggle(ws.projectPath);
+      },
+    },
     'file-viewer': {
       action: () => {
         const ws = workspaceSwitcher.getActiveWorkspace();
