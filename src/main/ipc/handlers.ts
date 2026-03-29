@@ -106,23 +106,23 @@ export function registerIpcHandlers(
     }
   });
 
-  ipcMain.handle(IPC_CHANNELS.AGENT_SPAWN, (_event, raw: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.AGENT_SPAWN, async (_event, raw: unknown) => {
     try {
       if (agentManager.listAgents().length >= MAX_AGENTS) {
         return { error: 'max_agents_reached' };
       }
       const request = validateAgentSpawnRequest(raw);
-      return agentManager.spawnAgent(request);
+      return await agentManager.spawnAgent(request);
     } catch (error) {
       console.error('[IPC][agent:spawn]', error);
       return { error: 'agent_spawn_failed' };
     }
   });
 
-  ipcMain.handle(IPC_CHANNELS.AGENT_KILL, (_event, raw: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.AGENT_KILL, async (_event, raw: unknown) => {
     try {
       const agentId = validateAgentId(raw);
-      agentManager.killAgent(agentId);
+      await agentManager.killAgent(agentId);
     } catch (error) {
       console.error('[IPC][agent:kill]', error);
       return { error: 'agent_kill_failed' };
@@ -774,6 +774,36 @@ export function registerIpcHandlers(
     if (!notificationManager) return;
     if (typeof raw !== 'boolean') return;
     notificationManager.setEnabled(raw);
+  });
+
+  // Worktree operations
+  const worktreeManager = agentManager.getWorktreeManager();
+
+  ipcMain.handle(IPC_CHANNELS.WORKTREE_DIFF, async (_event, agentId: unknown) => {
+    if (typeof agentId !== 'string') return null;
+    return worktreeManager.getDiffSummary(agentId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.WORKTREE_DIFF_FILE, async (_event, raw: unknown) => {
+    if (!raw || typeof raw !== 'object') return null;
+    const { agentId, filePath } = raw as { agentId: string; filePath: string };
+    if (typeof agentId !== 'string' || typeof filePath !== 'string') return null;
+    return worktreeManager.getDiffForFile(agentId, filePath);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.WORKTREE_MERGE, async (_event, agentId: unknown) => {
+    if (typeof agentId !== 'string') return { success: false, mergedBranch: '', error: 'Invalid agent ID' };
+    return worktreeManager.mergeWorktree(agentId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.WORKTREE_CLEANUP, async (_event, agentId: unknown) => {
+    if (typeof agentId !== 'string') return;
+    await worktreeManager.removeWorktree(agentId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.WORKTREE_INFO, async (_event, agentId: unknown) => {
+    if (typeof agentId !== 'string') return null;
+    return worktreeManager.getWorktreeInfo(agentId) ?? null;
   });
 
   // Scrollback persistence

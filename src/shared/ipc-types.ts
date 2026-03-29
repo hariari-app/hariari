@@ -36,6 +36,7 @@ export interface AgentSpawnRequest {
   readonly projectId: string;
   readonly cwd?: string;
   readonly label?: string;
+  readonly useWorktree?: boolean;
 }
 
 export interface AgentStatusEvent {
@@ -202,5 +203,12 @@ export interface VibeIDEApi {
     save(sessionId: string, data: string): Promise<void>;
     load(sessionId: string): Promise<string | null>;
     delete(sessionId: string): Promise<void>;
+  };
+  worktree: {
+    diff(agentId: string): Promise<import('./worktree-types').WorktreeDiffSummary | null>;
+    diffFile(request: { agentId: string; filePath: string }): Promise<{ original: string; modified: string } | null>;
+    merge(agentId: string): Promise<import('./worktree-types').WorktreeMergeResult>;
+    cleanup(agentId: string): Promise<void>;
+    info(agentId: string): Promise<import('./worktree-types').WorktreeInfo | null>;
   };
 }

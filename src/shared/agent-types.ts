@@ -21,6 +21,11 @@ export interface AgentInfo {
   readonly startedAt: number;
   readonly pid?: number;
   readonly version?: string;
+  readonly worktree?: {
+    readonly worktreePath: string;
+    readonly branchName: string;
+    readonly baseBranch: string;
+  };
 }
 
 export interface AgentAvailability {

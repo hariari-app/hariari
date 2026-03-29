@@ -16,6 +16,7 @@ export interface StatusBarCallbacks {
   readonly onKill: () => void;
   readonly onSplitH?: () => void;
   readonly onSplitV?: () => void;
+  readonly onMerge?: () => void;
 }
 
 export class AgentStatusBar {
@@ -24,6 +25,8 @@ export class AgentStatusBar {
   private readonly statusTextEl: HTMLElement;
   private readonly uptimeEl: HTMLElement;
   private readonly versionEl: HTMLElement;
+  private readonly branchEl: HTMLElement;
+  private readonly mergeBtn: HTMLElement;
   private uptimeInterval: ReturnType<typeof setInterval> | null = null;
   private readonly startedAt: number;
   private readonly onKill: () => void;
@@ -49,6 +52,32 @@ export class AgentStatusBar {
     if (agentInfo.version) {
       this.versionEl.textContent = 'v' + agentInfo.version;
     }
+
+    this.branchEl = document.createElement('span');
+    this.branchEl.className = 'status-bar-branch';
+    if (agentInfo.worktree) {
+      const shortBranch = agentInfo.worktree.branchName.replace('vibeide/', '');
+      this.branchEl.textContent = '\u2387 ' + shortBranch;
+      this.branchEl.title = agentInfo.worktree.branchName;
+    }
+
+    this.mergeBtn = document.createElement('button');
+    this.mergeBtn.className = 'status-bar-merge';
+    this.mergeBtn.textContent = '\u2934 Merge';
+    this.mergeBtn.title = 'Merge agent changes into main branch';
+    this.mergeBtn.style.display = 'none';
+    this.mergeBtn.setAttribute('aria-label', 'Merge agent worktree');
+    this.mergeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      callbacks.onMerge?.();
+    });
+    this.mergeBtn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        e.stopPropagation();
+        callbacks.onMerge?.();
+      }
+    });
 
     this.indicatorEl = createStatusIndicator(agentInfo.status);
 
@@ -118,8 +147,10 @@ export class AgentStatusBar {
     this.element.appendChild(agentIcon);
     this.element.appendChild(typeLabel);
     this.element.appendChild(this.versionEl);
+    this.element.appendChild(this.branchEl);
     this.element.appendChild(this.statusTextEl);
     this.element.appendChild(this.uptimeEl);
+    this.element.appendChild(this.mergeBtn);
     this.element.appendChild(splitH);
     this.element.appendChild(splitV);
     this.element.appendChild(killBtn);
@@ -147,6 +178,11 @@ export class AgentStatusBar {
 
     if (status === 'stopped' || status === 'error' || status === 'complete') {
       this.stopUptimeCounter();
+    }
+
+    // Show merge button when agent finishes (only if it has a worktree)
+    if (this.branchEl.textContent && (status === 'complete' || status === 'stopped')) {
+      this.mergeBtn.style.display = '';
     }
   }
 

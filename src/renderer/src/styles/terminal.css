@@ -374,6 +374,40 @@
   font-family: 'JetBrains Mono', monospace;
 }
 
+.status-bar-branch {
+  color: var(--accent);
+  font-size: var(--font-xs);
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 500;
+}
+
+.status-bar-merge {
+  background: color-mix(in srgb, var(--success) 20%, transparent);
+  border: 1px solid var(--success);
+  border-radius: 4px;
+  color: var(--success);
+  cursor: pointer;
+  padding: 0 var(--space-2);
+  height: 20px;
+  font-size: var(--font-xs);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.status-bar-merge:hover {
+  background: color-mix(in srgb, var(--success) 35%, transparent);
+}
+
+.status-bar-merge:active { transform: scale(0.95); }
+
+.status-bar-merge:focus-visible {
+  outline: 2px solid var(--success);
+  outline-offset: -2px;
+}
+
 .status-bar-status {
   color: var(--fg-dim);
   text-transform: uppercase;

@@ -117,6 +117,7 @@ export class ProjectWorkspace {
         onKill: () => this.killAgent(info.id),
         onSplitH: () => this.spawnAgent('shell', 'horizontal'),
         onSplitV: () => this.spawnAgent('shell', 'vertical'),
+        onMerge: () => this.mergeAgentWorktree(info.id),
       });
       this.tracked.set(info.id, { info, statusBar });
 
@@ -241,6 +242,24 @@ export class ProjectWorkspace {
 
   hasAgent(agentId: string): boolean {
     return this.tracked.has(agentId);
+  }
+
+  async mergeAgentWorktree(agentId: string): Promise<void> {
+    try {
+      const diff = await window.api.worktree.diff(agentId);
+      if (!diff || diff.filesChanged === 0) {
+        // No changes — just cleanup
+        await window.api.worktree.cleanup(agentId);
+        return;
+      }
+
+      const result = await window.api.worktree.merge(agentId);
+      if (!result.success) {
+        console.error('[ProjectWorkspace] Merge failed:', result.error, result.conflicts);
+      }
+    } catch (error) {
+      console.error('[ProjectWorkspace] Merge error:', error);
+    }
   }
 
   private findFirstLeafId(): string | null {

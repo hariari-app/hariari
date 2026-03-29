@@ -7,6 +7,7 @@ import { getDefaultAgentConfig } from './agent-config';
 import { AgentRecorder } from './agent-recorder';
 import { OutputBuffer, detectNeedsInput } from './input-detector';
 import { detectVersion, startPeriodicCheck } from './agent-version-detector';
+import { WorktreeManager } from '../git/worktree-manager';
 
 const INPUT_CHECK_INTERVAL_MS = 500;
 
@@ -17,6 +18,7 @@ export class AgentManager {
   private readonly ptyManager: PtyManager;
   private readonly sendToRenderer: (channel: string, ...args: unknown[]) => void;
   private readonly recorder: AgentRecorder;
+  private readonly worktreeManager: WorktreeManager;
   private stopAvailabilityCheck: (() => void) | null = null;
 
   constructor(
@@ -26,16 +28,33 @@ export class AgentManager {
     this.ptyManager = ptyManager;
     this.sendToRenderer = sendToRenderer;
     this.recorder = new AgentRecorder();
+    this.worktreeManager = new WorktreeManager();
 
     this.stopAvailabilityCheck = startPeriodicCheck((availability) => {
       this.sendToRenderer(IPC_CHANNELS.AGENT_AVAILABILITY_CHANGED, availability);
     });
   }
 
-  spawnAgent(request: AgentSpawnRequest): AgentInfo {
+  async spawnAgent(request: AgentSpawnRequest): Promise<AgentInfo> {
     const agentId = randomUUID();
     const sessionId = randomUUID();
-    const cwd = request.cwd || process.cwd();
+    let cwd = request.cwd || process.cwd();
+
+    // Create worktree for non-shell agents if enabled
+    let worktreeData: AgentInfo['worktree'] | undefined;
+    const shouldUseWorktree = request.type !== 'shell' && request.useWorktree !== false;
+    if (shouldUseWorktree) {
+      const worktreeInfo = await this.worktreeManager.createWorktree(cwd, agentId, request.type);
+      if (worktreeInfo) {
+        cwd = worktreeInfo.worktreePath;
+        worktreeData = {
+          worktreePath: worktreeInfo.worktreePath,
+          branchName: worktreeInfo.branchName,
+          baseBranch: worktreeInfo.baseBranch,
+        };
+      }
+    }
+
     const config = getDefaultAgentConfig(request.type, cwd);
     const labelledConfig = request.label ? { ...config, label: request.label } : config;
 
@@ -113,6 +132,7 @@ export class AgentManager {
       sessionId,
       startedAt: Date.now(),
       pid: session.getPid(),
+      worktree: worktreeData,
     };
 
     this.agents.set(agentId, agentInfo);
@@ -136,7 +156,7 @@ export class AgentManager {
     return agentInfo;
   }
 
-  killAgent(agentId: string): void {
+  async killAgent(agentId: string): Promise<void> {
     const agent = this.agents.get(agentId);
     if (!agent) {
       throw new Error(`Agent not found: ${agentId}`);
@@ -147,6 +167,11 @@ export class AgentManager {
     this.recorder.stopRecording(agentId);
     this.ptyManager.kill(agent.sessionId);
     this.updateAgentStatus(agentId, 'stopped');
+
+    // Cleanup worktree (branch preserved if not merged)
+    if (this.worktreeManager.hasWorktree(agentId)) {
+      await this.worktreeManager.removeWorktree(agentId).catch(() => {});
+    }
   }
 
   listAgents(): AgentInfo[] {
@@ -176,11 +201,16 @@ export class AgentManager {
     return this.recorder;
   }
 
-  disposeAll(): void {
+  getWorktreeManager(): WorktreeManager {
+    return this.worktreeManager;
+  }
+
+  async disposeAll(): Promise<void> {
     if (this.stopAvailabilityCheck) {
       this.stopAvailabilityCheck();
       this.stopAvailabilityCheck = null;
     }
+    await this.worktreeManager.disposeAll().catch(() => {});
     for (const agentId of this.inputCheckTimers.keys()) {
       this.clearInputCheck(agentId);
     }

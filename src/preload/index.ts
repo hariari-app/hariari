@@ -127,6 +127,14 @@ contextBridge.exposeInMainWorld('api', {
     load: () => ipcRenderer.invoke(IPC_CHANNELS.STATE_LOAD),
     save: (state: unknown) => ipcRenderer.invoke(IPC_CHANNELS.STATE_SAVE, state),
   },
+  worktree: {
+    diff: (agentId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_DIFF, agentId),
+    diffFile: (request: { agentId: string; filePath: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_DIFF_FILE, request),
+    merge: (agentId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_MERGE, agentId),
+    cleanup: (agentId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_CLEANUP, agentId),
+    info: (agentId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_INFO, agentId),
+  },
   scrollback: {
     save: (sessionId: string, data: string) => ipcRenderer.invoke(IPC_CHANNELS.SCROLLBACK_SAVE, { sessionId, data }),
     load: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.SCROLLBACK_LOAD, sessionId),
