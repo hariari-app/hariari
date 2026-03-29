@@ -44,6 +44,12 @@ Every pane surfaces real-time agent state so the user never reads raw output to 
   - [ ] One-click jump from sidebar notification badge to the specific agent terminal
   - [ ] In-app toast notifications (top-right corner, 5s auto-dismiss)
   - [ ] Per-event notification preferences UI (visual/sound/focus-steal toggles)
+  - [ ] Agent installation detection and guided install:
+    - [ ] Check if agent CLI is available on PATH before spawning (claude, gemini, codex)
+    - [ ] If not installed, show install prompt with instructions and install command
+    - [ ] Link to official install docs for each agent
+    - [ ] Detect installed version and show in agent status bar
+    - [ ] Auto-detect newly installed agents (periodic PATH check)
 - **Phase 2 (Native Rust)**
   - [ ] GPU-rendered status overlays
   - [ ] Structured tool-call cards (Warp-style blocks)
@@ -148,6 +154,20 @@ Everything reachable via keybinding or fuzzy-searchable palette in <50ms.
   - [ ] GPU-rendered command palette overlay
   - [ ] Plugin-extensible command registry
   - [ ] Mode-based keybinding hints (Zellij-style)
+
+---
+
+### Goal 7b: Light Themes
+
+Currently only 1 light theme (Tokyo Night Light). Add at least 3 more for users who prefer light mode.
+
+- **Phase 1 (Electron MVP)**
+  - [ ] Solarized Light theme
+  - [ ] GitHub Light theme
+  - [ ] Catppuccin Latte theme (light variant)
+  - [ ] Ensure all UI components (sidebar, status bars, command palette, file viewer, Source Control, commit graph) render correctly in light themes
+  - [ ] Ensure terminal WebGL renderer handles light backgrounds
+  - [ ] Light/dark mode toggle in command palette and settings
 
 ---
 
