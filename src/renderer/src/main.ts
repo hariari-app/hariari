@@ -21,6 +21,7 @@ import { loadNotificationConfig, getNotificationConfig } from './ui/notification
 import { toastManager } from './ui/toast-manager';
 import { NotificationPreferences } from './ui/notification-preferences';
 import { VoiceRouter } from './voice/voice-router';
+import { LaunchWorkspaceDialog, buildDynamicPreset } from './ui/launch-workspace-dialog';
 import type { ProjectInfo, AppState } from '../../shared/ipc-types';
 import type { AgentType } from '../../shared/agent-types';
 
@@ -512,6 +513,34 @@ function main(): void {
       if (ws) ws.layoutManager.equalizeAll();
     },
   });
+
+  // Launch Workspace dialog
+  const launchWorkspaceDialog = new LaunchWorkspaceDialog();
+  commandPalette.register({
+    id: 'launch-workspace',
+    label: 'Launch Workspace',
+    category: 'General',
+    action: () => {
+      launchWorkspaceDialog.show(async (result) => {
+        // Switch to selected project
+        await workspaceSwitcher.switchTo(result.project);
+        projectSidebar.setActiveProject(result.project.id);
+        await refreshProjectList();
+
+        // Build and apply custom preset
+        const preset = buildDynamicPreset(result.agents, result.layout);
+        const workspace = workspaceSwitcher.getActiveWorkspace();
+        if (workspace) {
+          const success = await workspace.applyPreset(preset);
+          if (success) {
+            const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info);
+            projectSidebar.updateAgents(result.project.id, agents);
+          }
+        }
+      });
+    },
+  });
+
   // File viewer
   const fileViewer = new FileViewer();
 
@@ -611,6 +640,7 @@ function main(): void {
   voiceRouter.registerCommand({ id: 'new-qwen', aliases: ['new qwen', 'open qwen', 'start qwen', 'qwen agent', 'new when', 'open when'], action: () => spawnInActiveProject('qwen') });
   voiceRouter.registerCommand({ id: 'close-pane', aliases: ['close pane', 'close terminal', 'close this', 'close tab'], action: () => closeFocused() });
   voiceRouter.registerCommand({ id: 'equalize-panes', aliases: ['equalize panes', 'equal size', 'auto arrange', 'reset layout', 'equal panes'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) ws.layoutManager.equalizeAll(); } });
+  voiceRouter.registerCommand({ id: 'launch-workspace', aliases: ['launch workspace', 'setup workspace', 'new workspace', 'workspace setup'], action: () => { launchWorkspaceDialog.show(async (result) => { await workspaceSwitcher.switchTo(result.project); projectSidebar.setActiveProject(result.project.id); await refreshProjectList(); const preset = buildDynamicPreset(result.agents, result.layout); const workspace = workspaceSwitcher.getActiveWorkspace(); if (workspace) { const success = await workspace.applyPreset(preset); if (success) { const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info); projectSidebar.updateAgents(result.project.id, agents); } } }); } });
   voiceRouter.registerCommand({ id: 'toggle-sidebar', aliases: ['toggle sidebar', 'hide sidebar', 'show sidebar', 'sidebar'], action: () => projectSidebar.toggleCollapse() });
   voiceRouter.registerCommand({ id: 'command-palette', aliases: ['command palette', 'commands', 'open commands', 'show commands'], action: () => commandPalette.toggle() });
   voiceRouter.registerCommand({ id: 'file-finder', aliases: ['open file', 'quick open', 'find file', 'go to file'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) fileFinder.toggle(ws.projectPath); } });

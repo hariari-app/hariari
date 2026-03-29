@@ -245,6 +245,177 @@ select:focus-visible {
   gap: 2px;
 }
 
+/* ============================================
+   Launch Workspace dialog
+   ============================================ */
+.launch-ws-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 9998;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.launch-ws-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: 90%;
+  max-width: 560px;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2), 0 16px 48px rgba(0, 0, 0, 0.3);
+}
+
+.launch-ws-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.launch-ws-title {
+  font-size: var(--font-lg);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.launch-ws-section {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.launch-ws-section-label {
+  font-size: var(--font-xs);
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+}
+
+.launch-ws-project-list {
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.launch-ws-project-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all var(--transition-fast);
+}
+.launch-ws-project-row:hover { background: var(--surface-hover); }
+.launch-ws-project-row.selected { border-color: var(--accent); background: var(--accent-dim); }
+
+.launch-ws-folder-icon { font-size: 18px; flex-shrink: 0; }
+.launch-ws-project-info { flex: 1; min-width: 0; }
+.launch-ws-project-name { font-size: var(--font-sm); font-weight: 600; color: var(--fg); }
+.launch-ws-project-path {
+  font-size: var(--font-xs);
+  color: var(--fg-faint);
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.launch-ws-count-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.launch-ws-count-label {
+  font-size: var(--font-sm);
+  color: var(--fg);
+}
+
+.launch-ws-count-btns {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.launch-ws-count-btn {
+  width: 32px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: var(--font-sm);
+  font-weight: 600;
+  transition: all var(--transition-fast);
+}
+.launch-ws-count-btn:hover { border-color: var(--accent); color: var(--fg); }
+.launch-ws-count-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.launch-ws-agent-slots {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.launch-ws-agent-slot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.launch-ws-slot-label {
+  font-size: var(--font-sm);
+  color: var(--fg-dim);
+  min-width: 60px;
+}
+
+.launch-ws-agent-select {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+.launch-ws-agent-select:focus { border-color: var(--accent); outline: none; }
+
+.launch-ws-layout-btns {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.launch-ws-layout-btn {
+  flex: 1;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: var(--font-sm);
+  font-weight: 500;
+  transition: all var(--transition-fast);
+}
+.launch-ws-layout-btn:hover { border-color: var(--accent); color: var(--fg); }
+.launch-ws-layout-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+
+.launch-ws-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+}
+
 /* Focus-visible for interactive lists */
 .command-item:focus-visible,
 .ff-item:focus-visible,
