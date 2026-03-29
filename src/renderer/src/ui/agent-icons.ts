@@ -103,7 +103,7 @@ const ICONS: Record<AgentType, { svg: string; color: string }> = {
   },
   shell: {
     // Terminal prompt — >_
-    color: '#9ece6a',
+    color: '#10b981',
     svg: `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path d="M3 4l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="M9 12h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>

@@ -116,6 +116,13 @@ export class FileViewer {
     this.editToggle.title = 'Toggle edit mode';
     this.editToggle.addEventListener('click', () => this.toggleEdit());
 
+    const popoutBtn = document.createElement('button');
+    popoutBtn.className = 'file-viewer-popout';
+    popoutBtn.textContent = '\u2197';
+    popoutBtn.title = 'Open in new window';
+    popoutBtn.setAttribute('aria-label', 'Pop out to new window');
+    popoutBtn.addEventListener('click', () => this.popout());
+
     const closeBtn = document.createElement('button');
     closeBtn.className = 'file-viewer-close';
     closeBtn.textContent = '\u00D7';
@@ -128,6 +135,7 @@ export class FileViewer {
     header.appendChild(shortcutSave);
     header.appendChild(shortcutFind);
     header.appendChild(this.editToggle);
+    header.appendChild(popoutBtn);
     header.appendChild(closeBtn);
 
     // Body
@@ -446,6 +454,18 @@ export class FileViewer {
   }
 
   // --- Edit mode ---
+
+  private async popout(): Promise<void> {
+    if (!this.currentFilePath) return;
+    try {
+      const content = this.editorView
+        ? this.editorView.state.doc.toString()
+        : '';
+      await window.api.window.popoutFile(this.currentFilePath, content);
+    } catch {
+      // Pop-out failed
+    }
+  }
 
   private toggleEdit(): void {
     this.isEditing = !this.isEditing;

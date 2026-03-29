@@ -67,6 +67,8 @@ contextBridge.exposeInMainWorld('api', {
     zoomIn: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_ZOOM_IN),
     zoomOut: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_ZOOM_OUT),
     zoomReset: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_ZOOM_RESET),
+    popoutFile: (filePath: string, content: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.WINDOW_POPOUT_FILE, { filePath, content }),
   },
   settings: {
     load: () => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_LOAD),

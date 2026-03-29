@@ -40,6 +40,7 @@ export const IPC_CHANNELS = {
   AGENT_CHECK_INSTALLED: 'agent:check-installed',
   AGENT_VERSION: 'agent:version',
   AGENT_AVAILABILITY_CHANGED: 'agent:availability-changed',
+  WINDOW_POPOUT_FILE: 'window:popout-file',
   ONBOARDING_DETECT_PROJECTS: 'onboarding:detect-projects',
   WORKTREE_DIFF: 'worktree:diff',
   WORKTREE_DIFF_FILE: 'worktree:diff-file',

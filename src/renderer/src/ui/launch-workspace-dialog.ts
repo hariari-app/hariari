@@ -128,9 +128,8 @@ export class LaunchWorkspaceDialog {
     }
 
     const browseBtn = document.createElement('button');
-    browseBtn.className = 'btn-secondary';
+    browseBtn.className = 'btn-secondary launch-ws-browse-btn';
     browseBtn.textContent = 'Browse...';
-    browseBtn.style.marginTop = 'var(--space-2)';
     browseBtn.addEventListener('click', async () => {
       const dir = await window.api.project.pickDirectory();
       if (dir) {

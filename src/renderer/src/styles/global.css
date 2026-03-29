@@ -136,9 +136,9 @@ html, body {
 
 .app-titlebar-btn:hover { opacity: 1; }
 
-.app-titlebar-btn.close { background: #f7768e; }
-.app-titlebar-btn.minimize { background: #e0af68; }
-.app-titlebar-btn.maximize { background: #9ece6a; }
+.app-titlebar-btn.close { background: var(--error); }
+.app-titlebar-btn.minimize { background: var(--warning); }
+.app-titlebar-btn.maximize { background: var(--success); }
 
 /* Focus visible — keyboard accessibility */
 :focus-visible {
@@ -327,6 +327,10 @@ select:focus-visible {
   text-overflow: ellipsis;
 }
 
+.launch-ws-browse-btn {
+  margin-top: var(--space-2);
+}
+
 .launch-ws-count-row {
   display: flex;
   align-items: center;
@@ -346,7 +350,7 @@ select:focus-visible {
 
 .launch-ws-count-btn {
   width: 32px;
-  height: 28px;
+  height: 32px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: none;
@@ -494,10 +498,10 @@ select:focus-visible {
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: var(--space-2) var(--space-3);
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--space-2);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   pointer-events: auto;
   opacity: 0;
@@ -531,7 +535,7 @@ select:focus-visible {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-  margin-top: 5px;
+  margin-top: var(--space-1);
 }
 
 .toast-content {
@@ -616,8 +620,8 @@ select:focus-visible {
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 20px 24px;
-  max-width: 520px;
+  padding: var(--space-5) var(--space-6);
+  max-width: 560px;
   width: 90%;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
