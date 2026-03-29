@@ -62,19 +62,30 @@ export class AgentManager {
         return;
       }
 
-      const needsInput = detectNeedsInput(outputBuffer.getRecent(), agent.config.type);
+      const recentOutput = outputBuffer.getRecent();
+      const needsInput = detectNeedsInput(recentOutput, agent.config.type);
       const timeSinceOutput = Date.now() - lastOutputTime;
 
       if (needsInput && agent.status !== 'needs-input') {
         this.updateAgentStatus(agentId, 'needs-input');
       } else if (!needsInput && agent.status === 'needs-input') {
-        this.updateAgentStatus(agentId, 'running');
+        // Only clear needs-input if output has resumed (user responded)
+        if (timeSinceOutput < 1000) {
+          this.updateAgentStatus(agentId, 'running');
+        }
       } else if (!needsInput && agent.status === 'running' && timeSinceOutput > 3000) {
-        // No output for 3 seconds and no input prompt — agent is idle (shell at prompt)
+        // No output for 3+ seconds — check if this is actually a needs-input prompt
+        // that our patterns missed, or genuine idle
         this.updateAgentStatus(agentId, 'idle');
       } else if (agent.status === 'idle' && timeSinceOutput < 1000) {
         // Output resumed — back to running
         this.updateAgentStatus(agentId, 'running');
+      } else if (agent.status === 'idle' && timeSinceOutput > 3000) {
+        // Re-check for needs-input while idle (buffer may have accumulated)
+        const recheck = detectNeedsInput(recentOutput, agent.config.type);
+        if (recheck) {
+          this.updateAgentStatus(agentId, 'needs-input');
+        }
       }
     }, INPUT_CHECK_INTERVAL_MS);
     this.inputCheckTimers.set(agentId, inputCheckTimer);

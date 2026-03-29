@@ -84,6 +84,22 @@ describe('detectNeedsInput', () => {
     it('detects "(a)lways / (y)es / (n)o"', () => {
       expect(detectNeedsInput('(a)lways / (y)es / (n)o', 'claude')).toBe(true);
     });
+
+    it('detects Claude menu-style approval prompt', () => {
+      const output = `This command requires approval
+
+Do you want to proceed?
+❯ 1. Yes
+  2. Yes, and don't ask again for: xdg-open:*
+  3. No
+
+Esc to cancel · Tab to amend · ctrl+e to explain`;
+      expect(detectNeedsInput(output, 'claude')).toBe(true);
+    });
+
+    it('detects "This command requires approval"', () => {
+      expect(detectNeedsInput('This command requires approval', 'claude')).toBe(true);
+    });
   });
 
   describe('detects Gemini CLI prompts', () => {
@@ -152,8 +168,9 @@ describe('detectNeedsInput', () => {
       expect(detectNeedsInput(output)).toBe(true);
     });
 
-    it('does not match on earlier lines', () => {
-      const output = 'Proceed? [Y/n]\nDone.';
+    it('does not match when prompt is far above current output', () => {
+      // If the prompt is buried under 15+ lines of new output, it's no longer relevant
+      const output = 'Proceed? [Y/n]\n' + Array(15).fill('Building modules...').join('\n');
       expect(detectNeedsInput(output)).toBe(false);
     });
   });

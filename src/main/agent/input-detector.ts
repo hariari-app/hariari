@@ -4,8 +4,23 @@
 
 import type { AgentType } from '../../shared/agent-types';
 
-// Strip ANSI escape sequences for clean matching
-const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07|\x1b\[[\d;]*m/g;
+// Comprehensive ANSI/VT escape sequence stripper
+// Handles: SGR, cursor movement, screen clearing, OSC, DCS, alternate buffer, mouse, etc.
+const ANSI_RE = new RegExp(
+  [
+    '\\x1b\\[[0-9;?]*[a-zA-Z]',       // CSI sequences (SGR, cursor, clear, etc.)
+    '\\x1b\\][^\\x07]*\\x07',          // OSC sequences (title, hyperlinks)
+    '\\x1b\\][^\\x1b]*\\x1b\\\\',      // OSC with ST terminator
+    '\\x1b[()][0-9A-Z]',              // Character set selection
+    '\\x1b[=>NOM78]',                 // Various mode switches
+    '\\x1b\\[\\?[0-9;]*[hlsr]',       // Private mode set/reset (alternate screen, mouse, etc.)
+    '\\x07',                           // Bell
+    '\\x0f',                           // SI (Shift In)
+    '\\x0e',                           // SO (Shift Out)
+    '\\r',                             // Carriage return
+  ].join('|'),
+  'g',
+);
 
 function stripAnsi(text: string): string {
   return text.replace(ANSI_RE, '');
@@ -85,6 +100,21 @@ const CLAUDE_PATTERNS: readonly RegExp[] = [
   // Permission prompt with options
   /\[\s*y\s*\/\s*n\s*\/\s*a\s*\]/i,
   /\byes\b.*\bno\b.*\balways\b/i,
+
+  // Claude's numbered menu selection prompts
+  /\bThis command requires approval\b/i,
+  /\bEsc to cancel\b/i,
+  /\bTab to amend\b/i,
+  /\bctrl\+e to explain\b/i,
+  /^\s*[❯>]\s*\d+\.\s*(Yes|No|Always)/i,
+  /^\s*\d+\.\s*Yes,?\s*and don/i,
+
+  // Claude's interactive selection UI
+  /\bEnter to select\b/i,
+  /to navigate.*Esc to cancel/i,
+  /\bto navigate\b/i,
+  /^\s*\d+\.\s*(Yes|No|Chat about|Type something)/i,
+  /^\s*[❯›>]\s*\d+\./,
 ];
 
 // ─── Gemini CLI specific patterns ───
@@ -185,25 +215,33 @@ export function detectNeedsInput(recentOutput: string, agentType: AgentType = 's
   const lines = cleaned.split('\n').filter((l) => l.trim().length > 0);
   if (lines.length === 0) return false;
 
-  const lastLine = lines[lines.length - 1].trim();
-  if (lastLine.length === 0) return false;
-
-  // Check exclusions first
-  for (const exclude of EXCLUDE_PATTERNS) {
-    if (exclude.test(lastLine)) return false;
-  }
-
-  // Check agent-specific + generic patterns on the last line
   const patterns = getPatternsForAgent(agentType);
-  for (const pattern of patterns) {
-    if (pattern.test(lastLine)) return true;
+
+  // Check the last 10 lines individually — agent prompts often have
+  // the question on one line and options/hints on subsequent lines
+  const recentLines = lines.slice(-10);
+  for (const line of recentLines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // Check exclusions
+    let excluded = false;
+    for (const exclude of EXCLUDE_PATTERNS) {
+      if (exclude.test(trimmed)) { excluded = true; break; }
+    }
+    if (excluded) continue;
+
+    // Check agent-specific + generic patterns
+    for (const pattern of patterns) {
+      if (pattern.test(trimmed)) return true;
+    }
   }
 
-  // Check multi-line patterns on the last 5 lines (for multi-line prompts)
-  if (lines.length >= 2) {
-    const recentLines = lines.slice(-5).join('\n');
+  // Check multi-line patterns on the recent block
+  if (recentLines.length >= 2) {
+    const block = recentLines.join('\n');
     for (const pattern of MULTILINE_PATTERNS) {
-      if (pattern.test(recentLines)) return true;
+      if (pattern.test(block)) return true;
     }
   }
 
@@ -216,7 +254,7 @@ export class OutputBuffer {
   private buffer = '';
   private readonly maxSize: number;
 
-  constructor(maxSize: number = 2048) {
+  constructor(maxSize: number = 4096) {
     this.maxSize = maxSize;
   }
 
