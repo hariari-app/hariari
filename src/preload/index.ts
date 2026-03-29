@@ -79,6 +79,19 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke(IPC_CHANNELS.GIT_DISCARD, request),
     stage: (request: { projectPath: string; filePath: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_STAGE, request),
+    unstage: (request: { projectPath: string; filePath: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_UNSTAGE, request),
+    stageAll: (projectPath: string) => ipcRenderer.invoke(IPC_CHANNELS.GIT_STAGE_ALL, projectPath),
+    unstageAll: (projectPath: string) => ipcRenderer.invoke(IPC_CHANNELS.GIT_UNSTAGE_ALL, projectPath),
+    discardAll: (projectPath: string) => ipcRenderer.invoke(IPC_CHANNELS.GIT_DISCARD_ALL, projectPath),
+    commit: (request: { projectPath: string; message: string; amend?: boolean }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_COMMIT, request),
+    log: (request: { projectPath: string; maxCount?: number }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_LOG, request),
+    pull: (projectPath: string) => ipcRenderer.invoke(IPC_CHANNELS.GIT_PULL, projectPath),
+    push: (request: { projectPath: string; setUpstream?: boolean }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_PUSH, request),
+    aheadBehind: (projectPath: string) => ipcRenderer.invoke(IPC_CHANNELS.GIT_AHEAD_BEHIND, projectPath),
   },
   file: {
     listDir: (dirPath: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_LIST_DIR, dirPath),

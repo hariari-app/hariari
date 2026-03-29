@@ -469,6 +469,87 @@ export function registerIpcHandlers(
     }
   });
 
+  ipcMain.handle(IPC_CHANNELS.GIT_PULL, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'string') return { error: 'invalid_path' };
+      const { gitPull } = await import('../git/git-service');
+      return await gitPull(raw);
+    } catch (error) { console.error('[IPC][git:pull]', error); return { error: 'pull_failed' }; }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GIT_PUSH, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'object' || raw === null) return { error: 'invalid_request' };
+      const req = raw as Record<string, unknown>;
+      if (typeof req.projectPath !== 'string') return { error: 'invalid_request' };
+      const { gitPush } = await import('../git/git-service');
+      return await gitPush(req.projectPath, req.setUpstream === true);
+    } catch (error) { console.error('[IPC][git:push]', error); return { error: 'push_failed' }; }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GIT_AHEAD_BEHIND, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'string') return { error: 'invalid_path' };
+      const { getAheadBehind } = await import('../git/git-service');
+      return await getAheadBehind(raw);
+    } catch (error) { console.error('[IPC][git:ahead-behind]', error); return { error: 'ahead_behind_failed' }; }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GIT_UNSTAGE, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'object' || raw === null) return { error: 'invalid_request' };
+      const req = raw as Record<string, unknown>;
+      if (typeof req.projectPath !== 'string' || typeof req.filePath !== 'string') return { error: 'invalid_request' };
+      const { gitUnstage } = await import('../git/git-service');
+      return await gitUnstage(req.projectPath, req.filePath);
+    } catch (error) { console.error('[IPC][git:unstage]', error); return { error: 'unstage_failed' }; }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GIT_STAGE_ALL, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'string') return { error: 'invalid_path' };
+      const { gitStageAll } = await import('../git/git-service');
+      return await gitStageAll(raw);
+    } catch (error) { console.error('[IPC][git:stage-all]', error); return { error: 'stage_all_failed' }; }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GIT_UNSTAGE_ALL, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'string') return { error: 'invalid_path' };
+      const { gitUnstageAll } = await import('../git/git-service');
+      return await gitUnstageAll(raw);
+    } catch (error) { console.error('[IPC][git:unstage-all]', error); return { error: 'unstage_all_failed' }; }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GIT_DISCARD_ALL, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'string') return { error: 'invalid_path' };
+      const { gitDiscardAll } = await import('../git/git-service');
+      return await gitDiscardAll(raw);
+    } catch (error) { console.error('[IPC][git:discard-all]', error); return { error: 'discard_all_failed' }; }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GIT_COMMIT, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'object' || raw === null) return { error: 'invalid_request' };
+      const req = raw as Record<string, unknown>;
+      if (typeof req.projectPath !== 'string' || typeof req.message !== 'string') return { error: 'invalid_request' };
+      const { gitCommit } = await import('../git/git-service');
+      return await gitCommit(req.projectPath, req.message, req.amend === true);
+    } catch (error) { console.error('[IPC][git:commit]', error); return { error: 'commit_failed' }; }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GIT_LOG, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'object' || raw === null) return { error: 'invalid_request' };
+      const req = raw as Record<string, unknown>;
+      if (typeof req.projectPath !== 'string') return { error: 'invalid_request' };
+      const maxCount = typeof req.maxCount === 'number' ? req.maxCount : 50;
+      const { getGitLog } = await import('../git/git-service');
+      return await getGitLog(req.projectPath, maxCount);
+    } catch (error) { console.error('[IPC][git:log]', error); return { error: 'log_failed' }; }
+  });
+
   // Recursive file listing (respects .gitignore patterns)
   ipcMain.handle(IPC_CHANNELS.FILE_LIST_ALL, async (_event, raw: unknown) => {
     try {

@@ -8,7 +8,7 @@ interface GitResult {
   readonly exitCode: number;
 }
 
-const GIT_TIMEOUT_MS = 10_000;
+const GIT_TIMEOUT_MS = 30_000;
 
 export function isGitRepo(projectPath: string): boolean {
   try {

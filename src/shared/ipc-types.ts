@@ -159,6 +159,15 @@ export interface VibeIDEApi {
     show(request: { projectPath: string; filePath: string; ref: string }): Promise<{ content: string }>;
     discard(request: { projectPath: string; filePath: string }): Promise<{ success?: boolean; error?: string }>;
     stage(request: { projectPath: string; filePath: string }): Promise<{ success?: boolean; error?: string }>;
+    unstage(request: { projectPath: string; filePath: string }): Promise<{ success?: boolean; error?: string }>;
+    stageAll(projectPath: string): Promise<{ success?: boolean; error?: string }>;
+    unstageAll(projectPath: string): Promise<{ success?: boolean; error?: string }>;
+    discardAll(projectPath: string): Promise<{ success?: boolean; error?: string }>;
+    commit(request: { projectPath: string; message: string; amend?: boolean }): Promise<{ success?: boolean; hash?: string; error?: string }>;
+    log(request: { projectPath: string; maxCount?: number }): Promise<import('./git-types').GitLogResult>;
+    pull(projectPath: string): Promise<{ success?: boolean; output?: string; error?: string }>;
+    push(request: { projectPath: string; setUpstream?: boolean }): Promise<{ success?: boolean; error?: string }>;
+    aheadBehind(projectPath: string): Promise<import('./git-types').GitAheadBehind>;
   };
   file: {
     listDir(dirPath: string): Promise<FileEntry[]>;

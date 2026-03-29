@@ -904,9 +904,12 @@
   width: 250px;
   flex-shrink: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   border-right: 1px solid var(--border);
   background: var(--bg-deep);
   padding: var(--space-1) 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .file-tree-row {

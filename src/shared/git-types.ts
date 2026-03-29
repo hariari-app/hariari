@@ -14,6 +14,33 @@ export interface GitStatusResult {
   readonly isRepo: boolean;
 }
 
+export interface GitCommitRequest {
+  readonly projectPath: string;
+  readonly message: string;
+  readonly amend?: boolean;
+}
+
+export interface GitLogEntry {
+  readonly hash: string;
+  readonly shortHash: string;
+  readonly message: string;
+  readonly author: string;
+  readonly date: string;
+  readonly parentHashes: readonly string[];
+  readonly refs: readonly string[];
+}
+
+export interface GitLogResult {
+  readonly entries: readonly GitLogEntry[];
+  readonly branchName: string;
+}
+
+export interface GitAheadBehind {
+  readonly ahead: number;
+  readonly behind: number;
+  readonly hasUpstream: boolean;
+}
+
 export interface GitDiffResult {
   readonly originalContent: string;
   readonly modifiedContent: string;

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { isGitRepo, runGit } from './git-executor';
-import type { GitFileChange, GitStatusResult, GitDiffResult, GitStageGroup, GitFileStatus } from '../../shared/git-types';
+import type { GitFileChange, GitStatusResult, GitDiffResult, GitStageGroup, GitFileStatus, GitLogEntry, GitLogResult, GitAheadBehind } from '../../shared/git-types';
 
 function parseStatusLine(line: string): GitFileChange | null {
   if (line.length < 4) return null;
@@ -187,7 +187,101 @@ export async function getFileAtRef(
 }
 
 function isBinaryContent(content: string): boolean {
-  // Check first 8KB for null bytes
   const check = content.slice(0, 8192);
   return check.includes('\0');
+}
+
+export async function gitUnstage(projectPath: string, filePath: string): Promise<{ success: boolean; error?: string }> {
+  const result = await runGit(projectPath, ['reset', 'HEAD', '--', filePath]);
+  return result.exitCode === 0 ? { success: true } : { success: false, error: result.stderr };
+}
+
+export async function gitStageAll(projectPath: string): Promise<{ success: boolean; error?: string }> {
+  const result = await runGit(projectPath, ['add', '-A']);
+  return result.exitCode === 0 ? { success: true } : { success: false, error: result.stderr };
+}
+
+export async function gitUnstageAll(projectPath: string): Promise<{ success: boolean; error?: string }> {
+  const result = await runGit(projectPath, ['reset', 'HEAD']);
+  return result.exitCode === 0 ? { success: true } : { success: false, error: result.stderr };
+}
+
+export async function gitDiscardAll(projectPath: string): Promise<{ success: boolean; error?: string }> {
+  const result = await runGit(projectPath, ['checkout', '--', '.']);
+  return result.exitCode === 0 ? { success: true } : { success: false, error: result.stderr };
+}
+
+export async function gitCommit(
+  projectPath: string,
+  message: string,
+  amend: boolean = false,
+): Promise<{ success: boolean; hash?: string; error?: string }> {
+  const args = ['commit', '-m', message];
+  if (amend) args.push('--amend');
+  const result = await runGit(projectPath, args);
+  if (result.exitCode !== 0) return { success: false, error: result.stderr };
+  const hashMatch = result.stdout.match(/\[[\w/.-]+ ([a-f0-9]+)\]/);
+  return { success: true, hash: hashMatch?.[1] };
+}
+
+export async function getGitLog(projectPath: string, maxCount: number = 50): Promise<GitLogResult> {
+  if (!isGitRepo(projectPath)) return { entries: [], branchName: '' };
+
+  const format = '%H%x00%h%x00%s%x00%an%x00%aI%x00%P%x00%D';
+  const [logResult, branchResult] = await Promise.all([
+    runGit(projectPath, ['log', '--all', `--max-count=${maxCount}`, `--format=${format}`]),
+    runGit(projectPath, ['branch', '--show-current']),
+  ]);
+
+  const entries: GitLogEntry[] = [];
+  for (const line of logResult.stdout.split('\n')) {
+    if (!line.trim()) continue;
+    const parts = line.split('\0');
+    if (parts.length < 7) continue;
+    entries.push({
+      hash: parts[0],
+      shortHash: parts[1],
+      message: parts[2],
+      author: parts[3],
+      date: parts[4],
+      parentHashes: parts[5] ? parts[5].split(' ').filter(Boolean) : [],
+      refs: parts[6] ? parts[6].split(', ').filter(Boolean).map((r) => r.replace(/^HEAD -> /, '')) : [],
+    });
+  }
+
+  return { entries, branchName: branchResult.stdout.trim() };
+}
+
+export async function gitPull(projectPath: string): Promise<{ success: boolean; output?: string; error?: string }> {
+  // Use longer timeout for network operations
+  const result = await runGit(projectPath, ['pull']);
+  return result.exitCode === 0
+    ? { success: true, output: result.stdout }
+    : { success: false, error: result.stderr || result.stdout };
+}
+
+export async function gitPush(projectPath: string, setUpstream: boolean = false): Promise<{ success: boolean; error?: string }> {
+  const args = ['push'];
+  if (setUpstream) {
+    const branchResult = await runGit(projectPath, ['branch', '--show-current']);
+    const branch = branchResult.stdout.trim();
+    if (branch) args.push('-u', 'origin', branch);
+  }
+  const result = await runGit(projectPath, args);
+  return result.exitCode === 0
+    ? { success: true }
+    : { success: false, error: result.stderr || result.stdout };
+}
+
+export async function getAheadBehind(projectPath: string): Promise<GitAheadBehind> {
+  const result = await runGit(projectPath, ['rev-list', '--left-right', '--count', '@{u}...HEAD']);
+  if (result.exitCode !== 0) {
+    return { ahead: 0, behind: 0, hasUpstream: false };
+  }
+  const parts = result.stdout.trim().split(/\s+/);
+  return {
+    behind: parseInt(parts[0] ?? '0', 10) || 0,
+    ahead: parseInt(parts[1] ?? '0', 10) || 0,
+    hasUpstream: true,
+  };
 }

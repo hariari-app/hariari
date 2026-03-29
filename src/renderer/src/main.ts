@@ -1,6 +1,7 @@
 import '@xterm/xterm/css/xterm.css';
 import './styles/global.css';
 import './styles/terminal.css';
+import './styles/source-control.css';
 import { ProjectSidebar } from './project/project-sidebar';
 import { WorkspaceSwitcher } from './project/workspace-switcher';
 import { CommandPalette } from './ui/command-palette';

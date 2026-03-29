@@ -17,7 +17,7 @@ import { sql } from '@codemirror/lang-sql';
 import { yaml } from '@codemirror/lang-yaml';
 import { go } from '@codemirror/lang-go';
 import { search } from '@codemirror/search';
-import { GitChangesPanel } from './git-changes-panel';
+import { SourceControlPanel } from '../scm/source-control-panel';
 import type { FileEntry, FileContent } from '../../../shared/ipc-types';
 import type { GitStageGroup } from '../../../shared/git-types';
 import type { Extension } from '@codemirror/state';
@@ -69,7 +69,7 @@ export class FileViewer {
   private hasUnsavedChanges = false;
   private readonly readOnlyCompartment = new Compartment();
   private readonly languageCompartment = new Compartment();
-  private gitChangesPanel: GitChangesPanel | null = null;
+  private scmPanel: SourceControlPanel | null = null;
   private _rightPane!: HTMLElement;
   private treeNodes: Array<{ entry: FileEntry; expanded: boolean; children: any[] | null; depth: number }> = [];
 
@@ -93,7 +93,7 @@ export class FileViewer {
 
     this.changesTab = document.createElement('button');
     this.changesTab.className = 'file-viewer-tab';
-    this.changesTab.textContent = 'Changes';
+    this.changesTab.textContent = 'Source Control';
     this.changesTab.addEventListener('click', () => this.switchMode('changes'));
 
     this.breadcrumb = document.createElement('span');
@@ -190,6 +190,7 @@ export class FileViewer {
     this.overlay.style.display = 'none';
     this.destroyEditor();
     this.destroyMergeView();
+    this.scmPanel?.hide();
   }
 
   async showChanges(rootPath: string): Promise<void> {
@@ -244,32 +245,22 @@ export class FileViewer {
     this.destroyMergeView();
     this.showPlaceholder('Select a changed file to view diff');
 
-    if (!this.gitChangesPanel) {
-      this.gitChangesPanel = new GitChangesPanel(this.treeContainer, (filePath, group) => {
-        this.showDiff(filePath, group);
+    if (!this.scmPanel) {
+      this.scmPanel = new SourceControlPanel(this.treeContainer, {
+        onFileSelect: (filePath, group) => this.showDiff(filePath, group),
       });
     }
 
-    this.gitChangesPanel.renderLoading();
+    await this.scmPanel.show(this.rootPath);
 
+    // Update tab label with change count
     try {
       const status = await window.api.git.status(this.rootPath);
-      if ('error' in (status as unknown as Record<string, unknown>)) {
-        this.gitChangesPanel.renderNotRepo();
-        return;
+      if (status.isRepo) {
+        const count = status.changes.length;
+        this.changesTab.textContent = count > 0 ? `Source Control (${count})` : 'Source Control';
       }
-      if (!status.isRepo) {
-        this.gitChangesPanel.renderNotRepo();
-        return;
-      }
-      this.gitChangesPanel.render(status.changes, status.branch);
-
-      // Update changes tab with count
-      const count = status.changes.length;
-      this.changesTab.textContent = count > 0 ? `Changes (${count})` : 'Changes';
-    } catch {
-      this.gitChangesPanel.renderNotRepo();
-    }
+    } catch { /* ignore */ }
   }
 
   private currentDiffFile: string = '';
