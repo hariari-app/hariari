@@ -936,6 +936,33 @@
 .file-tree-icon { font-size: var(--font-sm); flex-shrink: 0; }
 .file-tree-label { overflow: hidden; text-overflow: ellipsis; }
 
+/* File tree resize handle */
+.file-tree-resize-handle {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+}
+
+.file-tree-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 1px;
+  width: 1px;
+  height: 100%;
+  background: var(--border);
+  transition: background var(--transition-fast), width var(--transition-fast);
+}
+
+.file-tree-resize-handle:hover::after {
+  background: var(--accent);
+  width: 2px;
+  left: 1px;
+}
+
 /* Right pane (editor + action bar) */
 .file-viewer-right {
   flex: 1;

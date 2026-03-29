@@ -146,7 +146,34 @@ export class FileViewer {
 
     rightPane.appendChild(this.editorContainer);
 
+    // Resize handle for the tree/SCM sidebar
+    const resizeHandle = document.createElement('div');
+    resizeHandle.className = 'file-tree-resize-handle';
+    resizeHandle.addEventListener('mousedown', (startEvent) => {
+      startEvent.preventDefault();
+      const startX = startEvent.clientX;
+      const startWidth = this.treeContainer.offsetWidth;
+
+      const onMouseMove = (e: MouseEvent) => {
+        const newWidth = Math.max(150, Math.min(500, startWidth + (e.clientX - startX)));
+        this.treeContainer.style.width = `${newWidth}px`;
+      };
+
+      const onMouseUp = () => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      };
+
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+
     body.appendChild(this.treeContainer);
+    body.appendChild(resizeHandle);
     body.appendChild(rightPane);
 
     // Store reference for appending action bar

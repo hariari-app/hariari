@@ -543,12 +543,15 @@ function main(): void {
     { id: 'tokyoNight', label: 'Tokyo Night' },
     { id: 'tokyoNightLight', label: 'Tokyo Night Light' },
     { id: 'solarizedDark', label: 'Solarized Dark' },
+    { id: 'solarizedLight', label: 'Solarized Light' },
     { id: 'dracula', label: 'Dracula' },
     { id: 'nord', label: 'Nord' },
     { id: 'gruvboxDark', label: 'Gruvbox Dark' },
     { id: 'oneDark', label: 'One Dark' },
     { id: 'catppuccinMocha', label: 'Catppuccin Mocha' },
+    { id: 'catppuccinLatte', label: 'Catppuccin Latte' },
     { id: 'monokai', label: 'Monokai' },
+    { id: 'githubLight', label: 'GitHub Light' },
   ];
   for (const theme of themeEntries) {
     commandPalette.register({
