@@ -127,6 +127,9 @@ contextBridge.exposeInMainWorld('api', {
     load: () => ipcRenderer.invoke(IPC_CHANNELS.STATE_LOAD),
     save: (state: unknown) => ipcRenderer.invoke(IPC_CHANNELS.STATE_SAVE, state),
   },
+  onboarding: {
+    detectProjects: () => ipcRenderer.invoke(IPC_CHANNELS.ONBOARDING_DETECT_PROJECTS),
+  },
   worktree: {
     diff: (agentId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_DIFF, agentId),
     diffFile: (request: { agentId: string; filePath: string }) =>

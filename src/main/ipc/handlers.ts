@@ -776,6 +776,41 @@ export function registerIpcHandlers(
     notificationManager.setEnabled(raw);
   });
 
+  // Onboarding: detect git projects in common directories
+  ipcMain.handle(IPC_CHANNELS.ONBOARDING_DETECT_PROJECTS, async () => {
+    const home = os.homedir();
+    const searchDirs = [
+      path.join(home, 'projects'),
+      path.join(home, 'code'),
+      path.join(home, 'dev'),
+      path.join(home, 'src'),
+      path.join(home, 'repos'),
+      path.join(home, 'Documents', 'GitHub'),
+      path.join(home, 'workspace'),
+    ];
+
+    const results: Array<{ name: string; path: string; mtime: number }> = [];
+    for (const dir of searchDirs) {
+      try {
+        if (!fs.existsSync(dir)) continue;
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+          const fullPath = path.join(dir, entry.name);
+          if (fs.existsSync(path.join(fullPath, '.git'))) {
+            const stat = fs.statSync(fullPath);
+            results.push({ name: entry.name, path: fullPath, mtime: stat.mtimeMs });
+          }
+        }
+      } catch { /* skip inaccessible directories */ }
+    }
+
+    return results
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, 10)
+      .map(({ name, path: p }) => ({ name, path: p }));
+  });
+
   // Worktree operations
   const worktreeManager = agentManager.getWorktreeManager();
 

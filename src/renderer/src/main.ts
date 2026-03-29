@@ -2,6 +2,7 @@ import '@xterm/xterm/css/xterm.css';
 import './styles/global.css';
 import './styles/terminal.css';
 import './styles/source-control.css';
+import './onboarding/onboarding.css';
 import { ProjectSidebar } from './project/project-sidebar';
 import { WorkspaceSwitcher } from './project/workspace-switcher';
 import { CommandPalette } from './ui/command-palette';
@@ -1119,6 +1120,20 @@ function main(): void {
       console.error('[Main] Failed to save global state:', error);
     }
   }
+
+  // Check if onboarding is needed
+  window.api.settings.load().then(async (settings) => {
+    const projects = await window.api.project.list();
+    if (!settings.onboardingComplete && projects.length === 0) {
+      const { OnboardingWizard } = await import('./onboarding/onboarding-wizard');
+      const wizard = new OnboardingWizard(appEl, {
+        initialStep: typeof settings.onboardingStep === 'number' ? settings.onboardingStep : 0,
+        onComplete: () => refreshProjectList(),
+        onSkip: () => refreshProjectList(),
+      });
+      wizard.show();
+    }
+  }).catch(() => {});
 
   // Initialize
   initializeFromState(workspaceSwitcher, projectSidebar, refreshProjectList).then(() => {

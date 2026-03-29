@@ -204,6 +204,9 @@ export interface VibeIDEApi {
     load(sessionId: string): Promise<string | null>;
     delete(sessionId: string): Promise<void>;
   };
+  onboarding: {
+    detectProjects(): Promise<Array<{ name: string; path: string }>>;
+  };
   worktree: {
     diff(agentId: string): Promise<import('./worktree-types').WorktreeDiffSummary | null>;
     diffFile(request: { agentId: string; filePath: string }): Promise<{ original: string; modified: string } | null>;
