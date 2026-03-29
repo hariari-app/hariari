@@ -28,11 +28,22 @@ Be the first tool that lets vibe coders manage 3-7 projects with multiple AI age
 Every pane surfaces real-time agent state so the user never reads raw output to know status.
 
 - **Phase 1 (Electron MVP)**
-  - [ ] Agent status strip per pane: type, status, elapsed time
-  - [ ] Status states: running, idle, needs-input, error, complete
-  - [ ] "Needs input" amber/yellow urgency indicator
-  - [ ] Auto-detect agent type (Claude, Codex, Gemini) with branded icons
-  - [ ] Kill button per agent
+  - [x] Agent status strip per pane: type, status, elapsed time
+  - [x] Status states: running, idle, needs-input, error, complete
+  - [x] "Needs input" amber/yellow urgency indicator
+  - [x] Auto-detect agent type (Claude, Codex, Gemini) with branded icons
+  - [x] Kill button per agent
+  - [ ] Agent-specific needs-input detection:
+    - [ ] Claude Code: detect permission prompts ("Allow", "Approve", tool use approval, plan confirmation)
+    - [ ] Claude Code: detect "Do you want to proceed?" and similar prompts
+    - [ ] Gemini CLI: detect input prompts and confirmation requests
+    - [ ] Codex: detect approval/confirmation patterns
+    - [ ] Detect agent waiting for user response (blocked state)
+    - [ ] Parse ANSI-styled prompts (colored/bold text in agent output)
+  - [ ] Configurable notification sounds per event type (needs-input, complete, error)
+  - [ ] One-click jump from sidebar notification badge to the specific agent terminal
+  - [ ] In-app toast notifications (top-right corner, 5s auto-dismiss)
+  - [ ] Per-event notification preferences UI (visual/sound/focus-steal toggles)
 - **Phase 2 (Native Rust)**
   - [ ] GPU-rendered status overlays
   - [ ] Structured tool-call cards (Warp-style blocks)
