@@ -175,6 +175,33 @@
   outline-offset: -2px;
 }
 
+.sidebar-equalize-btn {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.sidebar-equalize-btn:hover {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-color: var(--accent);
+}
+
+.sidebar-equalize-btn:active { transform: scale(0.95); }
+
+.sidebar-equalize-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .add-agent-btn {
   width: 28px;
   height: 28px;

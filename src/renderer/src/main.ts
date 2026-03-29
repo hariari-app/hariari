@@ -287,6 +287,10 @@ function main(): void {
         }
       }
     },
+    onEqualizePanes: () => {
+      const ws = workspaceSwitcher.getActiveWorkspace();
+      if (ws) ws.layoutManager.equalizeAll();
+    },
     onLaunchWorkspace: () => {
       launchWorkspaceDialog.show(async (result) => {
         await workspaceSwitcher.switchTo(result.project);

@@ -15,6 +15,7 @@ export interface ProjectSidebarCallbacks {
   readonly onFileExplorerClick: (projectPath: string) => void;
   readonly onNotificationClick: (projectId: string, agentId: string, sessionId: string) => void;
   readonly onLaunchWorkspace?: () => void;
+  readonly onEqualizePanes?: () => void;
 }
 
 interface ProjectEntry {
@@ -234,8 +235,19 @@ export class ProjectSidebar {
       this.callbacks.onLaunchWorkspace?.();
     });
 
+    const equalizeBtn = document.createElement('button');
+    equalizeBtn.className = 'sidebar-equalize-btn';
+    equalizeBtn.textContent = '\u2B1C';
+    equalizeBtn.title = 'Auto-arrange panes (equal size)';
+    equalizeBtn.setAttribute('aria-label', 'Auto-arrange panes');
+    equalizeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.callbacks.onEqualizePanes?.();
+    });
+
     header.appendChild(title);
     header.appendChild(launchBtn);
+    header.appendChild(equalizeBtn);
     header.appendChild(addBtn);
     this.container.appendChild(header);
 
