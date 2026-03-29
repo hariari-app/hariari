@@ -12,6 +12,12 @@ const STATUS_LABELS: Record<string, string> = {
   'stopped': 'STOPPED',
 };
 
+export interface StatusBarCallbacks {
+  readonly onKill: () => void;
+  readonly onSplitH?: () => void;
+  readonly onSplitV?: () => void;
+}
+
 export class AgentStatusBar {
   private readonly element: HTMLElement;
   private readonly indicatorEl: HTMLElement;
@@ -21,9 +27,12 @@ export class AgentStatusBar {
   private readonly startedAt: number;
   private readonly onKill: () => void;
 
-  constructor(agentInfo: AgentInfo, onKill: () => void) {
+  constructor(agentInfo: AgentInfo, callbacksOrKill: (() => void) | StatusBarCallbacks) {
+    const callbacks: StatusBarCallbacks = typeof callbacksOrKill === 'function'
+      ? { onKill: callbacksOrKill }
+      : callbacksOrKill;
     this.startedAt = agentInfo.startedAt;
-    this.onKill = onKill;
+    this.onKill = callbacks.onKill;
 
     this.element = document.createElement('div');
     this.element.className = 'agent-status-bar';
@@ -43,6 +52,30 @@ export class AgentStatusBar {
     this.uptimeEl = document.createElement('span');
     this.uptimeEl.className = 'status-bar-uptime';
 
+    // Split buttons
+    const splitH = document.createElement('button');
+    splitH.className = 'status-bar-split';
+    splitH.textContent = '|\u200A|';
+    splitH.title = 'Split horizontal';
+
+    const splitV = document.createElement('button');
+    splitV.className = 'status-bar-split';
+    splitV.textContent = '\u2014';
+    splitV.title = 'Split vertical';
+
+    // Direct click handlers
+    splitH.addEventListener('click', (e) => {
+      e.stopPropagation();
+      console.log('[StatusBar] Split H clicked');
+      callbacks.onSplitH?.();
+    });
+
+    splitV.addEventListener('click', (e) => {
+      e.stopPropagation();
+      console.log('[StatusBar] Split V clicked');
+      callbacks.onSplitV?.();
+    });
+
     const killBtn = document.createElement('button');
     killBtn.className = 'status-bar-kill';
     killBtn.textContent = '\u00d7';
@@ -57,6 +90,8 @@ export class AgentStatusBar {
     this.element.appendChild(typeLabel);
     this.element.appendChild(this.statusTextEl);
     this.element.appendChild(this.uptimeEl);
+    this.element.appendChild(splitH);
+    this.element.appendChild(splitV);
     this.element.appendChild(killBtn);
 
     this.startUptimeCounter();

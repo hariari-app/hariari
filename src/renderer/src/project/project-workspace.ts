@@ -60,7 +60,16 @@ export class ProjectWorkspace {
             container.prepend(tracked.statusBar.getElement());
           }
         }
-        this.terminalManager.createTerminal(sessionId, container);
+        // Create a sub-container for xterm so it doesn't share the
+        // same parent as the status bar — xterm.open() modifies its
+        // container with absolute-positioned elements that can overlap siblings.
+        let termWrapper = container.querySelector('.terminal-wrapper') as HTMLElement | null;
+        if (!termWrapper) {
+          termWrapper = document.createElement('div');
+          termWrapper.className = 'terminal-wrapper';
+          container.appendChild(termWrapper);
+        }
+        this.terminalManager.createTerminal(sessionId, termWrapper);
       },
       (sessionId) => this.terminalManager.removeTerminal(sessionId),
     );
@@ -104,15 +113,18 @@ export class ProjectWorkspace {
         cwd: this.projectPath,
       });
 
-      const statusBar = new AgentStatusBar(info, () => {
-        this.killAgent(info.id);
+      const statusBar = new AgentStatusBar(info, {
+        onKill: () => this.killAgent(info.id),
+        onSplitH: () => this.spawnAgent('shell', 'horizontal'),
+        onSplitV: () => this.spawnAgent('shell', 'vertical'),
       });
       this.tracked.set(info.id, { info, statusBar });
 
       if (this.layoutManager.getLayoutTree() === null) {
         this.layoutManager.setRoot(info.sessionId);
       } else {
-        const focusedId = this.layoutManager.getFocusedLeafId();
+        const focusedId = this.layoutManager.getFocusedLeafId()
+          ?? this.findFirstLeafId();
         if (focusedId) {
           this.layoutManager.splitPane(focusedId, direction ?? 'horizontal', info.sessionId);
         }
@@ -149,8 +161,10 @@ export class ProjectWorkspace {
           return false;
         }
 
-        const statusBar = new AgentStatusBar(info, () => {
-          this.killAgent(info.id);
+        const statusBar = new AgentStatusBar(info, {
+          onKill: () => this.killAgent(info.id),
+          onSplitH: () => this.spawnAgent('shell', 'horizontal'),
+          onSplitV: () => this.spawnAgent('shell', 'vertical'),
         });
         this.tracked.set(info.id, { info, statusBar });
         sessionIds.push(info.sessionId);
@@ -229,6 +243,16 @@ export class ProjectWorkspace {
     return this.tracked.has(agentId);
   }
 
+  private findFirstLeafId(): string | null {
+    const tree = this.layoutManager.getLayoutTree();
+    if (!tree) return null;
+    const findLeaf = (node: LayoutNode): string | null => {
+      if (node.type === 'leaf') return node.id;
+      return findLeaf(node.children[0]);
+    };
+    return findLeaf(tree);
+  }
+
   private findTrackedBySession(sessionId: string): { readonly info: AgentInfo; readonly statusBar: AgentStatusBar } | undefined {
     for (const tracked of this.tracked.values()) {
       if (tracked.info.sessionId === sessionId) return tracked;
@@ -278,8 +302,10 @@ export class ProjectWorkspace {
           label: agentDef.label,
         });
 
-        const statusBar = new AgentStatusBar(info, () => {
-          this.killAgent(info.id);
+        const statusBar = new AgentStatusBar(info, {
+          onKill: () => this.killAgent(info.id),
+          onSplitH: () => this.spawnAgent('shell', 'horizontal'),
+          onSplitV: () => this.spawnAgent('shell', 'vertical'),
         });
         this.tracked.set(info.id, { info, statusBar });
 

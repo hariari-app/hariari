@@ -17,10 +17,15 @@
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
-.terminal-leaf .xterm {
+.terminal-wrapper {
   flex: 1;
-  padding: var(--space-2);
+  position: relative;
   overflow: hidden;
+}
+
+.terminal-wrapper .xterm {
+  padding: var(--space-2);
+  height: 100%;
 }
 
 /* ============================================
@@ -371,6 +376,31 @@
   font-variant-numeric: tabular-nums;
   font-family: 'JetBrains Mono', monospace;
   font-size: var(--font-xs);
+}
+
+.status-bar-split {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  padding: 0 4px;
+  height: 20px;
+  min-width: 20px;
+  font-size: var(--font-xs);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+  position: relative;
+  z-index: 10;
+}
+
+.status-bar-split:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--surface-hover);
 }
 
 .status-bar-kill {
