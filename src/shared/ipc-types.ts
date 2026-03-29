@@ -153,6 +153,13 @@ export interface VibeIDEApi {
     transcribe(request: { provider: string; apiKey: string; audioBase64: string }): Promise<{ text?: string; error?: string }>;
     formatLLM(request: { provider: string; apiKey: string; messages: Array<{ role: string; content: string }> }): Promise<{ text?: string; error?: string }>;
   };
+  git: {
+    status(projectPath: string): Promise<import('./git-types').GitStatusResult>;
+    diff(request: { projectPath: string; filePath: string; group: string }): Promise<import('./git-types').GitDiffResult>;
+    show(request: { projectPath: string; filePath: string; ref: string }): Promise<{ content: string }>;
+    discard(request: { projectPath: string; filePath: string }): Promise<{ success?: boolean; error?: string }>;
+    stage(request: { projectPath: string; filePath: string }): Promise<{ success?: boolean; error?: string }>;
+  };
   file: {
     listDir(dirPath: string): Promise<FileEntry[]>;
     listAll(rootPath: string): Promise<string[]>;

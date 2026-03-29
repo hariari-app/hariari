@@ -394,6 +394,81 @@ export function registerIpcHandlers(
     }
   });
 
+  // Git operations
+  ipcMain.handle(IPC_CHANNELS.GIT_STATUS, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'string') return { error: 'invalid_path' };
+      const { getGitStatus } = await import('../git/git-service');
+      return await getGitStatus(raw);
+    } catch (error) {
+      console.error('[IPC][git:status]', error);
+      return { error: 'git_status_failed' };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GIT_DIFF, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'object' || raw === null) return { error: 'invalid_request' };
+      const req = raw as Record<string, unknown>;
+      if (typeof req.projectPath !== 'string' || typeof req.filePath !== 'string' || typeof req.group !== 'string') {
+        return { error: 'invalid_request' };
+      }
+      const { getGitDiff } = await import('../git/git-service');
+      return await getGitDiff(req.projectPath, req.filePath, req.group as 'staged' | 'unstaged' | 'untracked');
+    } catch (error) {
+      console.error('[IPC][git:diff]', error);
+      return { error: 'git_diff_failed' };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GIT_SHOW, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'object' || raw === null) return { error: 'invalid_request' };
+      const req = raw as Record<string, unknown>;
+      if (typeof req.projectPath !== 'string' || typeof req.filePath !== 'string' || typeof req.ref !== 'string') {
+        return { error: 'invalid_request' };
+      }
+      const { getFileAtRef } = await import('../git/git-service');
+      const content = await getFileAtRef(req.projectPath, req.filePath, req.ref);
+      return { content };
+    } catch (error) {
+      console.error('[IPC][git:show]', error);
+      return { error: 'git_show_failed' };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GIT_DISCARD, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'object' || raw === null) return { error: 'invalid_request' };
+      const req = raw as Record<string, unknown>;
+      if (typeof req.projectPath !== 'string' || typeof req.filePath !== 'string') {
+        return { error: 'invalid_request' };
+      }
+      const { runGit } = await import('../git/git-executor');
+      const result = await runGit(req.projectPath, ['checkout', '--', req.filePath]);
+      return result.exitCode === 0 ? { success: true } : { error: result.stderr || 'discard_failed' };
+    } catch (error) {
+      console.error('[IPC][git:discard]', error);
+      return { error: 'discard_failed' };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GIT_STAGE, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'object' || raw === null) return { error: 'invalid_request' };
+      const req = raw as Record<string, unknown>;
+      if (typeof req.projectPath !== 'string' || typeof req.filePath !== 'string') {
+        return { error: 'invalid_request' };
+      }
+      const { runGit } = await import('../git/git-executor');
+      const result = await runGit(req.projectPath, ['add', req.filePath]);
+      return result.exitCode === 0 ? { success: true } : { error: result.stderr || 'stage_failed' };
+    } catch (error) {
+      console.error('[IPC][git:stage]', error);
+      return { error: 'stage_failed' };
+    }
+  });
+
   // Recursive file listing (respects .gitignore patterns)
   ipcMain.handle(IPC_CHANNELS.FILE_LIST_ALL, async (_event, raw: unknown) => {
     try {

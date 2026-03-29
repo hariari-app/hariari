@@ -607,6 +607,50 @@
 
 .agent-count-badge:empty { display: none; }
 
+/* Git change badge */
+.git-change-badge {
+  font-size: var(--font-xs);
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: rgba(224, 175, 104, 0.2);
+  color: var(--warning);
+  min-width: 16px;
+  text-align: center;
+  cursor: pointer;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  transition: all var(--transition-fast);
+}
+
+.git-change-badge:hover {
+  background: rgba(224, 175, 104, 0.35);
+}
+
+.git-change-badge:empty { display: none; }
+
+.project-files-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: all 0.05s ease;
+  flex-shrink: 0;
+}
+
+.project-entry:hover .project-files-btn { opacity: 1; }
+
+.project-files-btn:hover {
+  color: var(--accent);
+  background: var(--surface-hover);
+}
+
 .project-add-agent-btn,
 .project-remove-btn {
   width: 20px;
@@ -774,20 +818,21 @@
 .file-viewer-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.3);
   z-index: 900;
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 40px;
+  padding: 0;
   animation: overlay-in var(--transition-normal);
 }
 
 .file-viewer-panel {
   width: 100%;
-  max-width: 1000px;
+  max-width: none;
   height: 100%;
-  max-height: 700px;
+  max-height: none;
+  border-radius: 0;
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -888,6 +933,14 @@
 .file-tree-icon { font-size: var(--font-sm); flex-shrink: 0; }
 .file-tree-label { overflow: hidden; text-overflow: ellipsis; }
 
+/* Right pane (editor + action bar) */
+.file-viewer-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 /* CodeMirror editor container */
 .file-editor-container {
   flex: 1;
@@ -902,6 +955,155 @@
 
 .file-editor-container .cm-editor.cm-focused {
   outline: none;
+}
+
+/* File viewer tabs */
+.file-viewer-tab {
+  padding: 4px 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--fg-dim);
+  font-size: var(--font-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.file-viewer-tab:hover { color: var(--fg); }
+
+.file-viewer-tab.active {
+  background: var(--surface-hover);
+  color: var(--fg);
+  border-color: var(--border);
+}
+
+/* Git changes panel */
+.git-branch-header {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-sm);
+  color: var(--accent);
+  font-family: 'JetBrains Mono', monospace;
+  border-bottom: 1px solid var(--border);
+}
+
+.git-changes-section { padding: var(--space-1) 0; }
+
+.git-changes-group-header {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--fg-faint);
+}
+
+.git-change-row {
+  padding: 4px var(--space-3);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-sm);
+  font-family: 'JetBrains Mono', monospace;
+  transition: background var(--transition-fast);
+}
+
+.git-change-row:hover { background: var(--surface-hover); }
+
+.git-change-icon {
+  width: 14px;
+  font-weight: 700;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.git-change-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-change-dir { color: var(--fg-faint); }
+
+.git-changes-empty {
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: var(--font-base);
+}
+
+/* MergeView overrides */
+.file-editor-container .cm-mergeView {
+  height: 100%;
+}
+
+.file-editor-container .cm-mergeView .cm-editor {
+  height: 100%;
+}
+
+.file-editor-container .cm-merge-a .cm-changedLine {
+  background: rgba(247, 118, 142, 0.1);
+}
+
+.file-editor-container .cm-merge-b .cm-changedLine {
+  background: rgba(158, 206, 106, 0.1);
+}
+
+.file-editor-container .cm-deletedChunk {
+  background: rgba(247, 118, 142, 0.08);
+}
+
+/* Diff action bar */
+.diff-action-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-deep);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.diff-action-btn {
+  padding: 5px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: var(--font-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  background: transparent;
+  color: var(--fg);
+}
+
+.diff-action-accept {
+  background: var(--success);
+  border-color: var(--success);
+  color: var(--bg);
+}
+
+.diff-action-accept:hover { opacity: 0.85; }
+
+.diff-action-discard {
+  background: transparent;
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.diff-action-discard:hover {
+  background: var(--error);
+  color: var(--bg);
+}
+
+.diff-action-edit {
+  margin-left: auto;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.diff-action-edit:hover {
+  background: var(--accent);
+  color: var(--bg);
 }
 
 /* Header shortcut hints */

@@ -11,6 +11,8 @@ export interface ProjectSidebarCallbacks {
   readonly onProjectPin: (projectId: string, pinned: boolean) => void;
   readonly onAgentSpawn: (projectId: string, type: AgentType) => void;
   readonly onAgentSelect: (agentId: string, sessionId: string) => void;
+  readonly onGitChangesClick: (projectPath: string) => void;
+  readonly onFileExplorerClick: (projectPath: string) => void;
 }
 
 interface ProjectEntry {
@@ -18,6 +20,8 @@ interface ProjectEntry {
   readonly agents: AgentInfo[];
   expanded: boolean;
   notificationCount: number;
+  gitChangeCount: number;
+  gitChangeFiles: string[];
 }
 
 interface ProjectDomRefs {
@@ -86,7 +90,7 @@ export class ProjectSidebar {
           project,
           agents: [],
           expanded: false,
-          notificationCount: 0,
+          notificationCount: 0, gitChangeCount: 0, gitChangeFiles: [],
         });
       }
     }
@@ -103,7 +107,7 @@ export class ProjectSidebar {
     if (projectId) {
       const entry = this.entries.get(projectId);
       if (entry) {
-        this.entries.set(projectId, { ...entry, expanded: true, notificationCount: 0 });
+        this.entries.set(projectId, { ...entry, notificationCount: 0 });
       }
     }
 
@@ -159,6 +163,20 @@ export class ProjectSidebar {
         }
         return;
       }
+    }
+  }
+
+  updateGitChanges(projectId: string, count: number, files: string[]): void {
+    const entry = this.entries.get(projectId);
+    if (!entry) return;
+    this.entries.set(projectId, { ...entry, gitChangeCount: count, gitChangeFiles: files });
+    // Targeted update of the badge
+    const badge = this.container.querySelector(
+      `[data-project-id="${projectId}"] .git-change-badge`,
+    ) as HTMLElement | null;
+    if (badge) {
+      badge.textContent = count > 0 ? `\u0394${count}` : '';
+      badge.title = count > 0 ? files.slice(0, 15).join('\n') + (files.length > 15 ? `\n...and ${files.length - 15} more` : '') : '';
     }
   }
 
@@ -315,9 +333,33 @@ export class ProjectSidebar {
     if (entry.project.pinned) {
       row.appendChild(pinIndicator);
     }
+    // Git change badge
+    const gitBadge = document.createElement('span');
+    gitBadge.className = 'git-change-badge';
+    if (entry.gitChangeCount > 0) {
+      gitBadge.textContent = `\u0394${entry.gitChangeCount}`;
+      gitBadge.title = entry.gitChangeFiles.slice(0, 15).join('\n');
+    }
+    gitBadge.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.callbacks.onGitChangesClick(entry.project.path);
+    });
+
+    // File explorer button
+    const filesBtn = document.createElement('button');
+    filesBtn.className = 'project-files-btn';
+    filesBtn.innerHTML = `<svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h3.879a1.5 1.5 0 0 1 1.06.44l1.122 1.12A1.5 1.5 0 0 0 9.62 4H13.5A1.5 1.5 0 0 1 15 5.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5v-9z"/></svg>`;
+    filesBtn.title = 'Browse files';
+    filesBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.callbacks.onFileExplorerClick(entry.project.path);
+    });
+
     row.appendChild(name);
+    row.appendChild(gitBadge);
     row.appendChild(notifBadge);
     row.appendChild(countBadge);
+    row.appendChild(filesBtn);
     row.appendChild(addAgentBtn);
     row.appendChild(removeBtn);
     wrapper.appendChild(row);

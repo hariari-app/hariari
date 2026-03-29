@@ -69,6 +69,17 @@ contextBridge.exposeInMainWorld('api', {
     formatLLM: (request: { provider: string; apiKey: string; messages: Array<{ role: string; content: string }> }) =>
       ipcRenderer.invoke(IPC_CHANNELS.VOICE_FORMAT_LLM, request),
   },
+  git: {
+    status: (projectPath: string) => ipcRenderer.invoke(IPC_CHANNELS.GIT_STATUS, projectPath),
+    diff: (request: { projectPath: string; filePath: string; group: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_DIFF, request),
+    show: (request: { projectPath: string; filePath: string; ref: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_SHOW, request),
+    discard: (request: { projectPath: string; filePath: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_DISCARD, request),
+    stage: (request: { projectPath: string; filePath: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_STAGE, request),
+  },
   file: {
     listDir: (dirPath: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_LIST_DIR, dirPath),
     listAll: (rootPath: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_LIST_ALL, rootPath),

@@ -1,6 +1,7 @@
 import { EditorView, basicSetup } from 'codemirror';
 import { EditorState, Compartment } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
+import { MergeView } from '@codemirror/merge';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { javascript } from '@codemirror/lang-javascript';
 import { python } from '@codemirror/lang-python';
@@ -16,7 +17,9 @@ import { sql } from '@codemirror/lang-sql';
 import { yaml } from '@codemirror/lang-yaml';
 import { go } from '@codemirror/lang-go';
 import { search } from '@codemirror/search';
+import { GitChangesPanel } from './git-changes-panel';
 import type { FileEntry, FileContent } from '../../../shared/ipc-types';
+import type { GitStageGroup } from '../../../shared/git-types';
 import type { Extension } from '@codemirror/state';
 
 function getLanguageExtension(filePath: string): Extension {
@@ -39,6 +42,14 @@ function getLanguageExtension(filePath: string): Extension {
   }
 }
 
+const cmTheme = EditorView.theme({
+  '&': { height: '100%', fontSize: '13px' },
+  '.cm-scroller': { overflow: 'auto', fontFamily: "'JetBrains Mono', 'Fira Code', monospace" },
+  '.cm-gutters': { minWidth: '48px' },
+});
+
+type ViewMode = 'files' | 'changes';
+
 export class FileViewer {
   private readonly overlay: HTMLElement;
   private readonly treeContainer: HTMLElement;
@@ -46,17 +57,21 @@ export class FileViewer {
   private readonly breadcrumb: HTMLElement;
   private readonly editToggle: HTMLButtonElement;
   private readonly saveIndicator: HTMLElement;
-  private rootPath: string = '';
+  private readonly filesTab: HTMLButtonElement;
+  private readonly changesTab: HTMLButtonElement;
+  private rootPath = '';
   private visible = false;
+  private mode: ViewMode = 'files';
   private editorView: EditorView | null = null;
-  private currentFilePath: string = '';
+  private mergeView: MergeView | null = null;
+  private currentFilePath = '';
   private isEditing = false;
   private hasUnsavedChanges = false;
   private readonly readOnlyCompartment = new Compartment();
   private readonly languageCompartment = new Compartment();
-
-  // Tree state
-  private treeNodes: Array<{ entry: FileEntry; expanded: boolean; children: Array<{ entry: FileEntry; expanded: boolean; children: null; depth: number }> | null; depth: number }> = [];
+  private gitChangesPanel: GitChangesPanel | null = null;
+  private _rightPane!: HTMLElement;
+  private treeNodes: Array<{ entry: FileEntry; expanded: boolean; children: any[] | null; depth: number }> = [];
 
   constructor() {
     this.overlay = document.createElement('div');
@@ -70,15 +85,30 @@ export class FileViewer {
     const header = document.createElement('div');
     header.className = 'file-viewer-header';
 
-    const title = document.createElement('span');
-    title.className = 'file-viewer-title';
-    title.textContent = 'Files';
+    // Tab buttons
+    this.filesTab = document.createElement('button');
+    this.filesTab.className = 'file-viewer-tab active';
+    this.filesTab.textContent = 'Files';
+    this.filesTab.addEventListener('click', () => this.switchMode('files'));
+
+    this.changesTab = document.createElement('button');
+    this.changesTab.className = 'file-viewer-tab';
+    this.changesTab.textContent = 'Changes';
+    this.changesTab.addEventListener('click', () => this.switchMode('changes'));
 
     this.breadcrumb = document.createElement('span');
     this.breadcrumb.className = 'file-viewer-breadcrumb';
 
     this.saveIndicator = document.createElement('span');
     this.saveIndicator.className = 'file-viewer-unsaved';
+
+    const shortcutSave = document.createElement('span');
+    shortcutSave.className = 'file-viewer-shortcut';
+    shortcutSave.innerHTML = '<kbd>Ctrl+S</kbd> Save';
+
+    const shortcutFind = document.createElement('span');
+    shortcutFind.className = 'file-viewer-shortcut';
+    shortcutFind.innerHTML = '<kbd>Ctrl+F</kbd> Find';
 
     this.editToggle = document.createElement('button');
     this.editToggle.className = 'file-viewer-edit-btn';
@@ -91,15 +121,8 @@ export class FileViewer {
     closeBtn.textContent = '\u00D7';
     closeBtn.addEventListener('click', () => this.hide());
 
-    const shortcutSave = document.createElement('span');
-    shortcutSave.className = 'file-viewer-shortcut';
-    shortcutSave.innerHTML = '<kbd>Ctrl+S</kbd> Save';
-
-    const shortcutFind = document.createElement('span');
-    shortcutFind.className = 'file-viewer-shortcut';
-    shortcutFind.innerHTML = '<kbd>Ctrl+F</kbd> Find';
-
-    header.appendChild(title);
+    header.appendChild(this.filesTab);
+    header.appendChild(this.changesTab);
     header.appendChild(this.breadcrumb);
     header.appendChild(this.saveIndicator);
     header.appendChild(shortcutSave);
@@ -114,11 +137,20 @@ export class FileViewer {
     this.treeContainer = document.createElement('div');
     this.treeContainer.className = 'file-tree';
 
+    // Right side: editor + action bar in a column
+    const rightPane = document.createElement('div');
+    rightPane.className = 'file-viewer-right';
+
     this.editorContainer = document.createElement('div');
     this.editorContainer.className = 'file-editor-container';
 
+    rightPane.appendChild(this.editorContainer);
+
     body.appendChild(this.treeContainer);
-    body.appendChild(this.editorContainer);
+    body.appendChild(rightPane);
+
+    // Store reference for appending action bar
+    this._rightPane = rightPane;
 
     panel.appendChild(header);
     panel.appendChild(body);
@@ -131,9 +163,7 @@ export class FileViewer {
     document.body.appendChild(this.overlay);
   }
 
-  isVisible(): boolean {
-    return this.visible;
-  }
+  isVisible(): boolean { return this.visible; }
 
   toggle(rootPath: string): void {
     if (this.visible) this.hide();
@@ -149,61 +179,196 @@ export class FileViewer {
     this.isEditing = false;
     this.editToggle.textContent = 'Edit';
     this.editToggle.classList.remove('active');
-    this.editorContainer.textContent = 'Select a file to view';
-    this.editorContainer.style.display = 'flex';
-    this.editorContainer.style.alignItems = 'center';
-    this.editorContainer.style.justifyContent = 'center';
-    this.editorContainer.style.color = 'var(--fg-dim)';
+    this.showPlaceholder('Select a file to view');
     this.destroyEditor();
-    await this.loadTree(rootPath);
+    this.destroyMergeView();
+    this.switchMode(this.mode);
   }
 
   hide(): void {
-    if (this.hasUnsavedChanges) {
-      // Could prompt to save — for now just warn
-      console.warn('[FileViewer] Closing with unsaved changes');
-    }
     this.visible = false;
     this.overlay.style.display = 'none';
     this.destroyEditor();
+    this.destroyMergeView();
+  }
+
+  async showChanges(rootPath: string): Promise<void> {
+    this.rootPath = rootPath;
+    this.visible = true;
+    this.overlay.style.display = '';
+    this.switchMode('changes');
   }
 
   async openFile(filePath: string): Promise<void> {
     try {
       const result: FileContent = await window.api.file.read(filePath);
       if ('error' in (result as unknown as Record<string, unknown>)) {
-        this.editorContainer.textContent = 'Failed to read file';
+        this.showPlaceholder('Failed to read file');
         return;
       }
 
       this.currentFilePath = filePath;
       this.hasUnsavedChanges = false;
       this.saveIndicator.textContent = '';
+      this.editToggle.style.display = '';
 
       const relativePath = filePath.startsWith(this.rootPath)
-        ? filePath.slice(this.rootPath.length + 1)
-        : filePath;
+        ? filePath.slice(this.rootPath.length + 1) : filePath;
       this.breadcrumb.textContent = relativePath;
 
+      this.destroyMergeView();
       this.createEditor(result.content, filePath);
-
-      if (result.truncated) {
-        console.warn('[FileViewer] File truncated (>512KB)');
-      }
-    } catch (error) {
-      this.editorContainer.textContent = 'Failed to read file';
+    } catch {
+      this.showPlaceholder('Failed to read file');
     }
   }
 
+  // --- Mode switching ---
+
+  private switchMode(mode: ViewMode): void {
+    this.mode = mode;
+    this.filesTab.classList.toggle('active', mode === 'files');
+    this.changesTab.classList.toggle('active', mode === 'changes');
+
+    if (mode === 'files') {
+      this.editToggle.style.display = '';
+      this.loadTree(this.rootPath);
+    } else {
+      this.editToggle.style.display = 'none';
+      this.loadGitChanges();
+    }
+  }
+
+  private async loadGitChanges(): Promise<void> {
+    this.destroyEditor();
+    this.destroyMergeView();
+    this.showPlaceholder('Select a changed file to view diff');
+
+    if (!this.gitChangesPanel) {
+      this.gitChangesPanel = new GitChangesPanel(this.treeContainer, (filePath, group) => {
+        this.showDiff(filePath, group);
+      });
+    }
+
+    this.gitChangesPanel.renderLoading();
+
+    try {
+      const status = await window.api.git.status(this.rootPath);
+      if ('error' in (status as unknown as Record<string, unknown>)) {
+        this.gitChangesPanel.renderNotRepo();
+        return;
+      }
+      if (!status.isRepo) {
+        this.gitChangesPanel.renderNotRepo();
+        return;
+      }
+      this.gitChangesPanel.render(status.changes, status.branch);
+
+      // Update changes tab with count
+      const count = status.changes.length;
+      this.changesTab.textContent = count > 0 ? `Changes (${count})` : 'Changes';
+    } catch {
+      this.gitChangesPanel.renderNotRepo();
+    }
+  }
+
+  private currentDiffFile: string = '';
+  private currentDiffGroup: GitStageGroup = 'unstaged';
+  private diffActionBar: HTMLElement | null = null;
+
+  private async showDiff(filePath: string, group: GitStageGroup): Promise<void> {
+    this.breadcrumb.textContent = filePath;
+    this.currentDiffFile = filePath;
+    this.currentDiffGroup = group;
+    this.destroyEditor();
+    this.destroyMergeView();
+    this.removeDiffActions();
+
+    try {
+      const diff = await window.api.git.diff({ projectPath: this.rootPath, filePath, group });
+      if ('error' in (diff as unknown as Record<string, unknown>)) {
+        this.showPlaceholder('Failed to load diff');
+        return;
+      }
+
+      if (diff.isBinary) {
+        this.showPlaceholder('Binary file — cannot show diff');
+        return;
+      }
+
+      this.createMergeView(diff.originalContent, diff.modifiedContent, filePath);
+      this.showDiffActions(filePath, group, diff.isNewFile);
+    } catch {
+      this.showPlaceholder('Failed to load diff');
+    }
+  }
+
+  private showDiffActions(filePath: string, group: GitStageGroup, isNewFile: boolean): void {
+    this.removeDiffActions();
+
+    this.diffActionBar = document.createElement('div');
+    this.diffActionBar.className = 'diff-action-bar';
+
+    // Edit button — open file in editor mode
+    const editBtn = document.createElement('button');
+    editBtn.className = 'diff-action-btn diff-action-edit';
+    editBtn.textContent = 'Edit File';
+    editBtn.addEventListener('click', () => {
+      this.removeDiffActions();
+      this.destroyMergeView();
+      const fullPath = this.rootPath + '/' + filePath;
+      this.isEditing = true;
+      this.editToggle.textContent = 'Viewing';
+      this.editToggle.classList.add('active');
+      this.editToggle.style.display = '';
+      this.openFile(fullPath);
+    });
+
+    // Stage button (for unstaged/untracked)
+    if (group === 'unstaged' || group === 'untracked') {
+      const stageBtn = document.createElement('button');
+      stageBtn.className = 'diff-action-btn diff-action-accept';
+      stageBtn.textContent = 'Stage';
+      stageBtn.addEventListener('click', async () => {
+        await window.api.git.stage({ projectPath: this.rootPath, filePath });
+        this.loadGitChanges();
+        this.showPlaceholder('File staged');
+      });
+      this.diffActionBar.appendChild(stageBtn);
+    }
+
+    // Discard button (for unstaged modified files, not untracked)
+    if (group === 'unstaged' && !isNewFile) {
+      const discardBtn = document.createElement('button');
+      discardBtn.className = 'diff-action-btn diff-action-discard';
+      discardBtn.textContent = 'Discard Changes';
+      discardBtn.addEventListener('click', async () => {
+        const confirmed = confirm(`Discard all changes to ${filePath}? This cannot be undone.`);
+        if (!confirmed) return;
+        await window.api.git.discard({ projectPath: this.rootPath, filePath });
+        this.loadGitChanges();
+        this.showPlaceholder('Changes discarded');
+      });
+      this.diffActionBar.appendChild(discardBtn);
+    }
+
+    this.diffActionBar.appendChild(editBtn);
+    this._rightPane.appendChild(this.diffActionBar);
+  }
+
+  private removeDiffActions(): void {
+    if (this.diffActionBar) {
+      this.diffActionBar.remove();
+      this.diffActionBar = null;
+    }
+  }
+
+  // --- Editor ---
+
   private createEditor(content: string, filePath: string): void {
     this.destroyEditor();
-
-    // Reset container
-    this.editorContainer.textContent = '';
-    this.editorContainer.style.display = '';
-    this.editorContainer.style.alignItems = '';
-    this.editorContainer.style.justifyContent = '';
-    this.editorContainer.style.color = '';
+    this.destroyMergeView();
+    this.clearPlaceholder();
 
     const langExt = getLanguageExtension(filePath);
 
@@ -215,12 +380,7 @@ export class FileViewer {
         this.readOnlyCompartment.of(EditorState.readOnly.of(!this.isEditing)),
         oneDark,
         search(),
-        keymap.of([
-          {
-            key: 'Mod-s',
-            run: () => { this.saveFile(); return true; },
-          },
-        ]),
+        keymap.of([{ key: 'Mod-s', run: () => { this.saveFile(); return true; } }]),
         EditorView.updateListener.of((update) => {
           if (update.docChanged && this.isEditing) {
             this.hasUnsavedChanges = true;
@@ -228,44 +388,60 @@ export class FileViewer {
             this.saveIndicator.title = 'Unsaved changes';
           }
         }),
-        EditorView.theme({
-          '&': { height: '100%', fontSize: '13px' },
-          '.cm-scroller': { overflow: 'auto', fontFamily: "'JetBrains Mono', 'Fira Code', monospace" },
-          '.cm-gutters': { minWidth: '48px' },
-        }),
+        cmTheme,
       ],
     });
 
-    this.editorView = new EditorView({
-      state,
-      parent: this.editorContainer,
-    });
+    this.editorView = new EditorView({ state, parent: this.editorContainer });
   }
 
   private destroyEditor(): void {
-    if (this.editorView) {
-      this.editorView.destroy();
-      this.editorView = null;
-    }
+    if (this.editorView) { this.editorView.destroy(); this.editorView = null; }
   }
+
+  // --- Merge View (diff) ---
+
+  private createMergeView(original: string, modified: string, filePath: string): void {
+    this.destroyEditor();
+    this.destroyMergeView();
+    this.clearPlaceholder();
+
+    const langExt = getLanguageExtension(filePath);
+
+    this.mergeView = new MergeView({
+      a: {
+        doc: original,
+        extensions: [basicSetup, langExt, oneDark, cmTheme, EditorState.readOnly.of(true)],
+      },
+      b: {
+        doc: modified,
+        extensions: [basicSetup, langExt, oneDark, cmTheme, EditorState.readOnly.of(true)],
+      },
+      parent: this.editorContainer,
+      highlightChanges: true,
+      gutter: true,
+    });
+  }
+
+  private destroyMergeView(): void {
+    if (this.mergeView) { this.mergeView.destroy(); this.mergeView = null; }
+  }
+
+  // --- Edit mode ---
 
   private toggleEdit(): void {
     this.isEditing = !this.isEditing;
     this.editToggle.textContent = this.isEditing ? 'Viewing' : 'Edit';
     this.editToggle.classList.toggle('active', this.isEditing);
-
     if (this.editorView) {
       this.editorView.dispatch({
-        effects: this.readOnlyCompartment.reconfigure(
-          EditorState.readOnly.of(!this.isEditing),
-        ),
+        effects: this.readOnlyCompartment.reconfigure(EditorState.readOnly.of(!this.isEditing)),
       });
     }
   }
 
   private async saveFile(): Promise<void> {
     if (!this.currentFilePath || !this.editorView || !this.hasUnsavedChanges) return;
-
     const content = this.editorView.state.doc.toString();
     try {
       const result = await window.api.file.write(this.currentFilePath, content);
@@ -273,16 +449,34 @@ export class FileViewer {
         this.hasUnsavedChanges = false;
         this.saveIndicator.textContent = '\u2713';
         this.saveIndicator.title = 'Saved';
-        setTimeout(() => {
-          if (!this.hasUnsavedChanges) this.saveIndicator.textContent = '';
-        }, 2000);
+        setTimeout(() => { if (!this.hasUnsavedChanges) this.saveIndicator.textContent = ''; }, 2000);
+        // Refresh git changes if in changes mode
+        if (this.mode === 'changes') this.loadGitChanges();
       } else {
         this.saveIndicator.textContent = '\u00D7';
         this.saveIndicator.title = `Save failed: ${result.error}`;
       }
-    } catch (error) {
-      console.error('[FileViewer] Save failed:', error);
+    } catch {
+      // Save failed
     }
+  }
+
+  // --- Placeholder ---
+
+  private showPlaceholder(text: string): void {
+    this.editorContainer.textContent = text;
+    this.editorContainer.style.display = 'flex';
+    this.editorContainer.style.alignItems = 'center';
+    this.editorContainer.style.justifyContent = 'center';
+    this.editorContainer.style.color = 'var(--fg-dim)';
+  }
+
+  private clearPlaceholder(): void {
+    this.editorContainer.textContent = '';
+    this.editorContainer.style.display = '';
+    this.editorContainer.style.alignItems = '';
+    this.editorContainer.style.justifyContent = '';
+    this.editorContainer.style.color = '';
   }
 
   // --- File tree ---
@@ -294,9 +488,7 @@ export class FileViewer {
         this.treeContainer.textContent = 'Failed to load directory';
         return;
       }
-      this.treeNodes = entries.map((entry) => ({
-        entry, expanded: false, children: null, depth: 0,
-      }));
+      this.treeNodes = entries.map((entry) => ({ entry, expanded: false, children: null, depth: 0 }));
       this.renderTree();
     } catch {
       this.treeContainer.textContent = 'Failed to load directory';
@@ -332,15 +524,11 @@ export class FileViewer {
       row.appendChild(label);
 
       row.addEventListener('click', () => {
-        if (node.entry.isDirectory) {
-          this.toggleDirectory(node);
-        } else {
-          this.openFile(node.entry.path);
-        }
+        if (node.entry.isDirectory) this.toggleDirectory(node);
+        else this.openFile(node.entry.path);
       });
 
       container.appendChild(row);
-
       if (node.expanded && node.children) {
         this.renderNodes(node.children as typeof this.treeNodes, container);
       }
@@ -348,28 +536,21 @@ export class FileViewer {
   }
 
   private async toggleDirectory(node: typeof this.treeNodes[0]): Promise<void> {
-    if (node.expanded) {
-      node.expanded = false;
-      this.renderTree();
-      return;
-    }
-
+    if (node.expanded) { node.expanded = false; this.renderTree(); return; }
     if (!node.children) {
       try {
         const entries: FileEntry[] = await window.api.file.listDir(node.entry.path);
         if ('error' in (entries as unknown as Record<string, unknown>)) return;
-        node.children = entries.map((entry) => ({
-          entry, expanded: false, children: null, depth: node.depth + 1,
-        }));
+        node.children = entries.map((entry) => ({ entry, expanded: false, children: null, depth: node.depth + 1 }));
       } catch { return; }
     }
-
     node.expanded = true;
     this.renderTree();
   }
 
   dispose(): void {
     this.destroyEditor();
+    this.destroyMergeView();
     this.overlay.remove();
   }
 }

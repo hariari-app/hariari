@@ -252,7 +252,31 @@ function main(): void {
         workspace.focusTerminal(sessionId);
       }
     },
+    onGitChangesClick: (projectPath: string) => {
+      fileViewer.showChanges(projectPath);
+    },
+    onFileExplorerClick: (projectPath: string) => {
+      fileViewer.show(projectPath);
+    },
   });
+
+  // Periodic git status poll for sidebar badges
+  async function refreshGitBadges(): Promise<void> {
+    try {
+      const projects = await window.api.project.list();
+      for (const project of projects) {
+        const status = await window.api.git.status(project.path);
+        if (status.isRepo) {
+          const files = status.changes.map((c: { path: string }) => c.path);
+          projectSidebar.updateGitChanges(project.id, status.changes.length, files);
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  // Refresh git badges on startup and every 15 seconds
+  setTimeout(refreshGitBadges, 2000);
+  setInterval(refreshGitBadges, 15_000);
 
   // Agent event listeners
   const unsubStatus = window.api.agent.onStatus((event) => {
@@ -362,9 +386,19 @@ function main(): void {
   });
 
   commandPalette.register({
+    id: 'git-changes',
+    label: 'Git: Show Changes',
+    shortcut: 'Ctrl+Shift+G',
+    action: () => {
+      const workspace = workspaceSwitcher.getActiveWorkspace();
+      if (workspace) fileViewer.showChanges(workspace.projectPath);
+    },
+  });
+
+  commandPalette.register({
     id: 'file-viewer',
     label: 'Open File Viewer',
-    shortcut: 'Ctrl+Shift+G',
+    shortcut: 'Ctrl+Shift+E',
     action: () => {
       const workspace = workspaceSwitcher.getActiveWorkspace();
       if (workspace) {
@@ -398,6 +432,7 @@ function main(): void {
   voiceRouter.registerCommand({ id: 'toggle-sidebar', aliases: ['toggle sidebar', 'hide sidebar', 'show sidebar', 'sidebar'], action: () => projectSidebar.toggleCollapse() });
   voiceRouter.registerCommand({ id: 'command-palette', aliases: ['command palette', 'commands', 'open commands', 'show commands'], action: () => commandPalette.toggle() });
   voiceRouter.registerCommand({ id: 'file-finder', aliases: ['open file', 'quick open', 'find file', 'go to file'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) fileFinder.toggle(ws.projectPath); } });
+  voiceRouter.registerCommand({ id: 'git-changes', aliases: ['show changes', 'git status', 'git diff', 'show diff', 'view changes'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) fileViewer.showChanges(ws.projectPath); } });
   voiceRouter.registerCommand({ id: 'file-viewer', aliases: ['open files', 'file viewer', 'show files', 'browse files', 'file browser'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) fileViewer.toggle(ws.projectPath); } });
   voiceRouter.registerCommand({ id: 'search', aliases: ['search', 'find', 'search terminal', 'find in terminal'], action: () => toggleSearchOnFocused() });
   voiceRouter.registerCommand({ id: 'zoom-in', aliases: ['zoom in', 'make bigger', 'increase size'], action: () => window.api.window.zoomIn() });
@@ -582,6 +617,12 @@ function main(): void {
   const keybindingActions: Record<string, { action: () => void; holdUp?: () => void }> = {
     'command-palette': { action: () => commandPalette.toggle() },
     'toggle-sidebar': { action: () => projectSidebar.toggleCollapse() },
+    'git-changes': {
+      action: () => {
+        const ws = workspaceSwitcher.getActiveWorkspace();
+        if (ws) fileViewer.showChanges(ws.projectPath);
+      },
+    },
     'file-finder': {
       action: () => {
         const ws = workspaceSwitcher.getActiveWorkspace();
