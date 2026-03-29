@@ -48,8 +48,8 @@ Every pane surfaces real-time agent state so the user never reads raw output to 
     - [x] Check if agent CLI is available on PATH before spawning (claude, gemini, codex)
     - [x] If not installed, show install prompt with instructions and install command
     - [x] Link to official install docs for each agent
-    - [ ] Detect installed version and show in agent status bar
-    - [ ] Auto-detect newly installed agents (periodic PATH check)
+    - [x] Detect installed version and show in agent status bar
+    - [x] Auto-detect newly installed agents (periodic PATH check)
 - **Phase 2 (Native Rust)**
   - [ ] GPU-rendered status overlays
   - [ ] Structured tool-call cards (Warp-style blocks)
@@ -217,6 +217,58 @@ Every feature measured against: does it help the vibe coder review faster?
   - [ ] Smart review queue: agents sorted by priority/completion time
   - [ ] Agent output summary (collapsible, key changes highlighted)
   - [ ] Integration with git: show changed files per agent session
+
+---
+
+### Goal 10b: Git Worktree Isolation Per Agent
+
+Run multiple agents safely on the same project by giving each agent its own isolated git worktree. Prevents merge conflicts and file corruption when agents edit the same codebase concurrently.
+
+- **Phase 1 (Electron MVP)**
+  - [ ] Auto-create git worktree when spawning an agent (`git worktree add`)
+  - [ ] Each agent runs in its own worktree branch (e.g., `feature/agent-<id>-<type>`)
+  - [ ] Display worktree branch name in agent status bar
+  - [ ] Diff view: show agent's changes vs main branch
+  - [ ] Merge workflow: one-click merge agent's branch back to main
+  - [ ] Cleanup: remove worktree after merge or agent kill
+  - [ ] Conflict detection: warn user if merge would conflict
+  - [ ] Option to disable worktree isolation (run agent in main working directory)
+- **Phase 2 (Native Rust)**
+  - [ ] Automatic conflict resolution suggestions
+  - [ ] Cherry-pick individual changes from agent worktrees
+  - [ ] Worktree status dashboard (which agents have uncommitted changes)
+
+---
+
+### Goal 10c: Broad Agent Support
+
+Support all major AI coding CLI agents so users can bring their preferred tools. Target: 11+ agents to match dmux.
+
+- **Phase 1 (Electron MVP)**
+  - [x] Claude Code (`claude`) — Anthropic
+  - [x] Gemini CLI (`gemini`) — Google
+  - [x] Codex CLI (`codex`) — OpenAI
+  - **P0 — Must have for launch:**
+  - [ ] Aider (`aider`) — 39K stars, pip install, most popular open-source agent
+  - [ ] OpenCode (`opencode`) — 132K stars, npm/brew install, fast-growing Go TUI
+  - [ ] Cline CLI (`cline`) — 60K stars, npm install, CLI 2.0 launched Feb 2026
+  - **P1 — Should have for launch:**
+  - [ ] GitHub Copilot CLI (`copilot`) — GA Feb 2026, npm/brew install
+  - [ ] Amp (`amp`) — Sourcegraph-backed, npm install
+  - [ ] Continue CLI (`cn`) — Open-source, npm install, same engine as IDE extensions
+  - **P2 — Nice to have post-launch:**
+  - [ ] Cursor CLI (`cursor-agent`) — Large commercial product, curl install
+  - [ ] Crush (`crush`) — Charmbracelet fork of OpenCode, brew install
+  - [ ] Qwen Code (`qwen`) — Alibaba-backed, free tier, curl install
+
+  **Per-agent implementation checklist:**
+  - [ ] Add to `AgentType` union in `agent-types.ts`
+  - [ ] Add spawn config in `agent-config.ts` (command, args, env)
+  - [ ] Add needs-input detection patterns in `input-detector.ts`
+  - [ ] Add install info in `agent-install-info.ts` (install command, docs URL)
+  - [ ] Add brand icon in `agent-icons.ts` (SVG)
+  - [ ] Add version detection command in `agent-version-detector.ts`
+  - [ ] Add to availability checker for periodic PATH scan
 
 ---
 
