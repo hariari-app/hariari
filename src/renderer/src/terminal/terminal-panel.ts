@@ -205,13 +205,12 @@ export class TerminalPanel {
   }
 
   private copySelection(): void {
-    try {
-      const selection = this.terminal.getSelection();
-      if (selection && selection.length > 0) {
-        window.api.clipboard.write(selection);
+    const selection = this.terminal.getSelection();
+    if (selection && selection.length > 0) {
+      window.api.clipboard.write(selection).then(() => {
         this.terminal.clearSelection();
-      }
-    } catch { /* clipboard write failed */ }
+      }).catch(() => { /* clipboard write failed */ });
+    }
   }
 
   private pasteFromClipboard(): void {

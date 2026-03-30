@@ -1253,7 +1253,7 @@ function main(): void {
   // Check if onboarding is needed
   window.api.settings.load().then(async (settings) => {
     const projects = await window.api.project.list();
-    if (!settings.onboardingComplete && projects.length === 0) {
+    if (!settings.onboardingComplete) {
       const { OnboardingWizard } = await import('./onboarding/onboarding-wizard');
       const wizard = new OnboardingWizard(appEl, {
         initialStep: typeof settings.onboardingStep === 'number' ? settings.onboardingStep : 0,

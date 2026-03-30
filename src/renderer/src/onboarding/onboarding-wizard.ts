@@ -24,6 +24,7 @@ const TOTAL_STEPS = 5;
 
 export class OnboardingWizard {
   private currentStep: number;
+  private navigating = false;
   private readonly overlay: HTMLElement;
   private readonly contentEl: HTMLElement;
   private readonly dotsEl: HTMLElement;
@@ -39,6 +40,11 @@ export class OnboardingWizard {
   private readonly readyStep = new ReadyStep();
 
   private readonly steps: StepRenderer[];
+
+  // Stored for cleanup
+  private readonly onEscKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && this.overlay.isConnected) this.skip();
+  };
 
   constructor(parent: HTMLElement, options: OnboardingOptions) {
     this.currentStep = options.initialStep;
@@ -82,12 +88,16 @@ export class OnboardingWizard {
     this.backBtn = document.createElement('button');
     this.backBtn.className = 'btn-secondary';
     this.backBtn.textContent = '\u2190 Back';
-    this.backBtn.addEventListener('click', () => this.goTo(this.currentStep - 1));
+    this.backBtn.addEventListener('click', () => {
+      if (!this.navigating) this.goTo(this.currentStep - 1);
+    });
 
     this.nextBtn = document.createElement('button');
     this.nextBtn.className = 'btn-primary';
     this.nextBtn.textContent = 'Get Started';
-    this.nextBtn.addEventListener('click', () => this.handleNext());
+    this.nextBtn.addEventListener('click', () => {
+      if (!this.navigating) this.handleNext();
+    });
 
     const skipBtn = document.createElement('button');
     skipBtn.className = 'onboarding-skip';
@@ -105,13 +115,7 @@ export class OnboardingWizard {
     this.overlay.appendChild(card);
     parent.appendChild(this.overlay);
 
-    // Escape to skip
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && this.overlay.isConnected) {
-        this.skip();
-      }
-    });
-
+    document.addEventListener('keydown', this.onEscKey);
     this.goTo(this.currentStep);
   }
 
@@ -121,29 +125,46 @@ export class OnboardingWizard {
   }
 
   private async handleNext(): Promise<void> {
-    // Step 1 → 2: Pass installed agents to skills step
-    if (this.currentStep === 1) {
-      const installedAgents = this.getInstalledAgentTypes();
-      this.skillsStep.setInstalledAgents(installedAgents);
-    }
+    this.navigating = true;
+    this.nextBtn.setAttribute('disabled', 'true');
 
-    // Step 2 → 3: Install selected skills
-    if (this.currentStep === 2) {
-      const selected = this.skillsStep.getSelectedSkillIds();
-      if (selected.length > 0) {
-        await this.skillsStep.install();
+    try {
+      // Step 1 → 2: Pass installed agents and detect languages
+      if (this.currentStep === 1) {
+        const installedAgents = this.getInstalledAgentTypes();
+        this.skillsStep.setInstalledAgents(installedAgents);
+
+        // Detect languages from system PATH toolchains
+        try {
+          const home = await window.api.onboarding.detectProjects();
+          if (home.length > 0) {
+            const langs = await window.api.skills.detectLanguages(home[0].path);
+            this.skillsStep.setDetectedLanguages([...langs]);
+          }
+        } catch { /* language detection is best-effort */ }
       }
-    }
 
-    // Step 3: Create project if selected
-    if (this.currentStep === 3 && this.projectStep.hasSelection()) {
-      await this.projectStep.createProject();
-    }
+      // Step 2 → 3: Install selected skills
+      if (this.currentStep === 2) {
+        const selected = this.skillsStep.getSelectedSkillIds();
+        if (selected.length > 0) {
+          await this.skillsStep.install();
+        }
+      }
 
-    if (this.currentStep === TOTAL_STEPS - 1) {
-      this.complete();
-    } else {
-      this.goTo(this.currentStep + 1);
+      // Step 3: Create project if selected
+      if (this.currentStep === 3 && this.projectStep.hasSelection()) {
+        await this.projectStep.createProject();
+      }
+
+      if (this.currentStep === TOTAL_STEPS - 1) {
+        this.complete();
+      } else {
+        this.goTo(this.currentStep + 1);
+      }
+    } finally {
+      this.navigating = false;
+      this.nextBtn.removeAttribute('disabled');
     }
   }
 
@@ -154,11 +175,7 @@ export class OnboardingWizard {
     this.steps[this.currentStep]?.cleanup?.();
 
     this.currentStep = step;
-
-    // Persist step
     this.saveStep(step);
-
-    // Render content
     this.contentEl.replaceChildren();
 
     // Pre-render setup for ready step
@@ -188,17 +205,16 @@ export class OnboardingWizard {
   }
 
   private getInstalledAgentTypes(): AgentType[] {
-    // Read from the agents step's availability data
-    const types: AgentType[] = [];
-    const agentList: AgentType[] = ['claude', 'gemini', 'codex', 'aider', 'opencode', 'cline', 'copilot', 'amp', 'continue', 'cursor', 'crush', 'qwen'];
-    // The agents step tracks installed count but we need the actual types
-    // For now, pass all — the installer filters by targetAgents per skill
-    return agentList;
+    // Pass all agent types — the installer filters by targetAgents per skill
+    // TODO: read actual installed state from agentsStep when API is available
+    return ['claude', 'gemini', 'codex', 'aider', 'opencode', 'cline', 'copilot', 'amp', 'continue', 'cursor', 'crush', 'qwen'];
   }
 
   private async complete(): Promise<void> {
+    document.removeEventListener('keydown', this.onEscKey);
     await this.saveComplete();
     this.agentsStep.cleanup?.();
+    this.skillsStep.cleanup?.();
     this.overlay.classList.remove('onboarding-visible');
     setTimeout(() => {
       this.overlay.remove();
@@ -207,8 +223,10 @@ export class OnboardingWizard {
   }
 
   private async skip(): Promise<void> {
+    document.removeEventListener('keydown', this.onEscKey);
     await this.saveComplete();
     this.agentsStep.cleanup?.();
+    this.skillsStep.cleanup?.();
     this.overlay.remove();
     this.onSkip();
   }

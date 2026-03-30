@@ -838,7 +838,7 @@ export function registerIpcHandlers(
   });
 
   ipcMain.handle(IPC_CHANNELS.SKILLS_UNINSTALL, async (_event, skillId: unknown) => {
-    if (typeof skillId !== 'string') return { error: 'Invalid skill ID' };
+    if (typeof skillId !== 'string' || !/^[a-z0-9-]+$/.test(skillId)) return { error: 'Invalid skill ID' };
     return uninstallSkill(skillId);
   });
 

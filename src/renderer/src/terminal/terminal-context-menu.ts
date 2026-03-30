@@ -1,11 +1,21 @@
 // Terminal right-click context menu — Copy / Paste
 
 let activeMenu: HTMLElement | null = null;
+let activeClickHandler: ((e: MouseEvent) => void) | null = null;
+let activeEscHandler: ((e: KeyboardEvent) => void) | null = null;
 
 function dismiss(): void {
   if (activeMenu) {
     activeMenu.remove();
     activeMenu = null;
+  }
+  if (activeClickHandler) {
+    document.removeEventListener('click', activeClickHandler);
+    activeClickHandler = null;
+  }
+  if (activeEscHandler) {
+    document.removeEventListener('keydown', activeEscHandler);
+    activeEscHandler = null;
   }
 }
 
@@ -51,23 +61,16 @@ export function showTerminalContextMenu(
 
   activeMenu = menu;
 
-  // Dismiss on click outside or Escape
-  const onDismiss = (e: MouseEvent) => {
-    if (!menu.contains(e.target as Node)) {
-      dismiss();
-      document.removeEventListener('click', onDismiss);
-    }
+  // Dismiss on click outside or Escape — stored for cleanup
+  activeClickHandler = (e: MouseEvent) => {
+    if (!menu.contains(e.target as Node)) dismiss();
   };
-  const onEsc = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      dismiss();
-      document.removeEventListener('keydown', onEsc);
-    }
+  activeEscHandler = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') dismiss();
   };
 
-  // Delay to avoid immediate dismiss from the contextmenu event
   requestAnimationFrame(() => {
-    document.addEventListener('click', onDismiss);
-    document.addEventListener('keydown', onEsc);
+    document.addEventListener('click', activeClickHandler!);
+    document.addEventListener('keydown', activeEscHandler!);
   });
 }

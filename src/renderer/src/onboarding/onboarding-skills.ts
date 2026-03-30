@@ -4,6 +4,8 @@ import type { StepRenderer } from './onboarding-wizard';
 import type { SkillManifest, SkillItem, SkillCategory } from '../../../shared/skills-types';
 import type { AgentType } from '../../../shared/agent-types';
 
+let renderGeneration = 0;
+
 const CATEGORY_LABELS: Record<SkillCategory, string> = {
   language: 'Languages',
   quality: 'Code Quality',
@@ -51,8 +53,10 @@ export class SkillsStep implements StepRenderer {
     container.appendChild(headline);
     container.appendChild(subhead);
 
-    // Load manifest
+    // Load manifest (guard against stale async responses)
+    const gen = ++renderGeneration;
     window.api.skills.manifest().then((manifest) => {
+      if (gen !== renderGeneration) return; // stale — user navigated away
       this.manifest = manifest;
       this.applyPreset('recommended');
       this.renderContent(container);
@@ -62,6 +66,10 @@ export class SkillsStep implements StepRenderer {
       error.textContent = 'Unable to load skills catalog. You can install skills later from Settings.';
       container.appendChild(error);
     });
+  }
+
+  cleanup(): void {
+    renderGeneration++; // invalidate any pending async manifest fetch
   }
 
   async install(): Promise<{ installed: number; failed: number }> {
