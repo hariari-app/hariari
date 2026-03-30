@@ -655,13 +655,38 @@ export function registerIpcHandlers(
     try {
       if (typeof raw !== 'string') return { installed: false };
       const { execFile } = await import('node:child_process');
+      const nodePath = await import('node:path');
+      const nodeFs = await import('node:fs');
+
+      // Build enriched PATH (Electron GUI apps don't inherit shell PATH on macOS)
+      const home = process.env.HOME || '';
+      const extraPaths = [
+        '/opt/homebrew/bin', '/opt/homebrew/sbin',
+        '/usr/local/bin', '/usr/local/sbin',
+        nodePath.join(home, '.local/bin'),
+        nodePath.join(home, '.cargo/bin'),
+      ];
+      const nvmDir = process.env.NVM_DIR || nodePath.join(home, '.nvm');
+      try {
+        const versionsDir = nodePath.join(nvmDir, 'versions', 'node');
+        if (nodeFs.existsSync(versionsDir)) {
+          const versions = nodeFs.readdirSync(versionsDir).sort().reverse();
+          if (versions.length > 0) {
+            extraPaths.unshift(nodePath.join(versionsDir, versions[0], 'bin'));
+          }
+        }
+      } catch { /* nvm not installed */ }
+
+      const enrichedPath = [...extraPaths, process.env.PATH || ''].join(':');
+      const env = { ...process.env, PATH: enrichedPath };
+
       return new Promise<{ installed: boolean; version?: string }>((resolve) => {
-        execFile('which', [raw], { timeout: 5000 }, (error, stdout) => {
+        execFile('which', [raw], { timeout: 5000, env }, (error, stdout) => {
           if (error || !stdout.trim()) {
             resolve({ installed: false });
           } else {
             // Try to get version
-            execFile(raw, ['--version'], { timeout: 5000 }, (vErr, vOut) => {
+            execFile(raw, ['--version'], { timeout: 5000, env }, (vErr, vOut) => {
               const version = vErr ? undefined : vOut.trim().split('\n')[0];
               resolve({ installed: true, version });
             });
