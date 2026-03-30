@@ -48,7 +48,7 @@ export class SkillsStep implements StepRenderer {
 
     const subhead = document.createElement('p');
     subhead.className = 'onboarding-body';
-    subhead.textContent = 'Pre-configured skills, coding standards, and agent definitions.';
+    subhead.textContent = 'Make your agents smarter out of the box \u2014 coding standards, test workflows, and security patterns they\u2019ll follow automatically.';
 
     container.appendChild(headline);
     container.appendChild(subhead);

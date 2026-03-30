@@ -90,7 +90,8 @@ export class AgentsStep implements StepRenderer {
     container.appendChild(collapsedGrid);
     container.appendChild(hint);
 
-    // Initial scan
+    // Initial scan with loading indicator
+    if (this.countEl) this.countEl.textContent = 'Scanning for installed agents...';
     this.scanAgents();
 
     // Listen for availability changes

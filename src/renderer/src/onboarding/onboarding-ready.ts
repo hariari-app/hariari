@@ -32,7 +32,8 @@ export class ReadyStep implements StepRenderer {
   render(container: HTMLElement): void {
     const headline = document.createElement('h2');
     headline.className = 'onboarding-headline';
-    headline.textContent = "You're all set.";
+    const hasSetup = this.agentCount > 0 || this.skillCount > 0 || this.projectCount > 0;
+    headline.textContent = hasSetup ? "You're ready to build." : "You're all set.";
 
     // Summary
     const summary = document.createElement('div');

@@ -144,11 +144,17 @@ export class OnboardingWizard {
         } catch { /* language detection is best-effort */ }
       }
 
-      // Step 2 → 3: Install selected skills
+      // Step 2 → 3: Install selected skills with progress feedback
       if (this.currentStep === 2) {
         const selected = this.skillsStep.getSelectedSkillIds();
         if (selected.length > 0) {
-          await this.skillsStep.install();
+          this.nextBtn.textContent = `Installing skills... (0/${selected.length})`;
+          const result = await this.skillsStep.install();
+          this.nextBtn.textContent = result.installed > 0
+            ? `\u2713 ${result.installed} skills installed`
+            : 'Next \u2192';
+          // Brief pause so user sees the success message
+          await new Promise((r) => setTimeout(r, 800));
         }
       }
 
