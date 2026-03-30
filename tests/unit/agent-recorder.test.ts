@@ -93,7 +93,7 @@ describe('AgentRecorder', () => {
       recorder.writeChunk('agent-1', 'hello world');
 
       expect(mockStream.write).toHaveBeenCalledTimes(1);
-      const written = mockStream.write.mock.calls[0][0] as string;
+      const written = (mockStream.write as any).mock.calls[0][0] as string;
 
       // Should be "timestamp\tbase64\n"
       const parts = written.split('\t');
