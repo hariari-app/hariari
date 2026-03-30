@@ -50,9 +50,10 @@ win:
     - portable
   icon: resources/icons/512x512.png
   artifactName: VibeIDE-${version}-${arch}.${ext}
-  sign: ./scripts/azure-sign.js
-  signingHashAlgorithms:
-    - sha256
+  signtoolOptions:
+    sign: ./scripts/azure-sign.js
+    signingHashAlgorithms:
+      - sha256
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
