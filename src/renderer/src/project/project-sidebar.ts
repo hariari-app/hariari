@@ -4,6 +4,16 @@ import { createStatusIndicator, updateStatusIndicator } from '../ui/status-indic
 import { createAgentIcon } from '../ui/agent-icons';
 import { logoMonoSvg } from '../ui/logo';
 
+/** Generate a deterministic color from a project name for the letter avatar. */
+export function avatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
+  }
+  const hue = ((hash % 360) + 360) % 360;
+  return `hsl(${hue}, 50%, 55%)`;
+}
+
 export interface ProjectSidebarCallbacks {
   readonly onProjectSelect: (project: ProjectInfo) => void;
   readonly onProjectAdd: () => void;
@@ -63,11 +73,120 @@ export class ProjectSidebar {
   toggleCollapse(): void {
     this.collapsed = !this.collapsed;
     this.container.classList.toggle('collapsed', this.collapsed);
+    this.updateRailVisibility();
   }
 
   setCollapsed(collapsed: boolean): void {
     this.collapsed = collapsed;
     this.container.classList.toggle('collapsed', this.collapsed);
+    this.updateRailVisibility();
+  }
+
+  private updateRailVisibility(): void {
+    const expandedContent = this.container.querySelector('.sidebar-expanded-content') as HTMLElement | null;
+    const railContent = this.container.querySelector('.sidebar-rail-content') as HTMLElement | null;
+
+    if (expandedContent) {
+      expandedContent.style.display = this.collapsed ? 'none' : '';
+    }
+    if (railContent) {
+      railContent.style.display = this.collapsed ? '' : 'none';
+    }
+    if (this.collapsed) {
+      this.renderRailContent();
+    }
+  }
+
+  private renderRailContent(): void {
+    let rail = this.container.querySelector('.sidebar-rail-content') as HTMLElement | null;
+    if (!rail) {
+      rail = document.createElement('div');
+      rail.className = 'sidebar-rail-content';
+      this.container.appendChild(rail);
+    }
+    rail.replaceChildren();
+
+    // Dragonfly icon at top
+    const logoBtn = document.createElement('button');
+    logoBtn.className = 'rail-logo-btn';
+    logoBtn.innerHTML = logoMonoSvg(24);
+    logoBtn.title = 'Expand sidebar';
+    logoBtn.setAttribute('aria-label', 'Expand sidebar');
+    logoBtn.addEventListener('click', () => this.toggleCollapse());
+    rail.appendChild(logoBtn);
+
+    // Separator
+    const sep = document.createElement('div');
+    sep.className = 'rail-separator';
+    rail.appendChild(sep);
+
+    // Project avatars with nested agent icons
+    const MAX_AGENT_ICONS = 6;
+
+    for (const entry of this.entries.values()) {
+      const projectBtn = document.createElement('button');
+      projectBtn.className = 'rail-project-btn';
+      if (entry.project.id === this.activeProjectId) {
+        projectBtn.classList.add('active');
+      }
+      projectBtn.title = entry.project.name;
+      projectBtn.setAttribute('aria-label', entry.project.name);
+
+      // Letter avatar
+      const letter = document.createElement('span');
+      letter.className = 'rail-avatar';
+      letter.textContent = (entry.project.name[0] ?? '?').toUpperCase();
+      letter.style.background = avatarColor(entry.project.name);
+      projectBtn.appendChild(letter);
+
+      // Notification dot
+      if (entry.notificationCount > 0) {
+        const dot = document.createElement('span');
+        dot.className = 'rail-notify-dot';
+        projectBtn.appendChild(dot);
+      }
+
+      projectBtn.addEventListener('click', () => {
+        this.callbacks.onProjectSelect(entry.project);
+      });
+
+      rail.appendChild(projectBtn);
+
+      // Agent type icons below project
+      const visibleAgents = entry.agents.slice(0, MAX_AGENT_ICONS);
+      for (const agent of visibleAgents) {
+        const agentBtn = document.createElement('button');
+        agentBtn.className = 'rail-agent-btn';
+        const agentLabel = agent.config.label ?? agent.config.type;
+        agentBtn.title = `${agentLabel} (${agent.status})`;
+        agentBtn.setAttribute('aria-label', `${agentLabel}, ${agent.status}`);
+
+        const icon = createAgentIcon(agent.config.type, 14);
+        agentBtn.appendChild(icon);
+
+        // Attention dot for needs-input
+        if (agent.status === 'needs-input') {
+          const attDot = document.createElement('span');
+          attDot.className = 'rail-attention-dot';
+          agentBtn.appendChild(attDot);
+        }
+
+        agentBtn.addEventListener('click', () => {
+          this.callbacks.onAgentSelect(agent.id, agent.sessionId);
+        });
+
+        rail.appendChild(agentBtn);
+      }
+
+      // Overflow badge
+      if (entry.agents.length > MAX_AGENT_ICONS) {
+        const overflow = document.createElement('span');
+        overflow.className = 'rail-overflow';
+        overflow.textContent = `+${entry.agents.length - MAX_AGENT_ICONS}`;
+        overflow.title = entry.agents.slice(MAX_AGENT_ICONS).map(a => a.config.label ?? a.config.type).join(', ');
+        rail.appendChild(overflow);
+      }
+    }
   }
 
   setProjects(projects: ProjectInfo[]): void {
@@ -211,6 +330,9 @@ export class ProjectSidebar {
   private render(): void {
     this.container.replaceChildren();
 
+    const expandedContent = document.createElement('div');
+    expandedContent.className = 'sidebar-expanded-content';
+
     // --- Logo banner ---
     const logoBanner = document.createElement('div');
     logoBanner.className = 'sidebar-logo-banner';
@@ -222,7 +344,7 @@ export class ProjectSidebar {
     logoText.innerHTML = 'Vibe<span class="sidebar-logo-text-ide">IDE</span>';
     logoBanner.appendChild(logoEl);
     logoBanner.appendChild(logoText);
-    this.container.appendChild(logoBanner);
+    expandedContent.appendChild(logoBanner);
 
     // --- Toolbar row ---
     const toolbar = document.createElement('div');
@@ -261,18 +383,20 @@ export class ProjectSidebar {
     toolbar.appendChild(launchBtn);
     toolbar.appendChild(equalizeBtn);
     toolbar.appendChild(addBtn);
-    this.container.appendChild(toolbar);
+    expandedContent.appendChild(toolbar);
 
     // --- Projects section header ---
     const sectionHeader = document.createElement('div');
     sectionHeader.className = 'sidebar-section-header';
     sectionHeader.textContent = 'Projects';
-    this.container.appendChild(sectionHeader);
+    expandedContent.appendChild(sectionHeader);
 
     // --- Project list ---
     const listEl = document.createElement('div');
     listEl.className = 'project-list-entries';
-    this.container.appendChild(listEl);
+    expandedContent.appendChild(listEl);
+
+    this.container.appendChild(expandedContent);
   }
 
   // --- Private: Full list render (only on add/remove/reorder) ---
@@ -548,7 +672,18 @@ export class ProjectSidebar {
       } else {
         const emptyHint = document.createElement('div');
         emptyHint.className = 'project-agent-list-empty';
-        emptyHint.textContent = 'No agents \u2014 click + to add';
+        emptyHint.textContent = 'No agents running';
+
+        const launchHint = document.createElement('button');
+        launchHint.className = 'project-agent-launch-hint';
+        launchHint.textContent = 'Launch Agent';
+        launchHint.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const wrapper = refs.wrapper;
+          this.toggleAgentDropdown(projectId, wrapper);
+        });
+
+        emptyHint.appendChild(launchHint);
         refs.wrapper.appendChild(emptyHint);
       }
     }
@@ -567,19 +702,31 @@ export class ProjectSidebar {
         const empty = document.createElement('div');
         empty.className = 'project-empty-state';
 
+        // Dragonfly icon for warmth
+        const icon = document.createElement('div');
+        icon.className = 'project-empty-icon';
+        icon.innerHTML = logoMonoSvg(48);
+        empty.appendChild(icon);
+
         const msg = document.createElement('p');
         msg.textContent = 'No projects yet';
 
+        const sub = document.createElement('p');
+        sub.className = 'project-empty-sub';
+        sub.textContent = 'Open a folder to get started';
+
         const btn = document.createElement('button');
         btn.className = 'project-empty-btn';
-        btn.textContent = 'Add Project';
+        btn.textContent = 'Open Folder';
         btn.addEventListener('click', () => this.callbacks.onProjectAdd());
 
         const hint = document.createElement('p');
         hint.className = 'project-empty-hint';
         hint.textContent = 'Ctrl+Shift+O';
 
+        empty.appendChild(icon);
         empty.appendChild(msg);
+        empty.appendChild(sub);
         empty.appendChild(btn);
         empty.appendChild(hint);
         listEl.appendChild(empty);

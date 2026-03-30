@@ -238,10 +238,24 @@ export class CommandPalette {
         }
       }
     } else {
-      // Filtered: show flat list sorted by score
+      // Filtered: group results by category with headers
+      const categories: CommandCategory[] = ['Agent', 'Layout', 'File', 'Git', 'Voice', 'Theme', 'View', 'General'];
+      const grouped = new Map<string, ScoredCommand[]>();
+
       for (const result of results) {
-        this.renderCommandItem(container, result, globalIndex);
-        globalIndex++;
+        const cat = result.command.category ?? 'General';
+        if (!grouped.has(cat)) grouped.set(cat, []);
+        grouped.get(cat)!.push(result);
+      }
+
+      for (const cat of categories) {
+        const cmds = grouped.get(cat);
+        if (!cmds || cmds.length === 0) continue;
+        this.renderCategoryHeader(container, cat);
+        for (const cmd of cmds) {
+          this.renderCommandItem(container, cmd, globalIndex);
+          globalIndex++;
+        }
       }
     }
   }

@@ -1,6 +1,7 @@
 @font-face {
-  font-family: 'Inter';
-  src: local('Inter');
+  font-family: 'Space Grotesk';
+  src: url('../../../resources/fonts/SpaceGrotesk-Regular.woff2') format('woff2');
+  font-weight: 400;
   font-display: swap;
 }
 
@@ -29,7 +30,7 @@
   --bg: #1a1b26;
   --bg-deep: #16161e;
   --fg: #c0caf5;
-  --fg-dim: #737aa2;
+  --fg-dim: #565f89;
   --fg-faint: #414868;
   --border: #2a2b3d;
   --border-subtle: rgba(42, 43, 61, 0.5);
@@ -79,7 +80,7 @@ html, body {
   overflow: hidden;
   background: var(--bg);
   color: var(--fg);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: var(--font-base);
   line-height: var(--leading-normal);
 }
@@ -153,6 +154,19 @@ html, body {
 .app-titlebar-btn.close { background: var(--error); }
 .app-titlebar-btn.minimize { background: var(--warning); }
 .app-titlebar-btn.maximize { background: var(--success); }
+
+/* Screen reader only — visually hidden but accessible */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 /* Focus visible — keyboard accessibility */
 :focus-visible {
@@ -540,9 +554,9 @@ select:focus-visible {
   to { opacity: 0; transform: translateX(100%); }
 }
 
-.toast--needs-input { border-left: 3px solid var(--warning); }
-.toast--complete { border-left: 3px solid var(--success); }
-.toast--error { border-left: 3px solid var(--error); }
+.toast--needs-input { background: color-mix(in srgb, var(--warning) 6%, transparent); }
+.toast--complete { background: color-mix(in srgb, var(--success) 6%, transparent); }
+.toast--error { background: color-mix(in srgb, var(--error) 6%, transparent); }
 
 .toast-dot {
   width: 8px;

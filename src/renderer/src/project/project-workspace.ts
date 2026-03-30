@@ -71,7 +71,14 @@ export class ProjectWorkspace {
           termWrapper.className = 'terminal-wrapper';
           container.appendChild(termWrapper);
         }
-        this.terminalManager.createTerminal(sessionId, termWrapper);
+        const panel = this.terminalManager.createTerminal(sessionId, termWrapper);
+        // Show loading state with agent name until first output arrives
+        if (tracked) {
+          panel.setLoadingInfo(
+            tracked.info.config.label ?? tracked.info.config.type,
+            tracked.info.config.type,
+          );
+        }
       },
       (sessionId) => this.terminalManager.removeTerminal(sessionId),
     );
