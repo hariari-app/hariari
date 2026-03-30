@@ -71,7 +71,14 @@ export class ProjectWorkspace {
           termWrapper.className = 'terminal-wrapper';
           container.appendChild(termWrapper);
         }
-        this.terminalManager.createTerminal(sessionId, termWrapper);
+        const panel = this.terminalManager.createTerminal(sessionId, termWrapper);
+        // Show loading state with agent name until first output arrives
+        if (tracked) {
+          panel.setLoadingInfo(
+            tracked.info.config.label ?? tracked.info.config.type,
+            tracked.info.config.type,
+          );
+        }
       },
       (sessionId) => this.terminalManager.removeTerminal(sessionId),
     );
@@ -109,12 +116,20 @@ export class ProjectWorkspace {
     }
 
     try {
-      const info: AgentInfo = await window.api.agent.spawn({
+      const result = await window.api.agent.spawn({
         type,
         projectId: this.projectId,
         cwd: this.projectPath,
         useWorktree: this.useWorktree,
       });
+
+      // Check for IPC error response
+      if (!result || ('error' in result) || !result.config) {
+        console.error('[ProjectWorkspace] Spawn returned error:', result);
+        return null;
+      }
+
+      const info: AgentInfo = result;
 
       const statusBar = new AgentStatusBar(info, {
         onKill: () => this.killAgent(info.id),
@@ -364,12 +379,20 @@ export class ProjectWorkspace {
 
       for (let i = 0; i < state.agents.length; i++) {
         const agentDef = state.agents[i];
-        const info = await window.api.agent.spawn({
+        const result = await window.api.agent.spawn({
           type: agentDef.type,
           projectId: this.projectId,
           cwd: agentDef.cwd || this.projectPath,
           label: agentDef.label,
         });
+
+        // Skip agents that failed to spawn
+        if (!result || ('error' in result) || !result.config) {
+          console.warn('[ProjectWorkspace] Failed to restore agent:', agentDef.type, result);
+          continue;
+        }
+
+        const info: AgentInfo = result;
 
         const statusBar = new AgentStatusBar(info, {
           onKill: () => this.killAgent(info.id),

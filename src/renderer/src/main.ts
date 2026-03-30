@@ -110,6 +110,8 @@ function main(): void {
   // Create sidebar
   const sidebarEl = document.createElement('div');
   sidebarEl.className = 'agent-sidebar';
+  sidebarEl.setAttribute('role', 'navigation');
+  sidebarEl.setAttribute('aria-label', 'Project sidebar');
   appBody.appendChild(sidebarEl);
 
   // Sidebar resize handle
@@ -151,6 +153,8 @@ function main(): void {
   // Create workspace host (holds all project workspace containers)
   const workspaceHost = document.createElement('div');
   workspaceHost.className = 'workspace-host';
+  workspaceHost.setAttribute('role', 'main');
+  workspaceHost.setAttribute('aria-label', 'Terminal workspace');
   appBody.appendChild(workspaceHost);
 
   // Empty workspace state
@@ -166,6 +170,8 @@ function main(): void {
   // Hint bar at bottom
   const hintBar = document.createElement('div');
   hintBar.className = 'workspace-hint-bar';
+  hintBar.setAttribute('role', 'status');
+  hintBar.setAttribute('aria-label', 'Keyboard shortcuts');
   hintBar.innerHTML = `
     <span class="hint-item"><kbd>Ctrl+Shift+P</kbd> Commands</span>
     <span class="hint-item"><kbd>Ctrl+P</kbd> Open File</span>
@@ -176,6 +182,40 @@ function main(): void {
     <span class="hint-item"><kbd>F4</kbd> Voice Cmd</span>
   `;
   appEl.appendChild(hintBar);
+
+  // Aria-live region for screen reader announcements of agent status changes
+  const ariaLive = document.createElement('div');
+  ariaLive.setAttribute('role', 'log');
+  ariaLive.setAttribute('aria-live', 'polite');
+  ariaLive.setAttribute('aria-label', 'Agent status updates');
+  ariaLive.className = 'sr-only';
+  document.body.appendChild(ariaLive);
+
+  let announceTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingAnnouncement = '';
+
+  function announceStatus(agentName: string, status: string): void {
+    const messages: Record<string, string> = {
+      'needs-input': `${agentName} needs your input`,
+      'complete': `${agentName} completed`,
+      'error': `${agentName} encountered an error`,
+      'running': `${agentName} is running`,
+      'starting': `${agentName} is starting`,
+    };
+    const text = messages[status] ?? `${agentName} status: ${status}`;
+    pendingAnnouncement = text;
+
+    // Throttle: max 1 announcement per 2 seconds
+    if (!announceTimer) {
+      ariaLive.textContent = text;
+      announceTimer = setTimeout(() => {
+        announceTimer = null;
+        if (pendingAnnouncement !== ariaLive.textContent) {
+          ariaLive.textContent = pendingAnnouncement;
+        }
+      }, 2000);
+    }
+  }
 
   // Workspace switcher
   const workspaceSwitcher = new WorkspaceSwitcher(workspaceHost, (projectId) => {
@@ -262,14 +302,13 @@ function main(): void {
       }
     },
     onAgentSpawn: async (projectId: string, type: AgentType) => {
-      // Ensure we're on the right project
+      // Ensure we're on the right project and workspace exists
       const projects = await window.api.project.list();
       const project = projects.find((p: ProjectInfo) => p.id === projectId);
       if (!project) return;
 
-      if (workspaceSwitcher.getActiveProjectId() !== projectId) {
-        await workspaceSwitcher.switchTo(project);
-      }
+      // Always switchTo to ensure workspace is created (idempotent if already active)
+      await workspaceSwitcher.switchTo(project);
 
       const workspace = workspaceSwitcher.getWorkspace(projectId);
       if (workspace) {
@@ -374,6 +413,12 @@ function main(): void {
   const unsubStatus = window.api.agent.onStatus((event) => {
     workspaceSwitcher.handleAgentStatus(event.agentId, event.status);
     projectSidebar.updateAgentStatus(event.agentId, event.status);
+
+    // Announce status change for screen readers
+    const statusInfo = findAgentInfo(event.agentId);
+    if (statusInfo) {
+      announceStatus(statusInfo.config.label ?? statusInfo.config.type, event.status);
+    }
 
     if (event.status === 'needs-input') {
       const config = getNotificationConfig();

@@ -238,7 +238,7 @@ export class CommandPalette {
         }
       }
     } else {
-      // Filtered: show flat list sorted by score
+      // Filtered: flat list sorted by fuzzy match score, with per-row category badge
       for (const result of results) {
         this.renderCommandItem(container, result, globalIndex);
         globalIndex++;

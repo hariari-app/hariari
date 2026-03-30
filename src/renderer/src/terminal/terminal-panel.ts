@@ -27,6 +27,10 @@ export class TerminalPanel {
   private container: HTMLElement | null = null;
   private unsubscribeData: (() => void) | null = null;
   private connected = false;
+  private receivedFirstOutput = false;
+  private loadingOverlay: HTMLElement | null = null;
+  private loadingTimer: ReturnType<typeof setTimeout> | null = null;
+  private loadingFailTimer: ReturnType<typeof setTimeout> | null = null;
   private terminalSearch: TerminalSearch | null = null;
   private readonly debouncedResize: (sessionId: string, cols: number, rows: number) => void;
 
@@ -57,6 +61,61 @@ export class TerminalPanel {
       },
       50,
     );
+  }
+
+  setLoadingInfo(agentName: string, agentType: string): void {
+    if (!this.container || this.loadingOverlay || this.receivedFirstOutput) return;
+    this.showLoadingOverlay(agentName, agentType);
+  }
+
+  private showLoadingOverlay(agentName: string, _agentType: string): void {
+    if (!this.container || this.receivedFirstOutput || this.loadingOverlay) return;
+
+    this.loadingOverlay = document.createElement('div');
+    this.loadingOverlay.className = 'terminal-loading-overlay';
+
+    const content = document.createElement('div');
+    content.className = 'terminal-loading-content';
+
+    const label = document.createElement('div');
+    label.className = 'terminal-loading-label';
+    label.textContent = `Starting ${agentName}...`;
+
+    content.appendChild(label);
+    this.loadingOverlay.appendChild(content);
+    this.container.appendChild(this.loadingOverlay);
+
+    // 15s: update text to slow-start warning
+    this.loadingTimer = setTimeout(() => {
+      label.textContent = `${agentName} may be slow to respond...`;
+    }, 15_000);
+
+    // 60s: update text to possible failure
+    this.loadingFailTimer = setTimeout(() => {
+      label.textContent = `${agentName} may have failed to start`;
+      label.classList.add('terminal-loading-warn');
+    }, 60_000);
+  }
+
+  private dismissLoading(): void {
+    if (this.receivedFirstOutput) return;
+    this.receivedFirstOutput = true;
+
+    if (this.loadingTimer) {
+      clearTimeout(this.loadingTimer);
+      this.loadingTimer = null;
+    }
+    if (this.loadingFailTimer) {
+      clearTimeout(this.loadingFailTimer);
+      this.loadingFailTimer = null;
+    }
+    if (this.loadingOverlay) {
+      this.loadingOverlay.classList.add('terminal-loading-fade');
+      setTimeout(() => {
+        this.loadingOverlay?.remove();
+        this.loadingOverlay = null;
+      }, 200);
+    }
   }
 
   attach(element: HTMLElement): void {
@@ -152,6 +211,9 @@ export class TerminalPanel {
 
     this.unsubscribeData = window.api.pty.onData((event) => {
       if (event.sessionId === this._sessionId) {
+        if (!this.receivedFirstOutput) {
+          this.dismissLoading();
+        }
         this.terminal.write(event.data);
       }
     });
@@ -257,6 +319,9 @@ export class TerminalPanel {
       this.unsubscribeData();
       this.unsubscribeData = null;
     }
+    if (this.loadingTimer) clearTimeout(this.loadingTimer);
+    if (this.loadingFailTimer) clearTimeout(this.loadingFailTimer);
+    this.loadingOverlay?.remove();
     this.connected = false;
     this.terminalSearch?.dispose();
     this.terminalSearch = null;
