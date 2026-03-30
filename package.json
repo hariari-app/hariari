@@ -6,7 +6,8 @@
     "name": "VibeIDE",
     "email": "hello@vibeide.dev"
   },
-  "homepage": "https://github.com/vibeide/vibeide",
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://github.com/nandadevaiah/vibeide",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
