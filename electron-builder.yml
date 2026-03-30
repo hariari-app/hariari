@@ -50,6 +50,7 @@ win:
     - portable
   icon: resources/icons/512x512.png
   artifactName: VibeIDE-${version}-${arch}.${ext}
+  signAndEditExecutable: false
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
