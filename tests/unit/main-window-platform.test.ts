@@ -6,51 +6,38 @@ import { describe, it, expect } from 'vitest';
  * logic directly to verify macOS gets trafficLightPosition and other platforms don't.
  */
 
+// Mirrors the spread logic in main-window.ts. Uses string param to avoid TS literal narrowing.
+function buildWindowOpts(platform: string): Record<string, unknown> {
+  return {
+    frame: false,
+    titleBarStyle: 'hidden',
+    ...(platform === 'darwin' ? {
+      trafficLightPosition: { x: 13, y: 10 },
+    } : {}),
+  };
+}
+
+function shouldRenderCustomControls(platform: string): boolean {
+  return platform !== 'darwin';
+}
+
 describe('Main window platform gating', () => {
   describe('trafficLightPosition', () => {
     it('includes trafficLightPosition on darwin', () => {
-      const platform = 'darwin';
-      const opts = {
-        frame: false,
-        titleBarStyle: 'hidden' as const,
-        ...(platform === 'darwin' ? {
-          trafficLightPosition: { x: 13, y: 10 },
-        } : {}),
-      };
+      const opts = buildWindowOpts('darwin');
       expect(opts.trafficLightPosition).toEqual({ x: 13, y: 10 });
     });
 
     it('excludes trafficLightPosition on linux', () => {
-      const platform = 'linux';
-      const opts = {
-        frame: false,
-        titleBarStyle: 'hidden' as const,
-        ...(platform === 'darwin' ? {
-          trafficLightPosition: { x: 13, y: 10 },
-        } : {}),
-      };
-      expect(opts).not.toHaveProperty('trafficLightPosition');
+      expect(buildWindowOpts('linux')).not.toHaveProperty('trafficLightPosition');
     });
 
     it('excludes trafficLightPosition on win32', () => {
-      const platform = 'win32';
-      const opts = {
-        frame: false,
-        titleBarStyle: 'hidden' as const,
-        ...(platform === 'darwin' ? {
-          trafficLightPosition: { x: 13, y: 10 },
-        } : {}),
-      };
-      expect(opts).not.toHaveProperty('trafficLightPosition');
+      expect(buildWindowOpts('win32')).not.toHaveProperty('trafficLightPosition');
     });
   });
 
   describe('titlebar controls gating', () => {
-    // Simulates the renderer logic: controls are only created when platform !== 'darwin'
-    function shouldRenderCustomControls(platform: string): boolean {
-      return platform !== 'darwin';
-    }
-
     it('does not render custom controls on darwin', () => {
       expect(shouldRenderCustomControls('darwin')).toBe(false);
     });
