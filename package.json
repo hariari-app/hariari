@@ -1,6 +1,6 @@
 {
   "name": "vibeide",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AI agent terminal orchestrator for vibe coders",
   "author": {
     "name": "VibeIDE",
