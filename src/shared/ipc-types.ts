@@ -119,6 +119,7 @@ export interface FileSearchResult {
 }
 
 export interface VibeIDEApi {
+  platform: NodeJS.Platform;
   pty: {
     spawn(request: PtySpawnRequest): Promise<PtySpawnResponse>;
     write(request: PtyWriteRequest): Promise<void>;

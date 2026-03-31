@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from '../shared/constants';
 import type { AgentStatus } from '../shared/agent-types';
 
 contextBridge.exposeInMainWorld('api', {
+  platform: process.platform,
   pty: {
     spawn: (request: unknown) => ipcRenderer.invoke(IPC_CHANNELS.PTY_SPAWN, request),
     write: (request: unknown) => ipcRenderer.invoke(IPC_CHANNELS.PTY_WRITE, request),

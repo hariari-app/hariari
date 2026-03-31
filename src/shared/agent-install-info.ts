@@ -4,23 +4,40 @@ export interface AgentInstallInfo {
   readonly command: string;
   readonly displayName: string;
   readonly installCommand: string;
-  readonly installCommandMac?: string;
   readonly docsUrl: string;
   readonly description: string;
 }
 
-const isMac = typeof process !== 'undefined' && process.platform === 'darwin';
+type Platform = 'darwin' | 'win32' | 'linux';
 
-function pick(npm: string, mac?: string): string {
-  return (isMac && mac) ? mac : npm;
+interface PlatformCommands {
+  readonly npm: string;
+  readonly mac?: string;
+  readonly win?: string;
+}
+
+function getPlatform(): Platform {
+  if (typeof window !== 'undefined' && 'api' in window) {
+    return (window as { api: { platform: Platform } }).api.platform;
+  }
+  if (typeof process !== 'undefined') {
+    return process.platform as Platform;
+  }
+  return 'linux';
+}
+
+function pick(commands: PlatformCommands): string {
+  const platform = getPlatform();
+  if (platform === 'darwin' && commands.mac) return commands.mac;
+  if (platform === 'win32' && commands.win) return commands.win;
+  return commands.npm;
 }
 
 export const AGENT_INSTALL_INFO: Partial<Record<AgentType, AgentInstallInfo>> = {
   claude: {
     command: 'claude',
     displayName: 'Claude Code',
-    installCommand: pick('npm install -g @anthropic-ai/claude-code', 'brew install anthropic-ai/tap/claude-code'),
-    installCommandMac: 'brew install anthropic-ai/tap/claude-code',
+    installCommand: 'npm install -g @anthropic-ai/claude-code',
     docsUrl: 'https://docs.anthropic.com/en/docs/claude-code',
     description: 'Anthropic\'s AI coding agent for the terminal',
   },
@@ -41,16 +58,14 @@ export const AGENT_INSTALL_INFO: Partial<Record<AgentType, AgentInstallInfo>> = 
   aider: {
     command: 'aider',
     displayName: 'Aider',
-    installCommand: pick('pip install aider-chat', 'brew install aider'),
-    installCommandMac: 'brew install aider',
+    installCommand: 'pip install aider-chat',
     docsUrl: 'https://aider.chat/',
     description: 'AI pair programming in your terminal — supports 100+ LLMs',
   },
   opencode: {
     command: 'opencode',
     displayName: 'OpenCode',
-    installCommand: pick('npm install -g opencode-ai@latest', 'brew install opencode-ai/tap/opencode'),
-    installCommandMac: 'brew install opencode-ai/tap/opencode',
+    installCommand: 'npm install -g opencode-ai@latest',
     docsUrl: 'https://opencode.ai/docs/',
     description: 'Terminal-based AI coding agent with TUI',
   },
@@ -64,8 +79,10 @@ export const AGENT_INSTALL_INFO: Partial<Record<AgentType, AgentInstallInfo>> = 
   copilot: {
     command: 'copilot',
     displayName: 'GitHub Copilot CLI',
-    installCommand: pick('npm install -g @github/copilot', 'brew install gh && gh extension install github/gh-copilot'),
-    installCommandMac: 'brew install gh && gh extension install github/gh-copilot',
+    installCommand: pick({
+      npm: 'npm install -g @github/copilot',
+      win: 'winget install GitHub.cli && gh extension install github/gh-copilot',
+    }),
     docsUrl: 'https://docs.github.com/en/copilot',
     description: 'GitHub\'s AI coding assistant for the terminal',
   },
@@ -86,21 +103,27 @@ export const AGENT_INSTALL_INFO: Partial<Record<AgentType, AgentInstallInfo>> = 
   cursor: {
     command: 'cursor-agent',
     displayName: 'Cursor CLI',
-    installCommand: 'curl https://cursor.com/install -fsS | bash',
+    installCommand: pick({
+      npm: 'curl https://cursor.com/install -fsS | bash',
+      win: 'powershell -c "irm https://cursor.com/install.ps1 | iex"',
+    }),
     docsUrl: 'https://cursor.com/cli',
     description: 'Cursor\'s AI coding agent for the terminal',
   },
   crush: {
     command: 'crush',
     displayName: 'Crush',
-    installCommand: 'brew install charmbracelet/tap/crush',
+    installCommand: 'go install github.com/charmbracelet/crush@latest',
     docsUrl: 'https://github.com/charmbracelet/crush',
     description: 'Charmbracelet\'s terminal AI agent with Bubble Tea TUI',
   },
   qwen: {
     command: 'qwen',
     displayName: 'Qwen Code',
-    installCommand: 'curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.sh | bash',
+    installCommand: pick({
+      npm: 'curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.sh | bash',
+      win: 'powershell -c "irm https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.ps1 | iex"',
+    }),
     docsUrl: 'https://github.com/QwenLM/qwen-code',
     description: 'Alibaba\'s AI coding agent — 1,000 free requests/day',
   },

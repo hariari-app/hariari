@@ -657,37 +657,73 @@ export function registerIpcHandlers(
     try {
       if (typeof raw !== 'string') return { installed: false };
       // Whitelist: reject any command not in the allowed set, or containing path separators
-      if (!ALLOWED_COMMANDS.has(raw) || raw.includes('/') || raw.includes('..')) {
+      if (!ALLOWED_COMMANDS.has(raw) || raw.includes('/') || raw.includes('\\') || raw.includes('..')) {
         return { installed: false };
       }
       const { execFile } = await import('node:child_process');
       const nodePath = await import('node:path');
       const nodeFs = await import('node:fs');
 
-      // Build enriched PATH (Electron GUI apps don't inherit shell PATH on macOS)
-      const home = process.env.HOME || '';
-      const extraPaths = [
-        '/opt/homebrew/bin', '/opt/homebrew/sbin',
-        '/usr/local/bin', '/usr/local/sbin',
-        nodePath.join(home, '.local/bin'),
-        nodePath.join(home, '.cargo/bin'),
-      ];
-      const nvmDir = process.env.NVM_DIR || nodePath.join(home, '.nvm');
-      try {
-        const versionsDir = nodePath.join(nvmDir, 'versions', 'node');
-        if (nodeFs.existsSync(versionsDir)) {
-          const versions = nodeFs.readdirSync(versionsDir).sort().reverse();
-          if (versions.length > 0) {
-            extraPaths.unshift(nodePath.join(versionsDir, versions[0], 'bin'));
-          }
-        }
-      } catch { /* nvm not installed */ }
+      const isWin = process.platform === 'win32';
+      const isMac = process.platform === 'darwin';
+      const pathSep = isWin ? ';' : ':';
 
-      const enrichedPath = [...extraPaths, process.env.PATH || ''].join(':');
+      // Build enriched PATH (Electron GUI apps don't inherit shell PATH)
+      const home = isWin
+        ? (process.env.USERPROFILE || process.env.HOME || '')
+        : (process.env.HOME || '');
+      const extraPaths: string[] = [];
+
+      if (isWin) {
+        // Windows: npm global, AppData npm, cargo, scoop, pip Scripts
+        const appData = process.env.APPDATA || nodePath.join(home, 'AppData', 'Roaming');
+        const localAppData = process.env.LOCALAPPDATA || nodePath.join(home, 'AppData', 'Local');
+        extraPaths.push(
+          nodePath.join(appData, 'npm'),
+          nodePath.join(localAppData, 'Programs', 'Python', 'Python3*', 'Scripts'),
+          nodePath.join(home, '.cargo', 'bin'),
+          nodePath.join(localAppData, 'Microsoft', 'WinGet', 'Packages'),
+          nodePath.join(home, 'scoop', 'shims'),
+        );
+        // nvm-windows
+        const nvmHome = process.env.NVM_HOME || nodePath.join(appData, 'nvm');
+        const nvmSymlink = process.env.NVM_SYMLINK || nodePath.join(home, 'AppData', 'Roaming', 'nvm', 'current');
+        if (nodeFs.existsSync(nvmSymlink)) {
+          extraPaths.unshift(nvmSymlink);
+        } else if (nodeFs.existsSync(nvmHome)) {
+          extraPaths.unshift(nvmHome);
+        }
+      } else {
+        // macOS / Linux
+        if (isMac) {
+          extraPaths.push('/opt/homebrew/bin', '/opt/homebrew/sbin');
+        }
+        extraPaths.push(
+          '/usr/local/bin', '/usr/local/sbin',
+          nodePath.join(home, '.local', 'bin'),
+          nodePath.join(home, '.cargo', 'bin'),
+        );
+        // nvm
+        const nvmDir = process.env.NVM_DIR || nodePath.join(home, '.nvm');
+        try {
+          const versionsDir = nodePath.join(nvmDir, 'versions', 'node');
+          if (nodeFs.existsSync(versionsDir)) {
+            const versions = nodeFs.readdirSync(versionsDir).sort().reverse();
+            if (versions.length > 0) {
+              extraPaths.unshift(nodePath.join(versionsDir, versions[0], 'bin'));
+            }
+          }
+        } catch { /* nvm not installed */ }
+      }
+
+      const enrichedPath = [...extraPaths, process.env.PATH || ''].join(pathSep);
       const env = { ...process.env, PATH: enrichedPath };
 
+      // Windows uses 'where', Unix uses 'which'
+      const lookupCmd = isWin ? 'where.exe' : 'which';
+
       return new Promise<{ installed: boolean; version?: string }>((resolve) => {
-        execFile('which', [raw], { timeout: 5000, env }, (error, stdout) => {
+        execFile(lookupCmd, [raw], { timeout: 5000, env }, (error, stdout) => {
           if (error || !stdout.trim()) {
             resolve({ installed: false });
           } else {
