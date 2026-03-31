@@ -13,10 +13,11 @@ exports.default = async function (configuration) {
     execSync(
       `AzureSignTool sign ` +
         `-kvu "${process.env.AZURE_ENDPOINT.trim()}" ` +
+        `-kva "${process.env.AZURE_CODE_SIGNING_ACCOUNT.trim()}" ` +
+        `-kvc "${process.env.AZURE_CERT_PROFILE_NAME.trim()}" ` +
         `-kvi "${process.env.AZURE_CLIENT_ID.trim()}" ` +
         `-kvs "${process.env.AZURE_CLIENT_SECRET.trim()}" ` +
         `-kvt "${process.env.AZURE_TENANT_ID.trim()}" ` +
-        `-kvc "${process.env.AZURE_CERT_PROFILE_NAME.trim()}" ` +
         `-tr http://timestamp.acs.microsoft.com ` +
         `-td sha256 ` +
         `"${filePath}"`,
