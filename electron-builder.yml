@@ -46,7 +46,8 @@ mac:
   gatekeeperAssess: false
   entitlements: resources/entitlements.mac.plist
   entitlementsInherit: resources/entitlements.mac.inherit.plist
-  notarize: true
+  notarize: false
+afterSign: scripts/notarize.js
 dmg:
   artifactName: VibeIDE-${version}-${arch}.dmg
 win:
