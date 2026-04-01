@@ -294,6 +294,7 @@ export function registerIpcHandlers(
       if (!provider || !apiKey || !audioBase64) return { error: 'missing_fields' };
 
       const audioBuffer = Buffer.from(audioBase64, 'base64');
+      console.log(`[IPC][voice:transcribe] provider=${provider}, audioSize=${audioBuffer.length} bytes`);
 
       let url: string;
       let model: string;
@@ -344,14 +345,15 @@ export function registerIpcHandlers(
       if (!response.ok) {
         const errText = await response.text();
         console.error(`[IPC][voice:transcribe] ${provider} API error ${response.status}:`, errText);
-        return { error: `${provider}_api_error_${response.status}` };
+        return { error: `${provider}_api_error_${response.status}: ${errText}` };
       }
 
       const result = await response.json() as Record<string, unknown>;
+      console.log('[IPC][voice:transcribe] Success, text length:', (result.text as string)?.length ?? 0);
       return { text: (result.text as string)?.trim() ?? '' };
     } catch (error) {
-      console.error('[IPC][voice:transcribe]', error);
-      return { error: 'transcription_failed' };
+      console.error('[IPC][voice:transcribe] Exception:', error);
+      return { error: `transcription_failed: ${error}` };
     }
   });
 

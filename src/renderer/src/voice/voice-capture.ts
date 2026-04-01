@@ -38,7 +38,7 @@ declare global {
 }
 
 // Voice settings are cached in memory, loaded from ~/.vibeide/settings.json via IPC
-let voiceSettings: { apiKey: string; provider: string; postProcessMode: string; deviceId: string } = { apiKey: '', provider: 'groq', postProcessMode: 'command', deviceId: '' };
+let voiceSettings: { apiKey: string; provider: string; postProcessMode: string; deviceId: string } = { apiKey: '', provider: 'openai', postProcessMode: 'command', deviceId: '' };
 let settingsLoaded = false;
 
 async function loadVoiceSettings(): Promise<void> {
