@@ -32,6 +32,7 @@ export class TerminalPanel {
   private loadingTimer: ReturnType<typeof setTimeout> | null = null;
   private loadingFailTimer: ReturnType<typeof setTimeout> | null = null;
   private terminalSearch: TerminalSearch | null = null;
+  private pastePending = false;
   private readonly debouncedResize: (sessionId: string, cols: number, rows: number) => void;
 
   constructor(sessionId: string, fontSize: number = 14) {
@@ -151,9 +152,9 @@ export class TerminalPanel {
         return false;
       }
 
-      // Ctrl+Shift+V — always paste
+      // Ctrl+Shift+V — paste with image support (saves screenshot to temp, pastes path)
       if (e.ctrlKey && e.shiftKey && e.key === 'V') {
-        this.pasteFromClipboard();
+        this.pasteImageOrText();
         return false;
       }
 
@@ -166,7 +167,7 @@ export class TerminalPanel {
         return true; // let xterm send \x03 (SIGINT)
       }
 
-      // Ctrl+V — paste
+      // Ctrl+V — text-only paste
       if (e.ctrlKey && !e.shiftKey && e.key === 'v') {
         this.pasteFromClipboard();
         return false;
@@ -282,6 +283,24 @@ export class TerminalPanel {
         window.api.pty.write({ sessionId: this._sessionId, data: text }).catch(() => {});
       }
     }).catch(() => { /* clipboard read failed */ });
+  }
+
+  private pasteImageOrText(): void {
+    if (!this.connected || this.pastePending) return;
+    this.pastePending = true;
+    // Try image first — if clipboard has an image, save to temp file and paste the path
+    window.api.clipboard.readImage().then((imagePath) => {
+      if (imagePath) {
+        window.api.pty.write({ sessionId: this._sessionId, data: imagePath }).catch(() => {});
+      } else {
+        this.pasteFromClipboard();
+      }
+    }).catch(() => {
+      // Image read failed, fall back to text paste
+      this.pasteFromClipboard();
+    }).finally(() => {
+      this.pastePending = false;
+    });
   }
 
   hasTerminalSelection(): boolean {

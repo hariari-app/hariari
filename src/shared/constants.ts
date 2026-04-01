@@ -41,6 +41,7 @@ export const IPC_CHANNELS = {
   AGENT_VERSION: 'agent:version',
   AGENT_AVAILABILITY_CHANGED: 'agent:availability-changed',
   CLIPBOARD_READ: 'clipboard:read',
+  CLIPBOARD_READ_IMAGE: 'clipboard:read-image',
   CLIPBOARD_WRITE: 'clipboard:write',
   SKILLS_MANIFEST: 'skills:manifest',
   SKILLS_INSTALL: 'skills:install',

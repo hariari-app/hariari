@@ -115,6 +115,33 @@ earlyIpcMain.handle('clipboard:read', () => {
   return clipboard.readText();
 });
 
+earlyIpcMain.handle('clipboard:read-image', async () => {
+  const { clipboard, app } = require('electron');
+  const path = require('path');
+  const fs = require('fs/promises');
+  const image = clipboard.readImage();
+  if (image.isEmpty()) return null;
+  // Guard against excessively large images (max 8K resolution)
+  const size = image.getSize();
+  if (size.width * size.height > 7680 * 4320) return null;
+  const png = image.toPNG();
+  const dir = path.join(app.getPath('temp'), 'vibeide-clipboard');
+  await fs.mkdir(dir, { recursive: true });
+  const filePath = path.join(dir, `screenshot-${Date.now()}.png`);
+  await fs.writeFile(filePath, png);
+  // Clean up old files (keep last 10)
+  try {
+    const files = (await fs.readdir(dir)).sort();
+    if (files.length > 10) {
+      for (const f of files.slice(0, files.length - 10)) {
+        await fs.unlink(path.join(dir, f)).catch(() => {});
+      }
+    }
+  } catch { /* cleanup is best-effort */ }
+  // Return forward-slash path for POSIX shell compatibility
+  return filePath.replace(/\\/g, '/');
+});
+
 earlyIpcMain.handle('clipboard:write', (_event: unknown, text: unknown) => {
   if (typeof text !== 'string' || text.length > 10 * 1024 * 1024) return;
   const { clipboard } = require('electron');

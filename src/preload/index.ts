@@ -132,6 +132,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   clipboard: {
     read: () => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_READ),
+    readImage: () => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_READ_IMAGE) as Promise<string | null>,
     write: (text: string) => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_WRITE, text),
   },
   onboarding: {

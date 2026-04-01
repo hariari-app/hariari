@@ -208,6 +208,7 @@ export interface VibeIDEApi {
   };
   clipboard: {
     read(): Promise<string>;
+    readImage(): Promise<string | null>;
     write(text: string): Promise<void>;
   };
   onboarding: {
