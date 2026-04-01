@@ -53,7 +53,6 @@ dmg:
 win:
   target:
     - nsis
-    - portable
   icon: resources/icons/512x512.png
   artifactName: VibeIDE-${version}-${arch}.${ext}
   signtoolOptions:
