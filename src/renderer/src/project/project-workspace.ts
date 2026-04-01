@@ -102,6 +102,31 @@ export class ProjectWorkspace {
     this.containerEl.style.display = 'none';
   }
 
+  adoptAgents(agents: ReadonlyArray<AgentInfo>): void {
+    for (const info of agents) {
+      if (this.tracked.has(info.id)) continue;
+      const statusBar = new AgentStatusBar(info, {
+        onKill: () => this.killAgent(info.id),
+        onSplitH: () => this.spawnAgent('shell', 'horizontal'),
+        onSplitV: () => this.spawnAgent('shell', 'vertical'),
+      });
+      this.tracked.set(info.id, { info, statusBar });
+
+      if (this.layoutManager.getLayoutTree() === null) {
+        this.layoutManager.setRoot(info.sessionId);
+      } else {
+        const focusedId = this.layoutManager.getFocusedLeafId()
+          ?? this.findFirstLeafId();
+        if (focusedId) {
+          this.layoutManager.splitPane(focusedId, 'horizontal', info.sessionId);
+        }
+      }
+    }
+    if (agents.length > 0) {
+      this.layoutManager.equalizeAll();
+    }
+  }
+
   async spawnAgent(type: AgentType, direction?: 'horizontal' | 'vertical'): Promise<AgentInfo | null> {
     // Check if agent is installed (skip for shell — always available)
     if (type !== 'shell') {

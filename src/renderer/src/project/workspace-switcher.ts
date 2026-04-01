@@ -1,7 +1,7 @@
 import { ProjectWorkspace } from './project-workspace';
 import { SinglePreview } from '../preview/single-preview';
 import type { ProjectInfo } from '../../../shared/ipc-types';
-import type { AgentType } from '../../../shared/agent-types';
+import type { AgentInfo, AgentType } from '../../../shared/agent-types';
 import type { PreviewAgent } from '../../../shared/preview-types';
 import { ACTIVE_STATUSES } from '../../../shared/preview-types';
 
@@ -115,8 +115,11 @@ export class WorkspaceSwitcher {
     return workspace;
   }
 
-  enterSinglePreview(): void {
+  async enterSinglePreview(): Promise<void> {
     if (this.inSinglePreview) return;
+
+    // Ensure workspaces exist for all projects with active agents
+    await this.hydrateWorkspacesForActiveAgents();
 
     // Deactivate current workspace
     if (this.activeProjectId) {
@@ -131,6 +134,41 @@ export class WorkspaceSwitcher {
     this.inSinglePreview = true;
     this.singlePreview.enter();
     this.onWorkspaceChange(null);
+  }
+
+  private async hydrateWorkspacesForActiveAgents(): Promise<void> {
+    try {
+      const allAgents = await window.api.agent.list();
+      if (!Array.isArray(allAgents)) return;
+
+      const projects = await window.api.project.list();
+      const projectMap = new Map(projects.map((p) => [p.id, p]));
+      this.updateProjectNames(projects);
+
+      // Group active agents by project
+      const agentsByProject = new Map<string, AgentInfo[]>();
+      for (const agent of allAgents) {
+        if (!ACTIVE_STATUSES.has(agent.status)) continue;
+        const list = agentsByProject.get(agent.projectId) ?? [];
+        list.push(agent);
+        agentsByProject.set(agent.projectId, list);
+      }
+
+      for (const [projectId, agents] of agentsByProject) {
+        if (this.workspaces.has(projectId)) continue;
+
+        const project = projectMap.get(projectId);
+        if (!project) continue;
+
+        // Create workspace and adopt existing running agents (no re-spawn)
+        const workspace = new ProjectWorkspace(project.id, project.path);
+        this.workspaceHost.appendChild(workspace.containerEl);
+        this.workspaces.set(project.id, workspace);
+        workspace.adoptAgents(agents);
+      }
+    } catch (error) {
+      console.error('[WorkspaceSwitcher] Failed to hydrate workspaces:', error);
+    }
   }
 
   exitSinglePreview(): void {
@@ -159,11 +197,11 @@ export class WorkspaceSwitcher {
     this.onWorkspaceChange(this.activeProjectId);
   }
 
-  toggleSinglePreview(): void {
+  async toggleSinglePreview(): Promise<void> {
     if (this.inSinglePreview) {
       this.exitSinglePreview();
     } else {
-      this.enterSinglePreview();
+      await this.enterSinglePreview();
     }
   }
 
