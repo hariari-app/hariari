@@ -185,6 +185,10 @@ export class WorkspaceSwitcher {
           workspace.activate();
           this.activeProjectId = this.lastActiveProjectId;
           workspace.layoutManager.render();
+          // Force fit after reattach — xterm needs a frame to measure its container
+          requestAnimationFrame(() => {
+            workspace.terminalManager.fitAll();
+          });
         }
       }
     });

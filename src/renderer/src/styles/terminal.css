@@ -673,9 +673,12 @@
 }
 
 .status-bar-project {
-  color: var(--fg-dim);
-  font-weight: 400;
-  font-size: var(--font-xs);
+  color: var(--fg);
+  font-weight: 500;
+  font-size: var(--font-sm);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  padding: 1px 6px;
+  border-radius: 3px;
 }
 
 .status-bar-project::after {
