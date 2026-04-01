@@ -237,7 +237,7 @@ function main(): void {
 
   // Workspace switcher
   const workspaceSwitcher = new WorkspaceSwitcher(workspaceHost, (projectId) => {
-    emptyState.style.display = projectId ? 'none' : '';
+    emptyState.style.display = (projectId || workspaceSwitcher.isInSinglePreview()) ? 'none' : '';
     projectSidebar.setActiveProject(projectId);
     // Update agents in sidebar for the active workspace
     if (projectId) {
