@@ -9,6 +9,12 @@ type TerminalCreateFn = (sessionId: string, container: HTMLElement) => void;
 type FitAllFn = () => void;
 type OnExitFn = () => void;
 
+export interface GridLayout {
+  readonly rows: number;
+  readonly cols: number;
+  readonly label: string;
+}
+
 export class SinglePreview {
   readonly containerEl: HTMLElement;
   private readonly layoutManager: LayoutManager;
@@ -19,6 +25,9 @@ export class SinglePreview {
   private currentAgents: ReadonlyArray<PreviewAgent> = [];
   private statusBars: AgentStatusBar[] = [];
   private onExit: OnExitFn = () => {};
+  private currentGrid: GridLayout | null = null;
+  private gridPickerEl: HTMLElement | null = null;
+  private gridDropdownEl: HTMLElement | null = null;
 
   constructor(
     createTerminal: TerminalCreateFn,
@@ -85,18 +94,19 @@ export class SinglePreview {
     }
 
     this.clearEmptyState();
-    const sessionIds = this.currentAgents.map((a) => a.agentInfo.sessionId);
-    const tree = buildBalancedTree(sessionIds);
-    this.layoutManager.restoreLayout(tree);
-    this.layoutManager.equalizeAll();
+    const count = this.currentAgents.length;
+    if (!this.currentGrid || !isValidGrid(this.currentGrid, count)) {
+      this.currentGrid = getDefaultGrid(count);
+    }
+    this.applyGrid();
+    this.renderGridPicker();
     this.containerEl.style.display = '';
   }
 
   exit(): void {
     this.active = false;
     this.disposeStatusBars();
-    // Let the workspace reattach terminals first (via onExit callback),
-    // THEN clear the preview DOM — prevents terminal element orphaning
+    this.removeGridPicker();
     this.onExit();
     this.containerEl.style.display = 'none';
     this.containerEl.replaceChildren();
@@ -111,6 +121,7 @@ export class SinglePreview {
     this.currentAgents = agents;
 
     if (agents.length === 0) {
+      this.removeGridPicker();
       this.containerEl.replaceChildren();
       this.layoutManager.reset();
       this.renderEmptyState();
@@ -118,11 +129,99 @@ export class SinglePreview {
     }
 
     this.clearEmptyState();
-    const sessionIds = agents.map((a) => a.agentInfo.sessionId);
-    const tree = buildBalancedTree(sessionIds);
+    const count = agents.length;
+    if (!this.currentGrid || !isValidGrid(this.currentGrid, count)) {
+      this.currentGrid = getDefaultGrid(count);
+    }
     this.layoutManager.reset();
+    this.applyGrid();
+    this.renderGridPicker();
+  }
+
+  private applyGrid(): void {
+    const sessionIds = this.currentAgents.map((a) => a.agentInfo.sessionId);
+    const grid = this.currentGrid ?? getDefaultGrid(sessionIds.length);
+    const tree = buildGridTree(sessionIds, grid.rows, grid.cols);
     this.layoutManager.restoreLayout(tree);
     this.layoutManager.equalizeAll();
+  }
+
+  private renderGridPicker(): void {
+    this.removeGridPicker();
+    const count = this.currentAgents.length;
+    if (count <= 1) return;
+
+    const options = getGridOptions(count);
+    if (options.length <= 1) return;
+
+    this.gridPickerEl = document.createElement('div');
+    this.gridPickerEl.className = 'preview-grid-picker';
+
+    const btn = document.createElement('button');
+    btn.className = 'preview-grid-btn';
+    btn.title = 'Change grid layout';
+    btn.setAttribute('aria-label', 'Change grid layout');
+    const current = this.currentGrid ?? getDefaultGrid(count);
+    btn.textContent = `${current.rows}\u00d7${current.cols}`;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.toggleGridDropdown(options);
+    });
+
+    this.gridPickerEl.appendChild(btn);
+    this.containerEl.appendChild(this.gridPickerEl);
+  }
+
+  private toggleGridDropdown(options: readonly GridLayout[]): void {
+    if (this.gridDropdownEl) {
+      this.gridDropdownEl.remove();
+      this.gridDropdownEl = null;
+      return;
+    }
+
+    this.gridDropdownEl = document.createElement('div');
+    this.gridDropdownEl.className = 'preview-grid-dropdown';
+
+    for (const opt of options) {
+      const item = document.createElement('button');
+      item.className = 'preview-grid-option';
+      if (this.currentGrid && opt.rows === this.currentGrid.rows && opt.cols === this.currentGrid.cols) {
+        item.classList.add('active');
+      }
+      item.textContent = opt.label;
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.currentGrid = opt;
+        this.disposeStatusBars();
+        this.layoutManager.reset();
+        this.applyGrid();
+        this.gridDropdownEl?.remove();
+        this.gridDropdownEl = null;
+        // Update button text
+        const btn = this.gridPickerEl?.querySelector('.preview-grid-btn');
+        if (btn) btn.textContent = `${opt.rows}\u00d7${opt.cols}`;
+      });
+      this.gridDropdownEl.appendChild(item);
+    }
+
+    this.gridPickerEl?.appendChild(this.gridDropdownEl);
+
+    // Close on outside click
+    const closeHandler = (e: MouseEvent) => {
+      if (!this.gridPickerEl?.contains(e.target as Node)) {
+        this.gridDropdownEl?.remove();
+        this.gridDropdownEl = null;
+        document.removeEventListener('click', closeHandler);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', closeHandler), 0);
+  }
+
+  private removeGridPicker(): void {
+    this.gridPickerEl?.remove();
+    this.gridPickerEl = null;
+    this.gridDropdownEl?.remove();
+    this.gridDropdownEl = null;
   }
 
   private disposeStatusBars(): void {
@@ -152,44 +251,118 @@ export class SinglePreview {
 
   dispose(): void {
     this.disposeStatusBars();
+    this.removeGridPicker();
     this.layoutManager.dispose();
     this.containerEl.remove();
   }
 }
 
-export function buildBalancedTree(sessionIds: readonly string[]): LayoutNode {
+// --- Grid layout utilities ---
+
+export function getDefaultGrid(count: number): GridLayout {
+  if (count <= 1) return { rows: 1, cols: 1, label: '1\u00d71' };
+  if (count === 2) return { rows: 1, cols: 2, label: '1\u00d72' };
+  if (count === 3) return { rows: 1, cols: 3, label: '1\u00d73' };
+  // For 4+, pick the most square-ish layout, preferring wider
+  const cols = Math.ceil(Math.sqrt(count));
+  const rows = Math.ceil(count / cols);
+  return { rows, cols, label: `${rows}\u00d7${cols}` };
+}
+
+export function getGridOptions(count: number): readonly GridLayout[] {
+  if (count <= 1) return [{ rows: 1, cols: 1, label: '1\u00d71' }];
+
+  const options: GridLayout[] = [];
+  // Generate all reasonable row/col combos
+  for (let rows = 1; rows <= count; rows++) {
+    const cols = Math.ceil(count / rows);
+    // Skip if too many empty cells (more than 1 row of empties)
+    if (rows * cols - count >= cols) continue;
+    // Skip extreme shapes (no 1xN or Nx1 beyond 4)
+    if (count > 4 && (rows === 1 || cols === 1)) continue;
+    // Avoid duplicates
+    if (!options.some((o) => o.rows === rows && o.cols === cols)) {
+      options.push({ rows, cols, label: `${rows}\u00d7${cols}` });
+    }
+  }
+  return options;
+}
+
+function isValidGrid(grid: GridLayout, count: number): boolean {
+  return grid.rows * grid.cols >= count && grid.rows <= count;
+}
+
+export function buildGridTree(
+  sessionIds: readonly string[],
+  rows: number,
+  cols: number,
+): LayoutNode {
   if (sessionIds.length === 0) {
     throw new Error('Cannot build tree from empty session list');
   }
-  return buildTreeRecursive(sessionIds, 0);
-}
-
-function buildTreeRecursive(
-  sessionIds: readonly string[],
-  depth: number,
-): LayoutNode {
   if (sessionIds.length === 1) {
-    const leaf: LeafNode = {
-      type: 'leaf',
-      id: crypto.randomUUID(),
-      sessionId: sessionIds[0],
-    };
-    return leaf;
+    return makeLeaf(sessionIds[0]);
   }
 
-  const mid = Math.ceil(sessionIds.length / 2);
-  const left = buildTreeRecursive(sessionIds.slice(0, mid), depth + 1);
-  const right = buildTreeRecursive(sessionIds.slice(mid), depth + 1);
+  // Distribute sessions into rows with unequal column counts
+  const rowGroups: string[][] = [];
+  let idx = 0;
+  for (let r = 0; r < rows; r++) {
+    const remaining = sessionIds.length - idx;
+    const remainingRows = rows - r;
+    const rowSize = Math.ceil(remaining / remainingRows);
+    rowGroups.push(sessionIds.slice(idx, idx + rowSize));
+    idx += rowSize;
+  }
 
-  // Alternate direction: even depth = vertical (rows), odd depth = horizontal (columns)
-  const direction = depth % 2 === 0 ? 'vertical' : 'horizontal';
+  // Build each row as a horizontal split chain
+  const rowNodes: LayoutNode[] = rowGroups
+    .filter((g) => g.length > 0)
+    .map((group) => buildRowTree(group));
 
-  const split: SplitNode = {
+  // Combine rows vertically
+  return combineNodes(rowNodes, 'vertical');
+}
+
+function buildRowTree(sessionIds: string[]): LayoutNode {
+  if (sessionIds.length === 1) return makeLeaf(sessionIds[0]);
+  const nodes = sessionIds.map((id) => makeLeaf(id));
+  return combineNodes(nodes, 'horizontal');
+}
+
+function combineNodes(nodes: LayoutNode[], direction: 'horizontal' | 'vertical'): LayoutNode {
+  if (nodes.length === 1) return nodes[0];
+  if (nodes.length === 2) {
+    return makeSplit(direction, nodes[0], nodes[1], 0.5);
+  }
+  // For 3+ nodes, split at midpoint to keep balanced
+  const mid = Math.ceil(nodes.length / 2);
+  const left = combineNodes(nodes.slice(0, mid), direction);
+  const right = combineNodes(nodes.slice(mid), direction);
+  return makeSplit(direction, left, right, mid / nodes.length);
+}
+
+function makeLeaf(sessionId: string): LeafNode {
+  return { type: 'leaf', id: crypto.randomUUID(), sessionId };
+}
+
+function makeSplit(
+  direction: 'horizontal' | 'vertical',
+  left: LayoutNode,
+  right: LayoutNode,
+  ratio: number,
+): SplitNode {
+  return {
     type: 'split',
     id: crypto.randomUUID(),
     direction,
     children: [left, right],
-    ratio: mid / sessionIds.length,
+    ratio,
   };
-  return split;
+}
+
+// Keep for backwards compatibility with tests
+export function buildBalancedTree(sessionIds: readonly string[]): LayoutNode {
+  const grid = getDefaultGrid(sessionIds.length);
+  return buildGridTree(sessionIds, grid.rows, grid.cols);
 }
