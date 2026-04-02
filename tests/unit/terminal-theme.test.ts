@@ -96,11 +96,13 @@ describe('Terminal Theme', () => {
 
     it('returns all registered themes', () => {
       const names = getThemeNames();
-      expect(names).toHaveLength(12);
+      expect(names).toHaveLength(14);
       expect(names).toContain('tokyoNight');
       expect(names).toContain('dracula');
       expect(names).toContain('nord');
       expect(names).toContain('catppuccinMocha');
+      expect(names).toContain('brutalist');
+      expect(names).toContain('brutalistLight');
     });
 
     it('returns an array of strings', () => {

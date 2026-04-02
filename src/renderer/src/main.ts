@@ -814,8 +814,8 @@ function main(): void {
   voiceRouter.registerCommand({ id: 'notification-prefs', aliases: ['notification settings', 'notification preferences', 'sound settings'], action: () => notificationPrefs.toggle() });
 
   // Theme commands
-  const themeNames = ['tokyo night', 'tokyo night light', 'solarized dark', 'dracula', 'nord', 'gruvbox dark', 'one dark', 'catppuccin mocha', 'monokai'];
-  const themeIds = ['tokyoNight', 'tokyoNightLight', 'solarizedDark', 'dracula', 'nord', 'gruvboxDark', 'oneDark', 'catppuccinMocha', 'monokai'];
+  const themeNames = ['tokyo night', 'tokyo night light', 'solarized dark', 'dracula', 'nord', 'gruvbox dark', 'one dark', 'catppuccin mocha', 'monokai', 'brutalist', 'brutalist light'];
+  const themeIds = ['tokyoNight', 'tokyoNightLight', 'solarizedDark', 'dracula', 'nord', 'gruvboxDark', 'oneDark', 'catppuccinMocha', 'monokai', 'brutalist', 'brutalistLight'];
   for (let i = 0; i < themeNames.length; i++) {
     const id = themeIds[i];
     voiceRouter.registerCommand({ id: `theme-${id}`, aliases: [`theme ${themeNames[i]}`, themeNames[i], `switch to ${themeNames[i]}`], action: () => switchTheme(id) });
@@ -934,6 +934,8 @@ function main(): void {
     { id: 'catppuccinLatte', label: 'Catppuccin Latte' },
     { id: 'monokai', label: 'Monokai' },
     { id: 'githubLight', label: 'GitHub Light' },
+    { id: 'brutalist', label: 'Brutalist' },
+    { id: 'brutalistLight', label: 'Brutalist Light' },
   ];
   for (const theme of themeEntries) {
     commandPalette.register({
