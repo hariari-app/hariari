@@ -1,9 +1,12 @@
 import '@xterm/xterm/css/xterm.css';
 import './styles/global.css';
 import './styles/terminal.css';
+import './styles/tab-bar.css';
 import './styles/source-control.css';
 import './onboarding/onboarding.css';
 import { ProjectSidebar } from './project/project-sidebar';
+import { ProjectTabBar } from './project/project-tab-bar';
+import { ProjectStore, getNeedsInputCount } from './project/project-store';
 import { WorkspaceSwitcher } from './project/workspace-switcher';
 import { CommandPalette } from './ui/command-palette';
 import { KeybindingManager } from './ui/keybindings';
@@ -23,7 +26,7 @@ import { NotificationPreferences } from './ui/notification-preferences';
 import { VoiceRouter } from './voice/voice-router';
 import { LaunchWorkspaceDialog, buildDynamicPreset } from './ui/launch-workspace-dialog';
 import type { ProjectInfo, AppState } from '../../shared/ipc-types';
-import type { AgentType } from '../../shared/agent-types';
+import type { AgentInfo, AgentType } from '../../shared/agent-types';
 
 const AUTO_SAVE_INTERVAL_MS = 30_000;
 
@@ -53,18 +56,106 @@ function main(): void {
     }
   }
 
-  // Custom title bar
-  const titleBar = document.createElement('div');
-  titleBar.className = 'app-titlebar';
+  // Project store — single source of truth for project/agent state
+  const store = new ProjectStore();
 
-  const titleText = document.createElement('span');
-  titleText.className = 'app-titlebar-title';
-  titleText.textContent = 'VibeIDE';
+  // Tab bar (replaces the old title bar)
+  const projectTabBar = new ProjectTabBar({
+    onTabSelect: async (projectId: string) => {
+      const project = store.getState().projects.find((p) => p.id === projectId);
+      if (project) {
+        await workspaceSwitcher.switchTo(project);
+        const workspace = workspaceSwitcher.getWorkspace(project.id);
+        if (workspace) {
+          const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info);
+          store.updateAgents(project.id, agents);
+        }
+      }
+    },
+    onTabClose: async (projectId: string) => {
+      // Check for running agents — show confirmation if any
+      const workspace = workspaceSwitcher.getWorkspace(projectId);
+      if (workspace) {
+        const agents = Array.from(workspace.getTrackedAgents().values());
+        const running = agents.filter((t) => {
+          const s = t.info.status;
+          return s === 'running' || s === 'starting' || s === 'needs-input';
+        });
+        if (running.length > 0) {
+          const confirmed = confirm(`${running.length} agent(s) still running. Close this project?`);
+          if (!confirmed) return;
+        }
+      }
+      try {
+        await workspaceSwitcher.closeWorkspace(projectId);
+        await window.api.project.remove(projectId);
+        await refreshProjectList();
+        // Auto-switch to next project
+        if (workspaceSwitcher.getActiveProjectId() === null) {
+          const projects = await window.api.project.list();
+          if (projects.length > 0) {
+            await workspaceSwitcher.switchTo(projects[0]);
+            const ws = workspaceSwitcher.getWorkspace(projects[0].id);
+            if (ws) {
+              const agents = Array.from(ws.getTrackedAgents().values()).map((t) => t.info);
+              store.updateAgents(projects[0].id, agents);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[Main] Failed to close project:', error);
+      }
+    },
+    onNewProject: async () => {
+      const dirPath = await window.api.project.pickDirectory();
+      if (!dirPath) return;
+      try {
+        const project = await window.api.project.create({ path: dirPath });
+        await refreshProjectList();
+        await workspaceSwitcher.switchTo(project);
+        const workspace = workspaceSwitcher.getWorkspace(project.id);
+        if (workspace) {
+          const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info);
+          store.updateAgents(project.id, agents);
+        }
+      } catch (error) {
+        console.error('[Main] Failed to create project:', error);
+      }
+    },
+    onToggleSinglePreview: () => {
+      workspaceSwitcher.toggleSinglePreview();
+      const inPreview = workspaceSwitcher.isInSinglePreview();
+      store.setInSinglePreview(inPreview);
+      ariaLive.textContent = inPreview ? 'Entering Single Preview' : 'Exiting Single Preview';
+    },
+    onProjectRename: async (projectId: string, newName: string) => {
+      try {
+        await window.api.project.update({ id: projectId, name: newName });
+        await refreshProjectList();
+      } catch (error) {
+        console.error('[Main] Failed to rename project:', error);
+      }
+    },
+    onProjectPin: async (projectId: string, pinned: boolean) => {
+      try {
+        await window.api.project.update({ id: projectId, pinned });
+        await refreshProjectList();
+      } catch (error) {
+        console.error('[Main] Failed to pin/unpin project:', error);
+      }
+    },
+    onProjectRemove: async (projectId: string) => {
+      try {
+        await workspaceSwitcher.closeWorkspace(projectId);
+        await window.api.project.remove(projectId);
+        await refreshProjectList();
+      } catch (error) {
+        console.error('[Main] Failed to remove project:', error);
+      }
+    },
+  });
 
-  titleBar.appendChild(titleText);
-
-  // On macOS, native traffic light buttons (top-left) are provided by titleBarStyle: 'hidden'.
-  // Only render custom window controls on Linux/Windows.
+  // On Windows/Linux, create custom window controls and append to tab bar
   if (window.api.platform !== 'darwin') {
     const titleControls = document.createElement('div');
     titleControls.className = 'app-titlebar-controls';
@@ -89,10 +180,10 @@ function main(): void {
     titleControls.appendChild(minimizeBtn);
     titleControls.appendChild(maximizeBtn);
     titleControls.appendChild(closeBtn);
-    titleBar.appendChild(titleControls);
+    projectTabBar.appendWindowControls(titleControls);
   }
 
-  appEl.appendChild(titleBar);
+  appEl.appendChild(projectTabBar.containerEl);
 
   // App body (sidebar + workspace)
   const appBody = document.createElement('div');
@@ -103,6 +194,7 @@ function main(): void {
   let terminalFontSize = 14;
   let uiFontSize = 13;
   let worktreeIsolation = true;
+  let sidebarAutoHide = false;
 
   // Load font/sidebar/worktree settings
   window.api.settings.load().then((s) => {
@@ -118,6 +210,9 @@ function main(): void {
     }
     if (typeof s.worktreeIsolation === 'boolean') {
       worktreeIsolation = s.worktreeIsolation;
+    }
+    if (typeof s.sidebarAutoHide === 'boolean') {
+      sidebarAutoHide = s.sidebarAutoHide;
     }
   }).catch(() => {});
 
@@ -238,14 +333,14 @@ function main(): void {
   // Workspace switcher
   const workspaceSwitcher = new WorkspaceSwitcher(workspaceHost, (projectId) => {
     emptyState.style.display = (projectId || workspaceSwitcher.isInSinglePreview()) ? 'none' : '';
-    projectSidebar.setActiveProject(projectId);
-    // Update agents in sidebar for the active workspace
+    store.setActiveProject(projectId);
     if (projectId) {
+      store.clearNotifications(projectId);
       const workspace = workspaceSwitcher.getWorkspace(projectId);
       if (workspace) {
         workspace.useWorktree = worktreeIsolation;
         const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info);
-        projectSidebar.updateAgents(projectId, agents);
+        store.updateAgents(projectId, agents);
       }
     }
   });
@@ -261,7 +356,7 @@ function main(): void {
       const workspace = workspaceSwitcher.getWorkspace(project.id);
       if (workspace) {
         const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info);
-        projectSidebar.updateAgents(project.id, agents);
+        store.updateAgents(project.id, agents);
       }
     },
     onProjectAdd: async () => {
@@ -275,7 +370,7 @@ function main(): void {
         const workspace = workspaceSwitcher.getWorkspace(project.id);
         if (workspace) {
           const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info);
-          projectSidebar.updateAgents(project.id, agents);
+          store.updateAgents(project.id, agents);
         }
       } catch (error) {
         console.error('[Main] Failed to create project:', error);
@@ -295,7 +390,7 @@ function main(): void {
             const workspace = workspaceSwitcher.getWorkspace(projects[0].id);
             if (workspace) {
               const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info);
-              projectSidebar.updateAgents(projects[0].id, agents);
+              store.updateAgents(projects[0].id, agents);
             }
           }
         }
@@ -332,7 +427,7 @@ function main(): void {
       if (workspace) {
         await workspace.spawnAgent(type);
         const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info);
-        projectSidebar.updateAgents(projectId, agents);
+        store.updateAgents(projectId, agents);
       }
     },
     onAgentSelect: (_agentId: string, sessionId: string) => {
@@ -346,7 +441,7 @@ function main(): void {
         if (ws.hasAgent(agentId)) {
           await ws.killAgent(agentId);
           const agents = Array.from(ws.getTrackedAgents().values()).map((t) => t.info);
-          projectSidebar.updateAgents(ws.projectId, agents);
+          store.updateAgents(ws.projectId, agents);
           break;
         }
       }
@@ -381,13 +476,13 @@ function main(): void {
     onToggleSinglePreview: () => {
       workspaceSwitcher.toggleSinglePreview();
       const inPreview = workspaceSwitcher.isInSinglePreview();
-      projectSidebar.setSinglePreviewActive(inPreview);
+      store.setInSinglePreview(inPreview);
       ariaLive.textContent = inPreview ? 'Entering Single Preview' : 'Exiting Single Preview';
     },
     onLaunchWorkspace: () => {
       launchWorkspaceDialog.show(async (result) => {
         await workspaceSwitcher.switchTo(result.project);
-        projectSidebar.setActiveProject(result.project.id);
+        store.setActiveProject(result.project.id);
         await refreshProjectList();
         const preset = buildDynamicPreset(result.agents, result.layout);
         const workspace = workspaceSwitcher.getActiveWorkspace();
@@ -395,11 +490,44 @@ function main(): void {
           const success = await workspace.applyPreset(preset);
           if (success) {
             const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info);
-            projectSidebar.updateAgents(result.project.id, agents);
+            store.updateAgents(result.project.id, agents);
           }
         }
       });
     },
+  });
+
+  // Store subscription — fan out state changes to both sidebar and tab bar
+  store.subscribe((state, prev) => {
+    // Projects changed
+    if (state.projects !== prev.projects) {
+      projectSidebar.setProjects(state.projects);
+      projectTabBar.setProjects(state.projects);
+    }
+    // Active project changed
+    if (state.activeProjectId !== prev.activeProjectId) {
+      projectSidebar.setActiveProject(state.activeProjectId);
+      projectTabBar.setActiveProject(state.activeProjectId);
+    }
+    // Agent data changed — update sidebar and tab bar badges
+    if (state.agentsByProject !== prev.agentsByProject) {
+      for (const [projectId, agents] of state.agentsByProject) {
+        if (agents !== prev.agentsByProject.get(projectId)) {
+          projectSidebar.updateAgents(projectId, agents as AgentInfo[]);
+          const total = agents.length;
+          const needsInput = agents.filter((a) => a.status === 'needs-input').length;
+          projectTabBar.updateAgentCount(projectId, total, needsInput);
+        }
+      }
+      // Update needs-input badge on sidebar
+      const count = getNeedsInputCount(state);
+      projectSidebar.updateNeedsInputCount(count);
+    }
+    // Single preview changed
+    if (state.inSinglePreview !== prev.inSinglePreview) {
+      projectSidebar.setSinglePreviewActive(state.inSinglePreview);
+      projectTabBar.setSinglePreviewActive(state.inSinglePreview);
+    }
   });
 
   // Periodic git status poll for sidebar badges
@@ -436,8 +564,7 @@ function main(): void {
   // Agent event listeners
   const unsubStatus = window.api.agent.onStatus((event) => {
     workspaceSwitcher.handleAgentStatus(event.agentId, event.status);
-    projectSidebar.updateAgentStatus(event.agentId, event.status);
-    updateNeedsInputBadge();
+    store.updateAgentStatus(event.agentId, event.status);
 
     // Announce status change for screen readers
     const statusInfo = findAgentInfo(event.agentId);
@@ -486,8 +613,7 @@ function main(): void {
 
     workspaceSwitcher.handleAgentExit(event.agentId, event.exitCode);
     const exitStatus = event.exitCode === 0 ? 'complete' : 'error';
-    projectSidebar.updateAgentStatus(event.agentId, exitStatus as any);
-    updateNeedsInputBadge();
+    store.updateAgentStatus(event.agentId, exitStatus as any);
 
     const config = getNotificationConfig();
 
@@ -660,7 +786,7 @@ function main(): void {
     id: 'toggle-single-preview',
     label: 'Toggle Single Preview',
     category: 'View',
-    action: () => { workspaceSwitcher.toggleSinglePreview(); const inPreview = workspaceSwitcher.isInSinglePreview(); projectSidebar.setSinglePreviewActive(inPreview); ariaLive.textContent = inPreview ? 'Entering Single Preview' : 'Exiting Single Preview'; },
+    action: () => { workspaceSwitcher.toggleSinglePreview(); const inPreview = workspaceSwitcher.isInSinglePreview(); store.setInSinglePreview(inPreview); ariaLive.textContent = inPreview ? 'Entering Single Preview' : 'Exiting Single Preview'; },
   });
 
   commandPalette.register({
@@ -671,7 +797,7 @@ function main(): void {
       launchWorkspaceDialog.show(async (result) => {
         // Switch to selected project
         await workspaceSwitcher.switchTo(result.project);
-        projectSidebar.setActiveProject(result.project.id);
+        store.setActiveProject(result.project.id);
         await refreshProjectList();
 
         // Build and apply custom preset
@@ -681,7 +807,7 @@ function main(): void {
           const success = await workspace.applyPreset(preset);
           if (success) {
             const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info);
-            projectSidebar.updateAgents(result.project.id, agents);
+            store.updateAgents(result.project.id, agents);
           }
         }
       });
@@ -794,8 +920,8 @@ function main(): void {
   voiceRouter.registerCommand({ id: 'new-qwen', aliases: ['new qwen', 'open qwen', 'start qwen', 'qwen agent', 'new when', 'open when'], action: () => spawnInActiveProject('qwen') });
   voiceRouter.registerCommand({ id: 'close-pane', aliases: ['close pane', 'close terminal', 'close this', 'close tab'], action: () => closeFocused() });
   voiceRouter.registerCommand({ id: 'equalize-panes', aliases: ['equalize panes', 'equal size', 'auto arrange', 'reset layout', 'equal panes'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) ws.layoutManager.equalizeAll(); } });
-  voiceRouter.registerCommand({ id: 'toggle-single-preview', aliases: ['single preview', 'preview all', 'show all agents', 'all agents', 'overview'], action: () => { workspaceSwitcher.toggleSinglePreview(); const inPreview = workspaceSwitcher.isInSinglePreview(); projectSidebar.setSinglePreviewActive(inPreview); ariaLive.textContent = inPreview ? 'Entering Single Preview' : 'Exiting Single Preview'; } });
-  voiceRouter.registerCommand({ id: 'launch-workspace', aliases: ['launch workspace', 'setup workspace', 'new workspace', 'workspace setup'], action: () => { launchWorkspaceDialog.show(async (result) => { await workspaceSwitcher.switchTo(result.project); projectSidebar.setActiveProject(result.project.id); await refreshProjectList(); const preset = buildDynamicPreset(result.agents, result.layout); const workspace = workspaceSwitcher.getActiveWorkspace(); if (workspace) { const success = await workspace.applyPreset(preset); if (success) { const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info); projectSidebar.updateAgents(result.project.id, agents); } } }); } });
+  voiceRouter.registerCommand({ id: 'toggle-single-preview', aliases: ['single preview', 'preview all', 'show all agents', 'all agents', 'overview'], action: () => { workspaceSwitcher.toggleSinglePreview(); const inPreview = workspaceSwitcher.isInSinglePreview(); store.setInSinglePreview(inPreview); ariaLive.textContent = inPreview ? 'Entering Single Preview' : 'Exiting Single Preview'; } });
+  voiceRouter.registerCommand({ id: 'launch-workspace', aliases: ['launch workspace', 'setup workspace', 'new workspace', 'workspace setup'], action: () => { launchWorkspaceDialog.show(async (result) => { await workspaceSwitcher.switchTo(result.project); store.setActiveProject(result.project.id); await refreshProjectList(); const preset = buildDynamicPreset(result.agents, result.layout); const workspace = workspaceSwitcher.getActiveWorkspace(); if (workspace) { const success = await workspace.applyPreset(preset); if (success) { const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info); store.updateAgents(result.project.id, agents); } } }); } });
   voiceRouter.registerCommand({ id: 'toggle-sidebar', aliases: ['toggle sidebar', 'hide sidebar', 'show sidebar', 'sidebar'], action: () => projectSidebar.toggleCollapse() });
   voiceRouter.registerCommand({ id: 'command-palette', aliases: ['command palette', 'commands', 'open commands', 'show commands'], action: () => commandPalette.toggle() });
   voiceRouter.registerCommand({ id: 'file-finder', aliases: ['open file', 'quick open', 'find file', 'go to file'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) fileFinder.toggle(ws.projectPath); } });
@@ -905,6 +1031,21 @@ function main(): void {
     label: 'Toggle Sidebar',
     shortcut: 'Ctrl+B',
     action: () => projectSidebar.toggleCollapse(),
+  });
+  commandPalette.register({
+    id: 'toggle-sidebar-auto-hide', category: 'View',
+    label: sidebarAutoHide ? 'Sidebar: Disable Auto-Hide' : 'Sidebar: Enable Auto-Hide',
+    action: () => {
+      sidebarAutoHide = !sidebarAutoHide;
+      projectSidebar.setAutoHide(sidebarAutoHide);
+      commandPalette.updateLabel(
+        'toggle-sidebar-auto-hide',
+        sidebarAutoHide ? 'Sidebar: Disable Auto-Hide' : 'Sidebar: Enable Auto-Hide',
+      );
+      window.api.settings.load().then((s) => {
+        window.api.settings.save({ ...s, sidebarAutoHide });
+      }).catch(() => {});
+    },
   });
   commandPalette.register({
     id: 'close-pane', category: 'Layout',
@@ -1052,7 +1193,7 @@ function main(): void {
     'zoom-in': { action: () => window.api.window.zoomIn() },
     'zoom-out': { action: () => window.api.window.zoomOut() },
     'zoom-reset': { action: () => window.api.window.zoomReset() },
-    'toggle-single-preview': { action: () => { workspaceSwitcher.toggleSinglePreview(); const inPreview = workspaceSwitcher.isInSinglePreview(); projectSidebar.setSinglePreviewActive(inPreview); ariaLive.textContent = inPreview ? 'Entering Single Preview' : 'Exiting Single Preview'; } },
+    'toggle-single-preview': { action: () => { workspaceSwitcher.toggleSinglePreview(); const inPreview = workspaceSwitcher.isInSinglePreview(); store.setInSinglePreview(inPreview); ariaLive.textContent = inPreview ? 'Entering Single Preview' : 'Exiting Single Preview'; } },
   };
 
   // Keybinding manager — registers from config, re-registers on change
@@ -1097,16 +1238,6 @@ function main(): void {
     return workspaceSwitcher.getAllWorkspaces();
   }
 
-  function updateNeedsInputBadge() {
-    let count = 0;
-    for (const ws of getAllWorkspaces()) {
-      for (const tracked of ws.getTrackedAgents().values()) {
-        if (tracked.info.status === 'needs-input') count++;
-      }
-    }
-    projectSidebar.updateNeedsInputCount(count);
-  }
-
   function findAgentInfo(agentId: string) {
     for (const ws of getAllWorkspaces()) {
       const tracked = ws.getTrackedAgents();
@@ -1130,7 +1261,7 @@ function main(): void {
             const project = projects.find((p) => p.id === ws.projectId);
             if (project) {
               workspaceSwitcher.switchTo(project).then(() => {
-                projectSidebar.setActiveProject(ws.projectId);
+                store.setActiveProject(ws.projectId);
                 ws.focusTerminal(entry.info.sessionId);
               });
             }
@@ -1266,7 +1397,7 @@ function main(): void {
     const success = await workspace.applyPreset(preset);
     if (success) {
       const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info);
-      projectSidebar.updateAgents(workspace.projectId, agents);
+      store.updateAgents(workspace.projectId, agents);
     }
   }
 
@@ -1275,7 +1406,7 @@ function main(): void {
     if (!workspace) return;
     await workspace.spawnAgent(type, direction);
     const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info);
-    projectSidebar.updateAgents(workspace.projectId, agents);
+    store.updateAgents(workspace.projectId, agents);
   }
 
   function closeFocused(): void {
@@ -1308,7 +1439,7 @@ function main(): void {
   async function refreshProjectList(): Promise<void> {
     try {
       const projects = await window.api.project.list();
-      projectSidebar.setProjects(projects);
+      store.setProjects(projects);
       workspaceSwitcher.updateProjectNames(projects);
     } catch (error) {
       console.error('[Main] Failed to refresh project list:', error);
@@ -1355,12 +1486,25 @@ function main(): void {
 
   // Initialize
   initializeFromState(workspaceSwitcher, projectSidebar, refreshProjectList).then(() => {
-    // Restore sidebar collapsed state after initialization
-    window.api.state.load().then((state) => {
+    // Restore sidebar collapsed state and auto-hide setting
+    Promise.all([
+      window.api.state.load().catch(() => null),
+      window.api.settings.load().catch(() => ({})),
+    ]).then(([state, settings]) => {
       if (state?.sidebarCollapsed) {
         projectSidebar.setCollapsed(true);
       }
-    }).catch(() => {});
+      // Apply auto-hide from persisted settings (authoritative source)
+      if (typeof settings.sidebarAutoHide === 'boolean') {
+        sidebarAutoHide = settings.sidebarAutoHide;
+      }
+      projectSidebar.setAutoHide(sidebarAutoHide);
+      // Sync command palette label
+      commandPalette.updateLabel(
+        'toggle-sidebar-auto-hide',
+        sidebarAutoHide ? 'Sidebar: Disable Auto-Hide' : 'Sidebar: Enable Auto-Hide',
+      );
+    });
   });
 
   // Periodic auto-save
@@ -1377,7 +1521,7 @@ function main(): void {
 
 async function initializeFromState(
   workspaceSwitcher: WorkspaceSwitcher,
-  projectSidebar: ProjectSidebar,
+  _projectSidebar: ProjectSidebar,
   refreshProjectList: () => Promise<void>,
 ): Promise<void> {
   try {
@@ -1393,7 +1537,7 @@ async function initializeFromState(
         const workspace = workspaceSwitcher.getWorkspace(activeProject.id);
         if (workspace) {
           const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info);
-          projectSidebar.updateAgents(activeProject.id, agents);
+          store.updateAgents(activeProject.id, agents);
         }
         return;
       }
@@ -1405,7 +1549,7 @@ async function initializeFromState(
       const workspace = workspaceSwitcher.getWorkspace(projects[0].id);
       if (workspace) {
         const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info);
-        projectSidebar.updateAgents(projects[0].id, agents);
+        store.updateAgents(projects[0].id, agents);
       }
     }
   } catch (error) {

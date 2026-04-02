@@ -1,0 +1,284 @@
+/* ============================================
+   Tab Bar — replaces title bar at window top
+   ============================================ */
+
+/* --- Container --- */
+.project-tab-bar {
+  height: 36px;
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  -webkit-app-region: drag;
+  user-select: none;
+  flex-shrink: 0;
+  gap: 0;
+}
+
+body.platform-darwin .project-tab-bar {
+  padding-left: 78px;
+}
+
+/* --- Tab --- */
+.tab-bar-tab {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 var(--space-3);
+  gap: var(--space-2);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  border-bottom: 2px solid transparent;
+  max-width: 200px;
+  min-width: 80px;
+  background: transparent;
+  color: var(--fg-dim);
+  font-weight: 400;
+  transition: background var(--transition-fast);
+  position: relative;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.tab-bar-tab.active {
+  background: var(--bg);
+  color: var(--fg);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+.tab-bar-tab:hover:not(.active) {
+  background: var(--surface-hover);
+}
+
+.tab-bar-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* --- Tab internals --- */
+.tab-avatar-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.tab-name {
+  font-size: var(--font-sm);
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.tab-badge {
+  font-size: var(--font-xs);
+  font-weight: 600;
+  min-width: 16px;
+  text-align: center;
+  color: var(--fg-dim);
+  flex-shrink: 0;
+}
+
+.tab-bar-tab.active .tab-badge {
+  color: var(--fg);
+}
+
+/* --- Close button --- */
+.tab-close {
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: none;
+  border-radius: 4px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast);
+  -webkit-app-region: no-drag;
+  font-size: 12px;
+}
+
+.tab-bar-tab.active .tab-close,
+.tab-bar-tab:hover .tab-close {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  background: var(--surface-hover);
+  color: var(--fg);
+}
+
+.tab-close:disabled {
+  opacity: 0.3 !important;
+  cursor: default;
+}
+
+/* --- Notification dot --- */
+.tab-notify-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  background: var(--warning);
+  border-radius: 50%;
+  animation: pulse-input 1s ease-in-out infinite;
+}
+
+/* --- Tab scroll container --- */
+.tab-bar-tabs {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  overflow: hidden;
+  flex: 0 1 auto;
+}
+
+/* --- Preview tab --- */
+.tab-bar-preview {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 var(--space-2);
+  gap: var(--space-1);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: var(--font-xs);
+  transition: background var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.tab-bar-preview.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+.tab-bar-preview:hover:not(.active) {
+  background: var(--surface-hover);
+}
+
+/* --- Add button --- */
+.tab-bar-add {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  border-radius: 4px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: no-drag;
+  font-size: 16px;
+  flex-shrink: 0;
+  margin: 0 var(--space-1);
+}
+
+.tab-bar-add:hover {
+  background: var(--surface-hover);
+  color: var(--fg);
+}
+
+/* --- Drag region --- */
+.tab-bar-drag-region {
+  flex: 1;
+  height: 100%;
+  -webkit-app-region: drag;
+  min-width: 40px;
+}
+
+/* --- Overflow button --- */
+.tab-bar-overflow {
+  border: none;
+  background: none;
+  border-radius: 4px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: no-drag;
+  font-size: var(--font-xs);
+  padding: 0 var(--space-2);
+}
+
+.tab-bar-overflow:hover {
+  background: var(--surface-hover);
+  color: var(--fg);
+}
+
+/* --- Overflow menu --- */
+.tab-bar-overflow-menu {
+  position: fixed;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-1) 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  min-width: 200px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.tab-bar-overflow-item {
+  display: flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  gap: var(--space-2);
+  cursor: pointer;
+  color: var(--fg-dim);
+  font-size: var(--font-sm);
+}
+
+.tab-bar-overflow-item:hover {
+  background: var(--surface-hover);
+  color: var(--fg);
+}
+
+/* --- Context menu --- */
+.tab-bar-context-menu {
+  position: fixed;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-1) 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  min-width: 200px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.tab-bar-context-item {
+  display: flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  gap: var(--space-2);
+  cursor: pointer;
+  color: var(--fg-dim);
+  font-size: var(--font-sm);
+}
+
+.tab-bar-context-item:hover {
+  background: var(--surface-hover);
+  color: var(--fg);
+}
+
+.tab-bar-context-separator {
+  height: 1px;
+  background: var(--border);
+  margin: var(--space-1) 0;
+}

@@ -63,11 +63,18 @@ export class ProjectSidebar {
   private savedExpandedWidth = 0;
   private previewBtn: HTMLElement | null = null;
   private previewBadge: HTMLElement | null = null;
+  private autoHideEnabled = false;
+  private autoHideTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly AUTO_HIDE_DELAY_MS = 3000;
 
   constructor(container: HTMLElement, callbacks: ProjectSidebarCallbacks) {
     this.container = container;
     this.callbacks = callbacks;
     this.render();
+
+    // Reset auto-hide timer when user interacts with the sidebar
+    this.container.addEventListener('mouseenter', () => this.clearAutoHideTimer());
+    this.container.addEventListener('mouseleave', () => this.startAutoHideTimer());
   }
 
   isCollapsed(): boolean {
@@ -84,11 +91,13 @@ export class ProjectSidebar {
     // Clear inline width so CSS class controls sizing
     if (this.collapsed) {
       this.container.style.width = '';
+      this.clearAutoHideTimer();
     } else {
       // Restore saved width when expanding
       if (this.savedExpandedWidth > 0) {
         this.container.style.width = `${this.savedExpandedWidth}px`;
       }
+      this.startAutoHideTimer();
     }
     this.updateRailVisibility();
   }
@@ -104,10 +113,44 @@ export class ProjectSidebar {
     this.container.classList.toggle('collapsed', this.collapsed);
     if (this.collapsed) {
       this.container.style.width = '';
-    } else if (this.savedExpandedWidth > 0) {
-      this.container.style.width = `${this.savedExpandedWidth}px`;
+      this.clearAutoHideTimer();
+    } else {
+      if (this.savedExpandedWidth > 0) {
+        this.container.style.width = `${this.savedExpandedWidth}px`;
+      }
+      this.startAutoHideTimer();
     }
     this.updateRailVisibility();
+  }
+
+  setAutoHide(enabled: boolean): void {
+    this.autoHideEnabled = enabled;
+    if (enabled) {
+      this.startAutoHideTimer();
+    } else {
+      this.clearAutoHideTimer();
+    }
+  }
+
+  isAutoHideEnabled(): boolean {
+    return this.autoHideEnabled;
+  }
+
+  private startAutoHideTimer(): void {
+    if (!this.autoHideEnabled || this.collapsed) return;
+    this.clearAutoHideTimer();
+    this.autoHideTimer = setTimeout(() => {
+      if (!this.collapsed) {
+        this.setCollapsed(true);
+      }
+    }, ProjectSidebar.AUTO_HIDE_DELAY_MS);
+  }
+
+  private clearAutoHideTimer(): void {
+    if (this.autoHideTimer !== null) {
+      clearTimeout(this.autoHideTimer);
+      this.autoHideTimer = null;
+    }
   }
 
   private updateRailVisibility(): void {
