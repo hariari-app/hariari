@@ -17,6 +17,11 @@
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+.terminal-leaf.focused > .agent-status-bar:not(.needs-input):not(.status-bar-error):not(.status-bar-complete) {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-deep));
+  border-bottom-color: var(--accent);
+}
+
 .terminal-wrapper {
   flex: 1;
   position: relative;
@@ -431,6 +436,27 @@
   background: color-mix(in srgb, var(--accent) 20%, transparent);
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.sidebar-toolbar-btn.sidebar-preview-btn {
+  position: relative;
+}
+
+.sidebar-preview-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--warning);
+  color: var(--bg-deep);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  padding: 0 4px;
+  pointer-events: none;
 }
 
 /* --- Sidebar section header --- */

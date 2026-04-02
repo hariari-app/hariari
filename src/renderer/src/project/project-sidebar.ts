@@ -62,6 +62,7 @@ export class ProjectSidebar {
   private collapsed = false;
   private savedExpandedWidth = 0;
   private previewBtn: HTMLElement | null = null;
+  private previewBadge: HTMLElement | null = null;
 
   constructor(container: HTMLElement, callbacks: ProjectSidebarCallbacks) {
     this.container = container;
@@ -267,6 +268,17 @@ export class ProjectSidebar {
     }
   }
 
+  updateNeedsInputCount(count: number): void {
+    if (!this.previewBadge) return;
+    if (count <= 0) {
+      this.previewBadge.style.display = 'none';
+      this.previewBadge.textContent = '';
+    } else {
+      this.previewBadge.style.display = '';
+      this.previewBadge.textContent = count > 9 ? '9+' : String(count);
+    }
+  }
+
   setActiveProject(projectId: string | null): void {
     const previousId = this.activeProjectId;
     this.activeProjectId = projectId;
@@ -445,7 +457,12 @@ export class ProjectSidebar {
       e.stopPropagation();
       this.callbacks.onToggleSinglePreview?.();
     });
+    const previewBadge = document.createElement('span');
+    previewBadge.className = 'sidebar-preview-badge';
+    previewBadge.style.display = 'none';
+    previewBtn.appendChild(previewBadge);
     this.previewBtn = previewBtn;
+    this.previewBadge = previewBadge;
 
     toolbar.appendChild(previewBtn);
     toolbar.appendChild(launchBtn);

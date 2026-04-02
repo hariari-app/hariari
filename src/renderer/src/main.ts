@@ -437,6 +437,7 @@ function main(): void {
   const unsubStatus = window.api.agent.onStatus((event) => {
     workspaceSwitcher.handleAgentStatus(event.agentId, event.status);
     projectSidebar.updateAgentStatus(event.agentId, event.status);
+    updateNeedsInputBadge();
 
     // Announce status change for screen readers
     const statusInfo = findAgentInfo(event.agentId);
@@ -486,6 +487,7 @@ function main(): void {
     workspaceSwitcher.handleAgentExit(event.agentId, event.exitCode);
     const exitStatus = event.exitCode === 0 ? 'complete' : 'error';
     projectSidebar.updateAgentStatus(event.agentId, exitStatus as any);
+    updateNeedsInputBadge();
 
     const config = getNotificationConfig();
 
@@ -768,12 +770,7 @@ function main(): void {
   // Voice input
   // Voice command router — detects "vibeide <command>" vs terminal text
   const voiceRouter = new VoiceRouter((text) => {
-    const workspace = workspaceSwitcher.getActiveWorkspace();
-    if (!workspace) return;
-    const leafId = workspace.layoutManager.getFocusedLeafId();
-    if (!leafId) return;
-    const leafEl = document.querySelector(`[data-leaf-id="${leafId}"]`) as HTMLElement | null;
-    const sessionId = leafEl?.dataset.sessionId ?? null;
+    const sessionId = workspaceSwitcher.getFocusedSessionId();
     if (sessionId) {
       window.api.pty.write({ sessionId, data: text });
     }
@@ -1098,6 +1095,16 @@ function main(): void {
 
   function getAllWorkspaces() {
     return workspaceSwitcher.getAllWorkspaces();
+  }
+
+  function updateNeedsInputBadge() {
+    let count = 0;
+    for (const ws of getAllWorkspaces()) {
+      for (const tracked of ws.getTrackedAgents().values()) {
+        if (tracked.info.status === 'needs-input') count++;
+      }
+    }
+    projectSidebar.updateNeedsInputCount(count);
   }
 
   function findAgentInfo(agentId: string) {

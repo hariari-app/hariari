@@ -3,12 +3,16 @@ import type { LayoutNode, LeafNode, SplitNode } from './layout-types';
 type TerminalCreateCallback = (sessionId: string, container: HTMLElement) => void;
 type TerminalRemoveCallback = (sessionId: string) => void;
 type FitAllCallback = () => void;
+type FocusChangeCallback = (sessionId: string) => void;
+type LeafDoubleClickCallback = (sessionId: string) => void;
 
 export class LayoutManager {
   private readonly rootElement: HTMLElement;
   private readonly onTerminalCreate: TerminalCreateCallback;
   private readonly onTerminalRemove: TerminalRemoveCallback;
   private onFitAll: FitAllCallback = () => {};
+  private onFocusChange: FocusChangeCallback | null = null;
+  private onLeafDoubleClick: LeafDoubleClickCallback | null = null;
   private layout: LayoutNode | null = null;
   private focusedLeafId: string | null = null;
   private readonly activeSessionIds = new Set<string>();
@@ -34,6 +38,14 @@ export class LayoutManager {
     this.onFitAll = callback;
   }
 
+  setFocusChangeCallback(callback: FocusChangeCallback): void {
+    this.onFocusChange = callback;
+  }
+
+  setLeafDoubleClickCallback(callback: LeafDoubleClickCallback): void {
+    this.onLeafDoubleClick = callback;
+  }
+
   getLayoutTree(): LayoutNode | null {
     return this.layout;
   }
@@ -46,6 +58,12 @@ export class LayoutManager {
 
   getFocusedLeafId(): string | null {
     return this.focusedLeafId;
+  }
+
+  getFocusedSessionId(): string | null {
+    if (!this.focusedLeafId || !this.layout) return null;
+    const leaf = this.findLeafById(this.layout, this.focusedLeafId);
+    return leaf?.sessionId ?? null;
   }
 
   setRoot(sessionId: string): void {
@@ -114,6 +132,15 @@ export class LayoutManager {
     if (el) {
       el.classList.add('focused');
     }
+
+    // Notify listener so the actual terminal can receive keyboard focus.
+    // Look up sessionId from the layout tree (authoritative), not the DOM.
+    if (this.onFocusChange && this.layout) {
+      const leaf = this.findLeafById(this.layout, leafId);
+      if (leaf) {
+        this.onFocusChange(leaf.sessionId);
+      }
+    }
   }
 
   findLeafBySessionId(sessionId: string): LeafNode | null {
@@ -146,6 +173,14 @@ export class LayoutManager {
 
       container.addEventListener('mousedown', () => {
         this.focusLeaf(node.id);
+      });
+
+      container.addEventListener('dblclick', (e) => {
+        const target = e.target as HTMLElement;
+        // Only trigger on the status bar header, not terminal canvas or buttons
+        if (target.closest('button')) return;
+        if (!target.closest('.agent-status-bar')) return;
+        this.onLeafDoubleClick?.(node.sessionId);
       });
 
       // Only create a terminal if this session hasn't been created yet
@@ -377,6 +412,8 @@ export class LayoutManager {
     }
     this.layout = null;
     this.focusedLeafId = null;
+    this.onFocusChange = null;
+    this.onLeafDoubleClick = null;
     this.activeSessionIds.clear();
   }
 
@@ -390,6 +427,31 @@ export class LayoutManager {
     this.activeSessionIds.clear();
   }
 
+  /**
+   * Navigate focus to an adjacent pane in the given direction.
+   * Uses the tree structure: left/up finds the previous leaf, right/down finds the next.
+   */
+  focusDirection(direction: 'left' | 'right' | 'up' | 'down'): void {
+    if (!this.layout || !this.focusedLeafId) return;
+    const leaves = this.collectLeaves(this.layout);
+    if (leaves.length <= 1) return;
+
+    const currentIdx = leaves.findIndex((l) => l.id === this.focusedLeafId);
+    if (currentIdx === -1) return;
+
+    const delta = direction === 'left' || direction === 'up' ? -1 : 1;
+    const nextIdx = (currentIdx + delta + leaves.length) % leaves.length;
+    this.focusLeaf(leaves[nextIdx].id);
+  }
+
+  private collectLeaves(node: LayoutNode): LeafNode[] {
+    if (node.type === 'leaf') return [node];
+    return [
+      ...this.collectLeaves(node.children[0]),
+      ...this.collectLeaves(node.children[1]),
+    ];
+  }
+
   private findLeafInTree(node: LayoutNode, sessionId: string): LeafNode | null {
     if (node.type === 'leaf') {
       return node.sessionId === sessionId ? node : null;
@@ -397,6 +459,16 @@ export class LayoutManager {
     return (
       this.findLeafInTree(node.children[0], sessionId) ??
       this.findLeafInTree(node.children[1], sessionId)
+    );
+  }
+
+  private findLeafById(node: LayoutNode, leafId: string): LeafNode | null {
+    if (node.type === 'leaf') {
+      return node.id === leafId ? node : null;
+    }
+    return (
+      this.findLeafById(node.children[0], leafId) ??
+      this.findLeafById(node.children[1], leafId)
     );
   }
 }

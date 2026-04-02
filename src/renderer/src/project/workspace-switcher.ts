@@ -32,6 +32,15 @@ export class WorkspaceSwitcher {
           }
         }
       },
+      (sessionId) => {
+        // Focus the xterm terminal so it receives keyboard input
+        for (const ws of this.workspaces.values()) {
+          if (ws.terminalManager.getTerminal(sessionId)) {
+            ws.terminalManager.focusTerminal(sessionId);
+            return;
+          }
+        }
+      },
       () => {
         // fitAll across all workspace terminal managers
         for (const ws of this.workspaces.values()) {
@@ -54,6 +63,16 @@ export class WorkspaceSwitcher {
   getActiveWorkspace(): ProjectWorkspace | null {
     if (!this.activeProjectId) return null;
     return this.workspaces.get(this.activeProjectId) ?? null;
+  }
+
+  /** Returns the focused terminal's sessionId in any mode (normal or Single Preview). */
+  getFocusedSessionId(): string | null {
+    if (this.inSinglePreview) {
+      return this.singlePreview.getFocusedSessionId();
+    }
+    const workspace = this.getActiveWorkspace();
+    if (!workspace) return null;
+    return workspace.layoutManager.getFocusedSessionId();
   }
 
   getWorkspace(projectId: string): ProjectWorkspace | undefined {
@@ -176,16 +195,20 @@ export class WorkspaceSwitcher {
 
     this.inSinglePreview = false;
 
-    // Set up onExit callback so terminals are reattached to the project
-    // workspace BEFORE the preview DOM is cleared (prevents element orphaning)
+    // Reattach terminals for ALL workspaces — not just the last active one.
+    // During preview, terminals from every project are moved into the preview
+    // container. We must re-render every workspace's layout so xterm DOM
+    // elements move back to their project containers.
     this.singlePreview.setOnExit(() => {
+      for (const ws of this.workspaces.values()) {
+        ws.layoutManager.render();
+      }
+
       if (this.lastActiveProjectId) {
         const workspace = this.workspaces.get(this.lastActiveProjectId);
         if (workspace) {
           workspace.activate();
           this.activeProjectId = this.lastActiveProjectId;
-          workspace.layoutManager.render();
-          // Force fit after reattach — xterm needs a frame to measure its container
           requestAnimationFrame(() => {
             workspace.terminalManager.fitAll();
           });
@@ -223,6 +246,21 @@ export class WorkspaceSwitcher {
         }
       }
     }
+    // Sort: needs-input first, then by project name, then by agent type
+    const statusPriority: Record<string, number> = {
+      'needs-input': 0,
+      'running': 1,
+      'starting': 2,
+      'idle': 3,
+    };
+    agents.sort((a, b) => {
+      const pa = statusPriority[a.agentInfo.status] ?? 9;
+      const pb = statusPriority[b.agentInfo.status] ?? 9;
+      if (pa !== pb) return pa - pb;
+      const nameCompare = a.projectName.localeCompare(b.projectName);
+      if (nameCompare !== 0) return nameCompare;
+      return a.agentInfo.config.type.localeCompare(b.agentInfo.config.type);
+    });
     return agents;
   }
 

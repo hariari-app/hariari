@@ -6,6 +6,7 @@ import type { AgentInfo } from '../../../shared/agent-types';
 
 type AgentLookup = () => ReadonlyArray<PreviewAgent>;
 type TerminalCreateFn = (sessionId: string, container: HTMLElement) => void;
+type TerminalFocusFn = (sessionId: string) => void;
 type FitAllFn = () => void;
 type OnExitFn = () => void;
 
@@ -20,6 +21,7 @@ export class SinglePreview {
   private readonly layoutManager: LayoutManager;
   private readonly getPreviewAgents: AgentLookup;
   private readonly createTerminal: TerminalCreateFn;
+  private readonly focusTerminal: TerminalFocusFn;
   private readonly fitAll: FitAllFn;
   private active = false;
   private currentAgents: ReadonlyArray<PreviewAgent> = [];
@@ -29,13 +31,18 @@ export class SinglePreview {
   private gridPickerEl: HTMLElement | null = null;
   private gridDropdownEl: HTMLElement | null = null;
   private dropdownAbort: AbortController | null = null;
+  private keyNavHandler: ((e: KeyboardEvent) => void) | null = null;
+  private maximizedSessionId: string | null = null;
+  private savedGridBeforeMaximize: GridLayout | null = null;
 
   constructor(
     createTerminal: TerminalCreateFn,
+    focusTerminal: TerminalFocusFn,
     fitAll: FitAllFn,
     getPreviewAgents: AgentLookup,
   ) {
     this.createTerminal = createTerminal;
+    this.focusTerminal = focusTerminal;
     this.fitAll = fitAll;
     this.getPreviewAgents = getPreviewAgents;
 
@@ -74,6 +81,12 @@ export class SinglePreview {
       },
     );
     this.layoutManager.setFitAllCallback(() => this.fitAll());
+    this.layoutManager.setFocusChangeCallback((sessionId) => {
+      this.focusTerminal(sessionId);
+    });
+    this.layoutManager.setLeafDoubleClickCallback((sessionId) => {
+      this.toggleMaximize(sessionId);
+    });
   }
 
   setOnExit(fn: OnExitFn): void {
@@ -82,6 +95,10 @@ export class SinglePreview {
 
   isActive(): boolean {
     return this.active;
+  }
+
+  getFocusedSessionId(): string | null {
+    return this.layoutManager.getFocusedSessionId();
   }
 
   enter(): void {
@@ -102,10 +119,13 @@ export class SinglePreview {
     this.applyGrid();
     this.renderGridPicker();
     this.containerEl.style.display = '';
+    this.focusFirstTerminal();
+    this.installKeyNav();
   }
 
   exit(): void {
     this.active = false;
+    this.removeKeyNav();
     this.disposeStatusBars();
     this.removeGridPicker();
     this.onExit();
@@ -117,16 +137,38 @@ export class SinglePreview {
 
   refresh(): void {
     if (!this.active) return;
+    // Preserve the user's focused pane across the rebuild
+    const previousSessionId = this.layoutManager.getFocusedSessionId();
     this.disposeStatusBars();
     const agents = this.getPreviewAgents();
     this.currentAgents = agents;
 
     if (agents.length === 0) {
+      this.maximizedSessionId = null;
+      this.savedGridBeforeMaximize = null;
+      this.removeKeyNav();
       this.removeGridPicker();
       this.containerEl.replaceChildren();
       this.layoutManager.reset();
       this.renderEmptyState();
       return;
+    }
+
+    // If maximized, check if the maximized session is still active
+    if (this.maximizedSessionId) {
+      const stillExists = agents.some(
+        (a) => a.agentInfo.sessionId === this.maximizedSessionId,
+      );
+      if (stillExists) {
+        this.clearEmptyState();
+        this.layoutManager.reset();
+        this.maximizePane(this.maximizedSessionId, false);
+        return;
+      }
+      // Maximized session gone — restore to grid
+      this.maximizedSessionId = null;
+      this.currentGrid = this.savedGridBeforeMaximize;
+      this.savedGridBeforeMaximize = null;
     }
 
     this.clearEmptyState();
@@ -137,6 +179,7 @@ export class SinglePreview {
     this.layoutManager.reset();
     this.applyGrid();
     this.renderGridPicker();
+    this.restoreFocus(previousSessionId);
   }
 
   private applyGrid(): void {
@@ -252,12 +295,118 @@ export class SinglePreview {
     this.containerEl.appendChild(empty);
   }
 
+  private toggleMaximize(sessionId: string): void {
+    if (this.maximizedSessionId) {
+      this.restoreFromMaximize();
+    } else {
+      this.maximizePane(sessionId);
+    }
+  }
+
+  private maximizePane(sessionId: string, saveGrid = true): void {
+    if (saveGrid) {
+      this.savedGridBeforeMaximize = this.currentGrid;
+    }
+    this.maximizedSessionId = sessionId;
+    this.disposeStatusBars();
+    this.layoutManager.reset();
+    // Build a single-leaf layout for just this session
+    const tree: LayoutNode = {
+      type: 'leaf',
+      id: crypto.randomUUID(),
+      sessionId,
+    };
+    this.layoutManager.restoreLayout(tree);
+    this.layoutManager.equalizeAll();
+    this.removeGridPicker();
+    // Focus the maximized terminal
+    const leaf = this.layoutManager.findLeafBySessionId(sessionId);
+    if (leaf) this.layoutManager.focusLeaf(leaf.id);
+  }
+
+  private restoreFromMaximize(): void {
+    const previousSessionId = this.maximizedSessionId;
+    this.maximizedSessionId = null;
+    this.currentGrid = this.savedGridBeforeMaximize;
+    this.savedGridBeforeMaximize = null;
+    this.disposeStatusBars();
+    this.layoutManager.reset();
+    this.applyGrid();
+    this.renderGridPicker();
+    this.restoreFocus(previousSessionId);
+  }
+
+  isMaximized(): boolean {
+    return this.maximizedSessionId !== null;
+  }
+
+  private installKeyNav(): void {
+    this.removeKeyNav();
+    this.keyNavHandler = (e: KeyboardEvent) => {
+      // Escape restores from maximized pane — but only if not typed inside the terminal
+      if (e.key === 'Escape' && this.maximizedSessionId) {
+        const inTerminal = (e.target as HTMLElement).closest?.('.terminal-wrapper');
+        if (!inTerminal) {
+          e.preventDefault();
+          e.stopPropagation();
+          this.restoreFromMaximize();
+          return;
+        }
+      }
+      if (!e.ctrlKey || e.shiftKey || e.altKey) return;
+      const dirMap: Record<string, 'left' | 'right' | 'up' | 'down'> = {
+        ArrowLeft: 'left',
+        ArrowRight: 'right',
+        ArrowUp: 'up',
+        ArrowDown: 'down',
+      };
+      const direction = dirMap[e.key];
+      if (!direction) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.layoutManager.focusDirection(direction);
+    };
+    document.addEventListener('keydown', this.keyNavHandler, true);
+  }
+
+  private removeKeyNav(): void {
+    if (this.keyNavHandler) {
+      document.removeEventListener('keydown', this.keyNavHandler, true);
+      this.keyNavHandler = null;
+    }
+  }
+
+  private restoreFocus(sessionId: string | null): void {
+    if (!sessionId) return;
+    const leaf = this.layoutManager.findLeafBySessionId(sessionId);
+    if (leaf) {
+      this.layoutManager.focusLeaf(leaf.id);
+    }
+  }
+
+  private focusFirstTerminal(): void {
+    if (this.currentAgents.length === 0) return;
+    const firstSessionId = this.currentAgents[0].agentInfo.sessionId;
+    // Double-rAF: first frame lets layout render() complete (which schedules
+    // its own rAF for fitAll), second frame fires after terminals are sized.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!this.active) return;
+        const leaf = this.layoutManager.findLeafBySessionId(firstSessionId);
+        if (leaf) {
+          this.layoutManager.focusLeaf(leaf.id);
+        }
+      });
+    });
+  }
+
   private clearEmptyState(): void {
     const empty = this.containerEl.querySelector('.single-preview-empty');
     if (empty) empty.remove();
   }
 
   dispose(): void {
+    this.removeKeyNav();
     this.disposeStatusBars();
     this.removeGridPicker();
     this.layoutManager.dispose();
