@@ -17,6 +17,9 @@ Run Claude, Gemini, Aider, and 9 more AI agents side by side — in split panes,
 - **Source control** — commit graph, changes list, stage/unstage/discard
 - **Command palette** — fuzzy search, context-aware filtering, agent-specific commands
 - **Launch Workspace** — guided setup: pick project, choose agents, select layout, launch
+- **Single Preview** — unified view of all active agents across all projects (`Ctrl+Shift+A`), with grid layout picker
+- **Auto-arrange** — terminal panes automatically equalize when agents are added or closed
+- **Clipboard screenshot paste** — `Ctrl+Shift+V` pastes screenshot as temp file path (works with Claude Code)
 - **Copy-paste** — smart Ctrl+C (copies if selected, SIGINT if not), right-click context menu
 - **12 themes** — 9 dark + 3 light (Tokyo Night, Dracula, Nord, Solarized, GitHub, Catppuccin, etc.)
 - **Session persistence** — layout, agents, and scrollback restored on relaunch
@@ -83,9 +86,10 @@ On macOS, `Ctrl` is replaced by `Cmd` (`⌘`).
 | `Ctrl+Shift+N` | New shell terminal |
 | `Ctrl+Shift+D` | Split pane vertically |
 | `Ctrl+C` | Copy selected text / SIGINT if no selection |
-| `Ctrl+V` | Paste from clipboard |
+| `Ctrl+V` | Paste text from clipboard |
 | `Ctrl+Shift+C` | Always copy selected text |
-| `Ctrl+Shift+V` | Always paste |
+| `Ctrl+Shift+V` | Paste (image-aware — saves screenshot as temp file) |
+| `Ctrl+Shift+A` | Toggle Single Preview (all agents across projects) |
 | `Ctrl+P` | Quick open file |
 | `Ctrl+Shift+E` | Open file viewer |
 | `Ctrl+Shift+F2` | File viewer in new window |
