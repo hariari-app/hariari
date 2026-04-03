@@ -2,6 +2,22 @@
 
 All notable changes to VibeIDE are documented in this file.
 
+## [0.5.0] — 2026-04-03
+
+### Added
+
+- **Dedicated Editor Window** — a separate OS-level window for file browsing and source control, opening alongside the terminal without blocking agent interaction. Press `Ctrl+Shift+E` or click the folder button on any agent pane.
+- **Full Git Source Control** — the editor window includes a complete SCM panel with staging, unstaging, commit (with amend and commit-and-push), pull, push, ahead/behind indicator, and commit graph visualization.
+- **File Browser** — lazy-loaded directory tree with syntax-highlighted file viewing and editing via CodeMirror 6, supporting 13+ languages.
+- **Folder Button on Agent Panes** — every agent terminal pane (including Single Preview mode) now has a 📂 button that opens the editor window for that project.
+- **Singleton Window** — re-pressing the shortcut or clicking the folder button focuses the existing editor window instead of creating duplicates.
+- **Shared Language Extensions** — extracted `getLanguageExtension()` into a shared module for consistent syntax highlighting across the file viewer and editor window.
+
+### Changed
+
+- **Split Horizontal keybinding** — default changed from `Ctrl+Shift+E` (now used by Editor Window) to `Ctrl+Shift+R`.
+- **File Viewer overlay** — demoted to no default keybinding; still accessible via command palette as "Open File Viewer (Overlay)".
+
 ## [0.2.0] — 2026-04-02
 
 ### Added
