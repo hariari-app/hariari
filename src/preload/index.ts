@@ -163,13 +163,16 @@ contextBridge.exposeInMainWorld('api', {
     check: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CHECK),
     download: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_DOWNLOAD),
     install: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_INSTALL),
-    onStatus: (callback: (status: { state: string; version?: string; progress?: number; error?: string }) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, status: { state: string; version?: string; progress?: number; error?: string }) =>
+    onStatus: (callback: (status: { state: string; version?: string; progress?: number; error?: string; downloadUrl?: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: { state: string; version?: string; progress?: number; error?: string; downloadUrl?: string }) =>
         callback(status);
       ipcRenderer.on(IPC_CHANNELS.UPDATE_STATUS, handler);
       return () => {
         ipcRenderer.removeListener(IPC_CHANNELS.UPDATE_STATUS, handler);
       };
     },
+  },
+  shell: {
+    openExternal: (url: string) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_EXTERNAL, url),
   },
 });

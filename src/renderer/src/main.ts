@@ -582,6 +582,20 @@ function main(): void {
           onAction: () => window.api.update.install(),
         });
         break;
+      case 'manual-available':
+        updateToastId = toastManager.showGeneric({
+          title: 'Update Available',
+          message: `Version ${status.version ?? ''} is available. Download from GitHub to update.`,
+          color: 'var(--accent)',
+          persistent: true,
+          actionLabel: 'Download',
+          onAction: () => {
+            if (status.downloadUrl) {
+              window.api.shell.openExternal(status.downloadUrl);
+            }
+          },
+        });
+        break;
       case 'error':
         // Only show error for manual checks, not scheduled ones
         if (status.error) {
@@ -1099,9 +1113,7 @@ function main(): void {
   });
   commandPalette.register({
     id: 'check-for-updates', category: 'General',
-    label: window.api.platform === 'linux'
-      ? 'Check for Updates (opens browser)'
-      : 'Check for Updates',
+    label: 'Check for Updates',
     action: () => {
       window.api.update.check();
       toastManager.showGeneric({

@@ -78,6 +78,7 @@ export const IPC_CHANNELS = {
   UPDATE_DOWNLOAD: 'update:download',
   UPDATE_INSTALL: 'update:install',
   UPDATE_STATUS: 'update:status',
+  OPEN_EXTERNAL: 'shell:open-external',
 } as const;
 
 export const FRAME_COALESCE_MS = 16;

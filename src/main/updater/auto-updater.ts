@@ -8,6 +8,7 @@ export type UpdateState =
   | 'not-available'
   | 'downloading'
   | 'downloaded'
+  | 'manual-available'
   | 'error';
 
 export interface UpdateStatus {
@@ -15,6 +16,12 @@ export interface UpdateStatus {
   readonly version?: string;
   readonly progress?: number;
   readonly error?: string;
+  readonly downloadUrl?: string;
+}
+
+/** On Linux, auto-update only works for AppImage. Detect non-AppImage installs. */
+function isLinuxNonAppImage(): boolean {
+  return process.platform === 'linux' && !process.env.APPIMAGE;
 }
 
 const CHECK_DELAY_MS = 15_000;
@@ -69,9 +76,12 @@ export class AutoUpdateManager {
     autoUpdater.removeAllListeners();
   }
 
+  private readonly manualUpdateOnly = isLinuxNonAppImage();
+
   private configureUpdater(): void {
-    autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
+    // Non-AppImage Linux installs can't auto-update — only check for new versions
+    autoUpdater.autoDownload = !this.manualUpdateOnly;
+    autoUpdater.autoInstallOnAppQuit = !this.manualUpdateOnly;
     autoUpdater.autoRunAppAfterInstall = true;
   }
 
@@ -81,6 +91,16 @@ export class AutoUpdateManager {
     });
 
     autoUpdater.on('update-available', (info) => {
+      if (this.manualUpdateOnly) {
+        // Non-AppImage Linux: direct user to download from GitHub
+        const downloadUrl = `https://github.com/vibeide-app/vibeide/releases/tag/v${info.version}`;
+        this.sendStatus({
+          state: 'manual-available',
+          version: info.version,
+          downloadUrl,
+        });
+        return;
+      }
       this.sendStatus({
         state: 'available',
         version: info.version,

@@ -111,6 +111,14 @@ earlyIpcMain.handle('window:zoom-reset', (event: { sender: unknown }) => {
   }
 });
 
+// Open external URL in the user's default browser
+earlyIpcMain.handle('shell:open-external', (_event: unknown, url: string) => {
+  // Only allow https URLs to prevent shell injection
+  if (typeof url !== 'string' || !url.startsWith('https://')) return;
+  const { shell } = require('electron');
+  shell.openExternal(url);
+});
+
 // Clipboard IPC — reliable clipboard access from renderer
 earlyIpcMain.handle('clipboard:read', () => {
   const { clipboard } = require('electron');
