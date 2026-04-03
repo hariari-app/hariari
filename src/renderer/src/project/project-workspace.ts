@@ -307,10 +307,22 @@ export class ProjectWorkspace {
   handleAgentExit(agentId: string, exitCode: number): void {
     const tracked = this.tracked.get(agentId);
     if (!tracked) return;
-    const exitStatus = exitCode === 0 ? 'complete' : 'error';
-    const updatedInfo: AgentInfo = { ...tracked.info, status: exitStatus };
+
+    // Clean exit: close the pane so remaining terminals reclaim the space
+    if (exitCode === 0) {
+      const leaf = this.layoutManager.findLeafBySessionId(tracked.info.sessionId);
+      if (leaf) {
+        this.layoutManager.closePane(leaf.id);
+      }
+      tracked.statusBar.dispose();
+      this.tracked.delete(agentId);
+      return;
+    }
+
+    // Non-zero exit: update status and keep the pane visible for restart prompt
+    const updatedInfo: AgentInfo = { ...tracked.info, status: 'error' };
     this.tracked.set(agentId, { ...tracked, info: updatedInfo });
-    tracked.statusBar.updateStatus(exitStatus);
+    tracked.statusBar.updateStatus('error');
   }
 
   hasAgent(agentId: string): boolean {
