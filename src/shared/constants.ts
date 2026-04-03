@@ -49,6 +49,7 @@ export const IPC_CHANNELS = {
   SKILLS_UNINSTALL: 'skills:uninstall',
   SKILLS_DETECT_LANGS: 'skills:detect-langs',
   WINDOW_POPOUT_FILE: 'window:popout-file',
+  WINDOW_POPOUT_EDITOR: 'window:popout-editor',
   ONBOARDING_DETECT_PROJECTS: 'onboarding:detect-projects',
   WORKTREE_DIFF: 'worktree:diff',
   WORKTREE_DIFF_FILE: 'worktree:diff-file',

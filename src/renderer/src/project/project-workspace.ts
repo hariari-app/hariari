@@ -102,6 +102,12 @@ export class ProjectWorkspace {
     this.containerEl.style.display = 'none';
   }
 
+  private openEditorWindow(): void {
+    window.api.window.popoutEditor(this.projectPath).catch((error) => {
+      console.error('[ProjectWorkspace] Failed to open editor window:', error);
+    });
+  }
+
   adoptAgents(agents: ReadonlyArray<AgentInfo>): void {
     for (const info of agents) {
       if (this.tracked.has(info.id)) continue;
@@ -109,6 +115,7 @@ export class ProjectWorkspace {
         onKill: () => this.killAgent(info.id),
         onSplitH: () => this.spawnAgent('shell', 'horizontal'),
         onSplitV: () => this.spawnAgent('shell', 'vertical'),
+        onOpenFiles: () => this.openEditorWindow(),
       });
       this.tracked.set(info.id, { info, statusBar });
 
@@ -169,6 +176,7 @@ export class ProjectWorkspace {
         onKill: () => this.killAgent(info.id),
         onSplitH: () => this.spawnAgent('shell', 'horizontal'),
         onSplitV: () => this.spawnAgent('shell', 'vertical'),
+        onOpenFiles: () => this.openEditorWindow(),
         onReview: () => this.reviewAgentWorktree(info.id, info.worktree?.branchName ?? ''),
         onMerge: () => this.mergeAgentWorktree(info.id),
         onDiscard: () => this.discardAgentWorktree(info.id),
@@ -238,6 +246,7 @@ export class ProjectWorkspace {
           onKill: () => this.killAgent(info.id),
           onSplitH: () => this.spawnAgent('shell', 'horizontal'),
           onSplitV: () => this.spawnAgent('shell', 'vertical'),
+          onOpenFiles: () => this.openEditorWindow(),
         });
         this.tracked.set(info.id, { info, statusBar });
         sessionIds.push(info.sessionId);
@@ -450,6 +459,7 @@ export class ProjectWorkspace {
           onKill: () => this.killAgent(info.id),
           onSplitH: () => this.spawnAgent('shell', 'horizontal'),
           onSplitV: () => this.spawnAgent('shell', 'vertical'),
+          onOpenFiles: () => this.openEditorWindow(),
         });
         this.tracked.set(info.id, { info, statusBar });
 

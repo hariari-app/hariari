@@ -71,6 +71,8 @@ contextBridge.exposeInMainWorld('api', {
     zoomReset: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_ZOOM_RESET),
     popoutFile: (projectPath: string, filePath?: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.WINDOW_POPOUT_FILE, { projectPath, filePath }),
+    popoutEditor: (projectPath: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.WINDOW_POPOUT_EDITOR, { projectPath }),
   },
   settings: {
     load: () => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_LOAD),

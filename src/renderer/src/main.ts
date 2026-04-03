@@ -4,6 +4,7 @@ import './styles/terminal.css';
 import './styles/tab-bar.css';
 import './styles/source-control.css';
 import './onboarding/onboarding.css';
+import './editor-window/editor-window.css';
 import { ProjectSidebar } from './project/project-sidebar';
 import { ProjectTabBar } from './project/project-tab-bar';
 import { ProjectStore, getNeedsInputCount } from './project/project-store';
@@ -43,7 +44,26 @@ function main(): void {
 
   // Check if this is a pop-out window
   const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.get('popout') === 'file-viewer') {
+  const popoutType = urlParams.get('popout');
+
+  if (popoutType === 'editor-window') {
+    const projectPath = urlParams.get('project') ?? '';
+    if (projectPath) {
+      import('./editor-window/editor-window-app')
+        .then(({ EditorWindowApp }) => {
+          document.body.classList.add('popout-mode');
+          const editorApp = new EditorWindowApp(appEl, projectPath);
+          return editorApp.init();
+        })
+        .catch((error) => {
+          console.error('[EditorWindow] Failed to initialize:', error);
+          appEl.textContent = 'Failed to load editor window.';
+        });
+      return;
+    }
+  }
+
+  if (popoutType === 'file-viewer') {
     const projectPath = urlParams.get('project') ?? '';
     const filePath = urlParams.get('file') ?? undefined;
     if (projectPath) {
@@ -933,9 +953,20 @@ function main(): void {
   });
 
   commandPalette.register({
-    id: 'file-viewer',
-    label: 'Open File Viewer',
+    id: 'editor-window',
+    label: 'Open Editor Window',
     shortcut: 'Ctrl+Shift+E',
+    category: 'File',
+    action: () => {
+      const workspace = workspaceSwitcher.getActiveWorkspace();
+      if (workspace) {
+        window.api.window.popoutEditor(workspace.projectPath).catch(() => {});
+      }
+    },
+  });
+  commandPalette.register({
+    id: 'file-viewer',
+    label: 'Open File Viewer (Overlay)',
     category: 'File',
     action: () => {
       const workspace = workspaceSwitcher.getActiveWorkspace();
@@ -990,7 +1021,7 @@ function main(): void {
   voiceRouter.registerCommand({ id: 'command-palette', aliases: ['command palette', 'commands', 'open commands', 'show commands'], action: () => commandPalette.toggle() });
   voiceRouter.registerCommand({ id: 'file-finder', aliases: ['open file', 'quick open', 'find file', 'go to file'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) fileFinder.toggle(ws.projectPath); } });
   voiceRouter.registerCommand({ id: 'git-changes', aliases: ['show changes', 'git status', 'git diff', 'show diff', 'view changes'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) fileViewer.showChanges(ws.projectPath); } });
-  voiceRouter.registerCommand({ id: 'file-viewer', aliases: ['open files', 'file viewer', 'show files', 'browse files', 'file browser'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) fileViewer.toggle(ws.projectPath); } });
+  voiceRouter.registerCommand({ id: 'editor-window', aliases: ['open editor', 'editor window', 'open files', 'file viewer', 'show files', 'browse files', 'file browser'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) window.api.window.popoutEditor(ws.projectPath).catch(() => {}); } });
   voiceRouter.registerCommand({ id: 'file-viewer-popout', aliases: ['pop out files', 'pop out file viewer', 'file viewer new window', 'open files new window'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) window.api.window.popoutFile(ws.projectPath); } });
   voiceRouter.registerCommand({ id: 'search', aliases: ['search', 'find', 'search terminal', 'find in terminal'], action: () => toggleSearchOnFocused() });
   voiceRouter.registerCommand({ id: 'zoom-in', aliases: ['zoom in', 'make bigger', 'increase size'], action: () => window.api.window.zoomIn() });
@@ -1235,6 +1266,12 @@ function main(): void {
       action: () => {
         const ws = workspaceSwitcher.getActiveWorkspace();
         if (ws) fileFinder.toggle(ws.projectPath);
+      },
+    },
+    'editor-window': {
+      action: () => {
+        const ws = workspaceSwitcher.getActiveWorkspace();
+        if (ws) window.api.window.popoutEditor(ws.projectPath).catch(() => {});
       },
     },
     'file-viewer': {

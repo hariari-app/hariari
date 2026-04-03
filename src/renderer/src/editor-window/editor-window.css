@@ -1,0 +1,295 @@
+/* ============================================
+   Editor Window — Dedicated File Viewer
+   ============================================ */
+
+/* Root layout — #app.ew-root needed to override #app's column direction (ID > class specificity) */
+#app.ew-root {
+  display: flex;
+  flex-direction: row;
+  height: 100vh;
+  background: var(--bg-deep);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: var(--font-base);
+}
+
+/* Sidebar */
+.ew-sidebar {
+  width: 260px;
+  min-width: 180px;
+  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* Tab bar */
+.ew-tab-bar {
+  display: flex;
+  height: 35px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.ew-tab {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--fg-dim);
+  font-size: var(--font-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.ew-tab:hover {
+  color: var(--fg);
+}
+
+.ew-tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+/* Tab content */
+.ew-tab-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Resize handle */
+.ew-resize-handle {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background var(--transition-fast);
+}
+
+.ew-resize-handle:hover {
+  background: var(--accent);
+}
+
+/* Editor area */
+.ew-editor-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-deep);
+}
+
+/* ============================================
+   Editor Pane
+   ============================================ */
+
+.ew-editor-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.ew-editor-header {
+  display: flex;
+  align-items: center;
+  height: 35px;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: var(--space-2);
+  background: var(--bg);
+}
+
+.ew-breadcrumb {
+  flex: 1;
+  font-size: var(--font-sm);
+  color: var(--fg-dim);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ew-save-indicator {
+  font-size: var(--font-md);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.ew-edit-btn {
+  padding: var(--space-1) var(--space-2);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-dim);
+  font-size: var(--font-xs);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.ew-edit-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ew-edit-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.ew-editor-container {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+/* CodeMirror needs a computed pixel height — absolute fill gives it one */
+.ew-editor-container > .cm-editor,
+.ew-editor-container > .cm-merge-view {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+.ew-editor-container.ew-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-dim);
+}
+
+/* ============================================
+   Diff Actions
+   ============================================ */
+
+.ew-diff-actions {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+
+.ew-diff-btn {
+  padding: var(--space-1) var(--space-3);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: var(--font-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.ew-diff-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ew-diff-btn-accept {
+  background: var(--success);
+  border-color: var(--success);
+  color: var(--bg);
+}
+
+.ew-diff-btn-accept:hover {
+  opacity: 0.9;
+  border-color: var(--success);
+  color: var(--bg);
+}
+
+.ew-diff-btn-discard {
+  background: var(--error);
+  border-color: var(--error);
+  color: var(--bg);
+}
+
+.ew-diff-btn-discard:hover {
+  opacity: 0.9;
+  border-color: var(--error);
+  color: var(--bg);
+}
+
+/* ============================================
+   File Tree
+   ============================================ */
+
+.ew-file-tree {
+  padding: var(--space-1) 0;
+}
+
+.ew-tree-row {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  gap: 2px;
+}
+
+.ew-tree-row:hover {
+  background: var(--surface-hover);
+}
+
+.ew-tree-row.selected {
+  background: var(--accent-dim);
+}
+
+.ew-tree-arrow {
+  width: 16px;
+  font-size: var(--font-xs);
+  color: var(--fg-dim);
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.ew-tree-label {
+  font-size: var(--font-base);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ============================================
+   SCM Panel (in editor window context)
+   ============================================ */
+
+.ew-scm-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ============================================
+   CodeMirror overrides for editor window
+   ============================================ */
+
+.ew-editor-container .cm-editor {
+  height: 100%;
+  overflow: hidden;
+}
+
+.ew-editor-container .cm-merge-view {
+  height: 100%;
+  overflow: hidden;
+}

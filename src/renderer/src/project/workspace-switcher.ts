@@ -242,6 +242,7 @@ export class WorkspaceSwitcher {
             agentInfo: tracked.info,
             projectId: ws.projectId,
             projectName,
+            projectPath: ws.projectPath,
           });
         }
       }

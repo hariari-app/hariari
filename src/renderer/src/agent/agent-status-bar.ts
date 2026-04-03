@@ -19,6 +19,7 @@ export interface StatusBarCallbacks {
   readonly onReview?: () => void;
   readonly onMerge?: () => void;
   readonly onDiscard?: () => void;
+  readonly onOpenFiles?: () => void;
   readonly projectName?: string;
   readonly previewMode?: boolean;
 }
@@ -154,6 +155,11 @@ export class AgentStatusBar {
     this.element.appendChild(this.branchEl);
     this.element.appendChild(this.statusTextEl);
     this.element.appendChild(this.uptimeEl);
+    // Folder button is always shown (including preview mode)
+    if (callbacks.onOpenFiles) {
+      const filesBtn = this.createActionButton('status-bar-files', '\u{1F4C2}', 'Open file explorer', () => callbacks.onOpenFiles!());
+      this.element.appendChild(filesBtn);
+    }
     if (!callbacks.previewMode) {
       this.element.appendChild(this.reviewBtn);
       this.element.appendChild(this.mergeBtn);

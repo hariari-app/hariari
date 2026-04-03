@@ -63,6 +63,9 @@ export class SinglePreview {
             const statusBar = new AgentStatusBar(agent.agentInfo, {
               projectName: agent.projectName,
               previewMode: true,
+              onOpenFiles: () => {
+                window.api.window.popoutEditor(agent.projectPath).catch(() => {});
+              },
             });
             this.statusBars.push(statusBar);
             container.prepend(statusBar.getElement());

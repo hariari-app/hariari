@@ -991,6 +991,35 @@
   outline-offset: -2px;
 }
 
+.status-bar-files {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  padding: 0 var(--space-1);
+  height: 20px;
+  min-width: 20px;
+  font-size: var(--font-xs);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.status-bar-files:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.status-bar-files:active { transform: scale(0.92); }
+
+.status-bar-files:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .status-bar-kill {
   background: none;
   border: none;

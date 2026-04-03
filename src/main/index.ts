@@ -191,6 +191,62 @@ earlyIpcMain.handle('window:popout-file', async (_event: unknown, args: { projec
   popout.setMenuBarVisibility(false);
 });
 
+// Singleton editor window — tracked for focus-on-reopen
+let editorWindow: InstanceType<typeof import('electron').BrowserWindow> | null = null;
+
+earlyIpcMain.handle('window:popout-editor', async (_event: unknown, raw: unknown) => {
+  try {
+    if (typeof raw !== 'object' || raw === null) return { error: 'popout_editor_invalid_request' };
+    const args = raw as { projectPath?: string };
+    if (typeof args.projectPath !== 'string' || !args.projectPath) return { error: 'popout_editor_missing_path' };
+
+    const { BrowserWindow: BW } = require('electron');
+    const nodePath = require('node:path');
+
+    // Singleton: focus existing window if still open
+    if (editorWindow && !editorWindow.isDestroyed()) {
+      editorWindow.focus();
+      return { ok: true };
+    }
+
+    const projectName = nodePath.basename(args.projectPath);
+
+    editorWindow = new BW({
+      width: 1200,
+      height: 800,
+      minWidth: 600,
+      minHeight: 400,
+      title: `${projectName} — VibeIDE`,
+      webPreferences: {
+        preload: nodePath.join(__dirname, '../preload/index.js'),
+        sandbox: false,
+      },
+    });
+
+    // Non-null: just assigned on the line above
+    const win = editorWindow!;
+    const mainWindow = BW.getAllWindows().find((w: { id: number }) => w.id !== win.id);
+    if (!mainWindow) {
+      win.close();
+      editorWindow = null;
+      return { error: 'popout_editor_no_main_window' };
+    }
+
+    const url = mainWindow.webContents.getURL();
+    const baseUrl = url.split('?')[0].split('#')[0];
+    const params = new URLSearchParams({
+      popout: 'editor-window',
+      project: args.projectPath,
+    });
+    win.loadURL(`${baseUrl}?${params.toString()}`);
+    win.setMenuBarVisibility(false);
+    win.on('closed', () => { editorWindow = null; });
+  } catch (error) {
+    console.error('[IPC][window:popout-editor]', error);
+    return { error: 'popout_editor_failed' };
+  }
+});
+
 // Enable speech recognition on Linux
 app.commandLine.appendSwitch('enable-speech-dispatcher');
 app.commandLine.appendSwitch('enable-features', 'WebSpeechAPI');

@@ -163,6 +163,7 @@ export interface VibeIDEApi {
     zoomOut(): Promise<void>;
     zoomReset(): Promise<void>;
     popoutFile(projectPath: string, filePath?: string): Promise<void>;
+    popoutEditor(projectPath: string): Promise<void>;
   };
   settings: {
     load(): Promise<Record<string, unknown>>;
