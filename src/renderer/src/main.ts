@@ -503,7 +503,7 @@ function main(): void {
   store.subscribe((state, prev) => {
     // Projects changed
     if (state.projects !== prev.projects) {
-      projectSidebar.setProjects(state.projects);
+      projectSidebar.setProjects(state.projects as ProjectInfo[]);
       projectTabBar.setProjects(state.projects);
     }
     // Active project changed
@@ -1548,7 +1548,7 @@ function main(): void {
   }).catch(() => {});
 
   // Initialize
-  initializeFromState(workspaceSwitcher, projectSidebar, refreshProjectList).then(() => {
+  initializeFromState(workspaceSwitcher, projectSidebar, refreshProjectList, store).then(() => {
     // Restore sidebar collapsed state and auto-hide setting
     Promise.all([
       window.api.state.load().catch(() => null),
@@ -1558,8 +1558,9 @@ function main(): void {
         projectSidebar.setCollapsed(true);
       }
       // Apply auto-hide from persisted settings (authoritative source)
-      if (typeof settings.sidebarAutoHide === 'boolean') {
-        sidebarAutoHide = settings.sidebarAutoHide;
+      const s = settings as Record<string, unknown>;
+      if (typeof s.sidebarAutoHide === 'boolean') {
+        sidebarAutoHide = s.sidebarAutoHide;
       }
       projectSidebar.setAutoHide(sidebarAutoHide);
       // Sync command palette label
@@ -1586,6 +1587,7 @@ async function initializeFromState(
   workspaceSwitcher: WorkspaceSwitcher,
   _projectSidebar: ProjectSidebar,
   refreshProjectList: () => Promise<void>,
+  appStore: ProjectStore,
 ): Promise<void> {
   try {
     await refreshProjectList();
@@ -1600,7 +1602,7 @@ async function initializeFromState(
         const workspace = workspaceSwitcher.getWorkspace(activeProject.id);
         if (workspace) {
           const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info);
-          store.updateAgents(activeProject.id, agents);
+          appStore.updateAgents(activeProject.id, agents);
         }
         return;
       }
@@ -1612,7 +1614,7 @@ async function initializeFromState(
       const workspace = workspaceSwitcher.getWorkspace(projects[0].id);
       if (workspace) {
         const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info);
-        store.updateAgents(projects[0].id, agents);
+        appStore.updateAgents(projects[0].id, agents);
       }
     }
   } catch (error) {
