@@ -119,10 +119,11 @@ export interface FileSearchResult {
 }
 
 export interface UpdateStatus {
-  readonly state: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+  readonly state: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'manual-available' | 'error';
   readonly version?: string;
   readonly progress?: number;
   readonly error?: string;
+  readonly downloadUrl?: string;
 }
 
 export interface VibeIDEApi {
@@ -241,5 +242,8 @@ export interface VibeIDEApi {
     download(): Promise<void>;
     install(): Promise<void>;
     onStatus(callback: (status: UpdateStatus) => void): () => void;
+  };
+  shell: {
+    openExternal(url: string): Promise<void>;
   };
 }
