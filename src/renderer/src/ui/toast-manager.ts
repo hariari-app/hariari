@@ -10,6 +10,16 @@ export interface ToastOptions {
   readonly onClick?: () => void;
 }
 
+export interface GenericToastOptions {
+  readonly title: string;
+  readonly message: string;
+  readonly color?: string;
+  readonly persistent?: boolean;
+  readonly actionLabel?: string;
+  readonly onAction?: () => void;
+  readonly onDismiss?: () => void;
+}
+
 interface ActiveToast {
   readonly id: number;
   readonly element: HTMLElement;
@@ -78,6 +88,42 @@ class ToastManager {
         config.toastDurationMs,
       );
     });
+  }
+
+  showGeneric(options: GenericToastOptions): number {
+    // Enforce max visible
+    while (this.toasts.size >= MAX_VISIBLE) {
+      const oldest = this.toasts.values().next().value;
+      if (oldest) this.dismiss(oldest.id);
+    }
+
+    const id = this.nextId++;
+    const element = this.createGenericToastElement(id, options);
+
+    this.container.appendChild(element);
+    requestAnimationFrame(() => element.classList.add('toast-entering'));
+
+    let dismissTimer: ReturnType<typeof setTimeout> | null = null;
+    if (!options.persistent) {
+      dismissTimer = setTimeout(() => this.dismiss(id), 8000);
+    }
+
+    const toast: ActiveToast = { id, element, dismissTimer };
+    this.toasts.set(id, toast);
+
+    if (!options.persistent) {
+      element.addEventListener('mouseenter', () => {
+        if (toast.dismissTimer) {
+          clearTimeout(toast.dismissTimer);
+          toast.dismissTimer = null;
+        }
+      });
+      element.addEventListener('mouseleave', () => {
+        toast.dismissTimer = setTimeout(() => this.dismiss(id), 8000);
+      });
+    }
+
+    return id;
   }
 
   dismiss(id: number): void {
@@ -163,6 +209,62 @@ class ToastManager {
         this.dismiss(id);
       });
     }
+
+    return toast;
+  }
+  private createGenericToastElement(id: number, options: GenericToastOptions): HTMLElement {
+    const toast = document.createElement('div');
+    toast.className = 'toast toast--generic';
+    toast.setAttribute('role', 'alert');
+
+    const dot = document.createElement('span');
+    dot.className = 'toast-dot';
+    dot.style.background = options.color ?? 'var(--accent)';
+
+    const content = document.createElement('div');
+    content.className = 'toast-content';
+
+    const header = document.createElement('div');
+    header.className = 'toast-header';
+
+    const title = document.createElement('span');
+    title.className = 'toast-agent-name';
+    title.textContent = options.title;
+
+    header.appendChild(title);
+
+    const message = document.createElement('div');
+    message.className = 'toast-message';
+    message.textContent = options.message;
+
+    content.appendChild(header);
+    content.appendChild(message);
+
+    if (options.actionLabel && options.onAction) {
+      const actionBtn = document.createElement('button');
+      actionBtn.className = 'toast-action';
+      actionBtn.textContent = options.actionLabel;
+      actionBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        options.onAction!();
+        this.dismiss(id);
+      });
+      content.appendChild(actionBtn);
+    }
+
+    const close = document.createElement('button');
+    close.className = 'toast-close';
+    close.textContent = '\u00d7';
+    close.setAttribute('aria-label', 'Dismiss notification');
+    close.addEventListener('click', (e) => {
+      e.stopPropagation();
+      options.onDismiss?.();
+      this.dismiss(id);
+    });
+
+    toast.appendChild(dot);
+    toast.appendChild(content);
+    toast.appendChild(close);
 
     return toast;
   }

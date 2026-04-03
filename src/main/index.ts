@@ -6,12 +6,14 @@ import { ProjectManager } from './project/project-manager';
 import { NotificationManager } from './notification/notification-manager';
 import { registerIpcHandlers } from './ipc/handlers';
 import { StateManager } from './state/state-manager';
+import { AutoUpdateManager } from './updater/auto-updater';
 
 let ptyManager: PtyManager;
 let agentManager: AgentManager;
 let stateManager: StateManager;
 let projectManager: ProjectManager;
 let notificationManager: NotificationManager;
+let autoUpdateManager: AutoUpdateManager;
 
 // These imports must be at top-level for early IPC handler registration
 const { ipcMain: earlyIpcMain } = require('electron');
@@ -230,6 +232,10 @@ app.whenReady().then(() => {
   // Now create the window — renderer will load and IPC handlers are ready
   mainWindow = createMainWindow(savedState?.window);
 
+  // Auto-updater — checks GitHub Releases for new versions
+  autoUpdateManager = new AutoUpdateManager();
+  autoUpdateManager.start(mainWindow);
+
   // Save window bounds on before-quit
   app.on('before-quit', () => {
     try {
@@ -259,6 +265,7 @@ app.whenReady().then(() => {
       console.error('[Main] Failed to save window state on quit:', error);
     }
 
+    autoUpdateManager?.dispose();
     agentManager?.disposeAll();
     ptyManager?.disposeAll();
   });

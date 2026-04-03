@@ -118,8 +118,16 @@ export interface FileSearchResult {
   readonly matchEnd: number;
 }
 
+export interface UpdateStatus {
+  readonly state: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+  readonly version?: string;
+  readonly progress?: number;
+  readonly error?: string;
+}
+
 export interface VibeIDEApi {
   platform: NodeJS.Platform;
+  appVersion: string;
   pty: {
     spawn(request: PtySpawnRequest): Promise<PtySpawnResponse>;
     write(request: PtyWriteRequest): Promise<void>;
@@ -227,5 +235,11 @@ export interface VibeIDEApi {
     merge(agentId: string): Promise<import('./worktree-types').WorktreeMergeResult>;
     cleanup(agentId: string): Promise<void>;
     info(agentId: string): Promise<import('./worktree-types').WorktreeInfo | null>;
+  };
+  update: {
+    check(): Promise<void>;
+    download(): Promise<void>;
+    install(): Promise<void>;
+    onStatus(callback: (status: UpdateStatus) => void): () => void;
   };
 }

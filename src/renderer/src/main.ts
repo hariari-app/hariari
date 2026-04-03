@@ -285,6 +285,7 @@ function main(): void {
   const mod = isMac ? '\u2318' : 'Ctrl';
   const shift = isMac ? '\u21E7' : 'Shift';
   const sep = isMac ? '' : '+';
+  const versionLabel = `v${window.api.appVersion}`;
   hintBar.innerHTML = `
     <span class="hint-item"><kbd>${mod}${sep}${shift}${sep}P</kbd> Commands</span>
     <span class="hint-item"><kbd>${mod}${sep}P</kbd> Open File</span>
@@ -293,6 +294,7 @@ function main(): void {
     <span class="hint-item"><kbd>${mod}${sep}B</kbd> Sidebar</span>
     <span class="hint-item"><kbd>F3</kbd> Dictate</span>
     <span class="hint-item"><kbd>F4</kbd> Voice Cmd</span>
+    <span class="hint-version">${versionLabel}</span>
   `;
   appEl.appendChild(hintBar);
 
@@ -547,6 +549,54 @@ function main(): void {
   // Refresh git badges on startup and every 15 seconds
   setTimeout(refreshGitBadges, 2000);
   setInterval(refreshGitBadges, 15_000);
+
+  // Auto-update status listener
+  let updateToastId: number | null = null;
+  window.api.update.onStatus((status) => {
+    // Dismiss previous update toast
+    if (updateToastId !== null) {
+      toastManager.dismiss(updateToastId);
+      updateToastId = null;
+    }
+
+    switch (status.state) {
+      case 'available':
+        // Don't show a separate toast — the download-progress toast will appear
+        // immediately since autoDownload is true. Avoids a flicker.
+        break;
+      case 'downloading':
+        updateToastId = toastManager.showGeneric({
+          title: 'Downloading Update',
+          message: `${status.progress ?? 0}% complete${status.version ? ` (v${status.version})` : ''}`,
+          color: 'var(--accent)',
+          persistent: true,
+        });
+        break;
+      case 'downloaded':
+        updateToastId = toastManager.showGeneric({
+          title: 'Update Ready',
+          message: `Version ${status.version ?? ''} downloaded. Restart to apply.`,
+          color: 'var(--success)',
+          persistent: true,
+          actionLabel: 'Restart Now',
+          onAction: () => window.api.update.install(),
+        });
+        break;
+      case 'error':
+        // Only show error for manual checks, not scheduled ones
+        if (status.error) {
+          toastManager.showGeneric({
+            title: 'Update Error',
+            message: status.error,
+            color: 'var(--error)',
+          });
+        }
+        break;
+      case 'not-available':
+        // Silent for scheduled checks — only show for manual
+        break;
+    }
+  });
 
   // Agent install callback — spawns a shell terminal and runs the install command
   setInstallCallback(async (installCommand: string) => {
@@ -1045,6 +1095,19 @@ function main(): void {
       window.api.settings.load().then((s) => {
         window.api.settings.save({ ...s, sidebarAutoHide });
       }).catch(() => {});
+    },
+  });
+  commandPalette.register({
+    id: 'check-for-updates', category: 'General',
+    label: window.api.platform === 'linux'
+      ? 'Check for Updates (opens browser)'
+      : 'Check for Updates',
+    action: () => {
+      window.api.update.check();
+      toastManager.showGeneric({
+        title: 'Update',
+        message: 'Checking for updates...',
+      });
     },
   });
   commandPalette.register({
