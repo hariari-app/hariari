@@ -96,7 +96,7 @@ describe('Terminal Theme', () => {
 
     it('returns all registered themes', () => {
       const names = getThemeNames();
-      expect(names).toHaveLength(14);
+      expect(names).toHaveLength(16);
       expect(names).toContain('tokyoNight');
       expect(names).toContain('dracula');
       expect(names).toContain('nord');
