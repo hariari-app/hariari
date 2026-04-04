@@ -213,7 +213,7 @@ export class OnboardingWizard {
   private getInstalledAgentTypes(): AgentType[] {
     // Pass all agent types — the installer filters by targetAgents per skill
     // TODO: read actual installed state from agentsStep when API is available
-    return ['claude', 'gemini', 'codex', 'aider', 'opencode', 'cline', 'copilot', 'amp', 'continue', 'cursor', 'crush', 'qwen'];
+    return ['claude', 'gemini', 'codex', 'pi', 'opencode', 'cline', 'copilot', 'amp', 'continue', 'cursor', 'crush', 'qwen'];
   }
 
   private async complete(): Promise<void> {

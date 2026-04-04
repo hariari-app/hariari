@@ -14,7 +14,7 @@ interface AgentRow {
 
 const AGENT_ORDER: readonly AgentRow[] = [
   { type: 'claude', displayName: 'Claude Code', command: 'claude' },
-  { type: 'aider', displayName: 'Aider', command: 'aider' },
+  { type: 'pi', displayName: 'Pi', command: 'pi' },
   { type: 'gemini', displayName: 'Gemini CLI', command: 'gemini' },
   { type: 'codex', displayName: 'Codex CLI', command: 'codex' },
   { type: 'amp', displayName: 'Amp', command: 'amp' },

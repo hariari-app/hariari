@@ -991,7 +991,7 @@ export class ProjectSidebar {
     const agentTypes: Array<{ type: AgentType; label: string }> = [
       { type: 'shell', label: 'Shell' },
       { type: 'claude', label: 'Claude Code' },
-      { type: 'aider', label: 'Aider' },
+      { type: 'pi', label: 'Pi' },
       { type: 'gemini', label: 'Gemini CLI' },
       { type: 'codex', label: 'Codex CLI' },
       { type: 'opencode', label: 'OpenCode' },

@@ -7,7 +7,7 @@ const CLI_COMMANDS: Partial<Record<AgentType, string>> = {
   claude: 'claude',
   gemini: 'gemini',
   codex: 'codex',
-  aider: 'aider',
+  pi: 'pi',
   opencode: 'opencode',
   cline: 'cline',
   copilot: 'copilot',
@@ -75,11 +75,11 @@ function checkCommand(cmd: string): Promise<boolean> {
 }
 
 export async function checkAvailability(): Promise<AgentAvailability> {
-  const [claude, gemini, codex, aider, opencode, cline, copilot, amp, cn, cursor, crush, qwen] = await Promise.all([
+  const [claude, gemini, codex, pi, opencode, cline, copilot, amp, cn, cursor, crush, qwen] = await Promise.all([
     checkCommand('claude'),
     checkCommand('gemini'),
     checkCommand('codex'),
-    checkCommand('aider'),
+    checkCommand('pi'),
     checkCommand('opencode'),
     checkCommand('cline'),
     checkCommand('copilot'),
@@ -89,14 +89,14 @@ export async function checkAvailability(): Promise<AgentAvailability> {
     checkCommand('crush'),
     checkCommand('qwen'),
   ]);
-  return { claude, gemini, codex, aider, opencode, cline, copilot, amp, continue: cn, cursor, crush, qwen };
+  return { claude, gemini, codex, pi, opencode, cline, copilot, amp, continue: cn, cursor, crush, qwen };
 }
 
 export function startPeriodicCheck(
   callback: (availability: AgentAvailability) => void,
   intervalMs = 30_000,
 ): () => void {
-  let previous: AgentAvailability = { claude: false, gemini: false, codex: false, aider: false, opencode: false, cline: false, copilot: false, amp: false, continue: false, cursor: false, crush: false, qwen: false };
+  let previous: AgentAvailability = { claude: false, gemini: false, codex: false, pi: false, opencode: false, cline: false, copilot: false, amp: false, continue: false, cursor: false, crush: false, qwen: false };
 
   const check = async () => {
     const current = await checkAvailability();

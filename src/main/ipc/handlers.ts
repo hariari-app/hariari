@@ -671,7 +671,7 @@ export function registerIpcHandlers(
   });
 
   // Agent install detection
-  const ALLOWED_COMMANDS = new Set(['claude', 'gemini', 'codex', 'aider', 'opencode',
+  const ALLOWED_COMMANDS = new Set(['claude', 'gemini', 'codex', 'pi', 'opencode',
     'cline', 'copilot', 'amp', 'cn', 'cursor-agent', 'crush', 'qwen']);
 
   ipcMain.handle(IPC_CHANNELS.AGENT_CHECK_INSTALLED, async (_event, raw: unknown) => {
@@ -872,7 +872,7 @@ export function registerIpcHandlers(
   });
 
   const VALID_SKILL_ID = /^[a-z0-9-]+$/;
-  const KNOWN_AGENTS = new Set<string>(['claude', 'gemini', 'codex', 'aider', 'opencode',
+  const KNOWN_AGENTS = new Set<string>(['claude', 'gemini', 'codex', 'pi', 'opencode',
     'cline', 'copilot', 'amp', 'continue', 'cursor', 'crush', 'qwen']);
 
   ipcMain.handle(IPC_CHANNELS.SKILLS_INSTALL, async (_event, raw: unknown) => {

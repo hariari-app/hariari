@@ -10,7 +10,7 @@ type LayoutMode = 'grid' | 'columns' | 'rows';
 
 const AGENT_LABELS: Record<string, string> = {
   claude: 'Claude Code', gemini: 'Gemini CLI', codex: 'Codex CLI',
-  aider: 'Aider', opencode: 'OpenCode', cline: 'Cline CLI',
+  pi: 'Pi', opencode: 'OpenCode', cline: 'Cline CLI',
   copilot: 'Copilot CLI', amp: 'Amp', continue: 'Continue',
   cursor: 'Cursor CLI', crush: 'Crush', qwen: 'Qwen Code', shell: 'Shell',
 };

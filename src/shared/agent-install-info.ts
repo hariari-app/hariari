@@ -57,12 +57,12 @@ export const AGENT_INSTALL_INFO: Partial<Record<AgentType, AgentInstallInfo>> = 
     docsUrl: 'https://github.com/openai/codex',
     description: 'OpenAI\'s coding agent',
   },
-  aider: {
-    command: 'aider',
-    displayName: 'Aider',
-    installCommand: 'pip install aider-chat',
-    docsUrl: 'https://aider.chat/',
-    description: 'AI pair programming in your terminal — supports 100+ LLMs',
+  pi: {
+    command: 'pi',
+    displayName: 'Pi',
+    installCommand: 'npm install -g @mariozechner/pi-coding-agent',
+    docsUrl: 'https://pi.dev',
+    description: 'Minimal terminal coding harness — extensible via TypeScript',
   },
   opencode: {
     command: 'opencode',

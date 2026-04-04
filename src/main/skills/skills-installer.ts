@@ -20,7 +20,7 @@ const AGENT_SKILL_DIRS: Partial<Record<AgentType, string>> = {
   claude: path.join(homedir(), '.claude', 'skills'),
   codex: path.join(homedir(), '.codex', 'skills'),
   gemini: path.join(homedir(), '.gemini', 'rules'),
-  aider: path.join(homedir(), '.aider', 'skills'),
+  pi: path.join(homedir(), '.pi', 'skills'),
   cursor: path.join(homedir(), '.cursor', 'rules'),
   copilot: path.join(homedir(), '.copilot', 'skills'),
   amp: path.join(homedir(), '.amp', 'skills'),

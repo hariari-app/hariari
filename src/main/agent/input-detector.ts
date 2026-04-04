@@ -196,24 +196,21 @@ const EXCLUDE_PATTERNS: readonly RegExp[] = [
   /\bSearching\b/i,
 ];
 
-// ─── Aider specific patterns ───
+// ─── Pi specific patterns ───
 
-const AIDER_PATTERNS: readonly RegExp[] = [
-  // Aider's main prompt
-  /^aider\s*>\s*$/,
-  /^aider\s*v[\d.]+\s*>/,
+const PI_PATTERNS: readonly RegExp[] = [
+  // Pi interactive prompt
+  /^>\s*$/,
 
-  // Aider file add/drop prompts
-  /\bAdd\b.*to the chat\?/i,
-  /\bDrop\b.*from the chat\?/i,
+  // Pi tool approval
+  /\bApprove\b/i,
+  /\bAllow\b.*execution/i,
+  /\bRun\b.*command.*[?]/i,
 
-  // Aider apply changes
-  /\bApply\b.*edit/i,
-  /\bCommit\b.*changes\?/i,
-
-  // Aider git prompts
-  /\bCreate a git repo\b/i,
-  /\bAllow creation of\b/i,
+  // Pi file operations
+  /\bWrite\b.*file\?/i,
+  /\bEdit\b.*file\?/i,
+  /\bCreate\b.*file\?/i,
 ];
 
 // ─── OpenCode specific patterns ───
@@ -364,7 +361,7 @@ function getPatternsForAgent(agentType: AgentType): readonly RegExp[] {
     case 'claude': return [...GENERIC_PATTERNS, ...CLAUDE_PATTERNS];
     case 'gemini': return [...GENERIC_PATTERNS, ...GEMINI_PATTERNS];
     case 'codex': return [...GENERIC_PATTERNS, ...CODEX_PATTERNS];
-    case 'aider': return [...GENERIC_PATTERNS, ...AIDER_PATTERNS];
+    case 'pi': return [...GENERIC_PATTERNS, ...PI_PATTERNS];
     case 'opencode': return [...GENERIC_PATTERNS, ...OPENCODE_PATTERNS];
     case 'cline': return [...GENERIC_PATTERNS, ...CLINE_PATTERNS];
     case 'copilot': return [...GENERIC_PATTERNS, ...COPILOT_PATTERNS];

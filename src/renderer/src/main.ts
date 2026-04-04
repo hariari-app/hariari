@@ -736,10 +736,10 @@ function main(): void {
     action: () => spawnInActiveProject('codex'),
   });
   commandPalette.register({
-    id: 'new-aider',
-    label: 'New Aider Agent in Project',
+    id: 'new-pi',
+    label: 'New Pi Agent in Project',
     category: 'Agent',
-    action: () => spawnInActiveProject('aider'),
+    action: () => spawnInActiveProject('pi'),
   });
   commandPalette.register({
     id: 'new-opencode',
@@ -959,7 +959,7 @@ function main(): void {
   voiceRouter.registerCommand({ id: 'new-claude', aliases: ['new claude', 'open claude', 'start claude', 'claude agent', 'new cloud', 'open cloud'], action: () => spawnInActiveProject('claude') });
   voiceRouter.registerCommand({ id: 'new-gemini', aliases: ['new gemini', 'open gemini', 'start gemini', 'gemini agent'], action: () => spawnInActiveProject('gemini') });
   voiceRouter.registerCommand({ id: 'new-codex', aliases: ['new codex', 'open codex', 'start codex', 'codex agent'], action: () => spawnInActiveProject('codex') });
-  voiceRouter.registerCommand({ id: 'new-aider', aliases: ['new aider', 'open aider', 'start aider', 'aider agent'], action: () => spawnInActiveProject('aider') });
+  voiceRouter.registerCommand({ id: 'new-pi', aliases: ['new pi', 'open pi', 'start pi', 'pi agent', 'new pie', 'open pie'], action: () => spawnInActiveProject('pi') });
   voiceRouter.registerCommand({ id: 'new-opencode', aliases: ['new opencode', 'open opencode', 'start opencode', 'opencode agent', 'new open code', 'open open code'], action: () => spawnInActiveProject('opencode') });
   voiceRouter.registerCommand({ id: 'new-cline', aliases: ['new cline', 'open cline', 'start cline', 'cline agent', 'new Klein', 'open Klein'], action: () => spawnInActiveProject('cline') });
   voiceRouter.registerCommand({ id: 'new-copilot', aliases: ['new copilot', 'open copilot', 'start copilot', 'copilot agent'], action: () => spawnInActiveProject('copilot') });
@@ -1386,11 +1386,9 @@ function main(): void {
     { id: 'codex-approve', label: 'Codex: Approve', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('y\n') },
     { id: 'codex-reject', label: 'Codex: Reject', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('n\n') },
   ]);
-  commandPalette.registerDynamic('aider', [
-    { id: 'aider-yes', label: 'Aider: Confirm (Yes)', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('y\n') },
-    { id: 'aider-no', label: 'Aider: Decline (No)', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('n\n') },
-    { id: 'aider-undo', label: 'Aider: Undo Last Change', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('/undo\n') },
-    { id: 'aider-diff', label: 'Aider: Show Diff', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('/diff\n') },
+  commandPalette.registerDynamic('pi', [
+    { id: 'pi-approve', label: 'Pi: Approve', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('y\n') },
+    { id: 'pi-reject', label: 'Pi: Reject', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('n\n') },
   ]);
   commandPalette.registerDynamic('opencode', [
     { id: 'opencode-approve', label: 'OpenCode: Approve', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('y\n') },

@@ -68,7 +68,7 @@ const FEATURES: readonly FeatureCard[] = [
       <text x="66" y="42" fill="var(--fg-dim)" font-size="7">claude-a1b2</text>
       <path d="M34 19c25 0 40 8 40 25" stroke="var(--warning)" stroke-width="1.5" fill="none"/>
       <circle cx="74" cy="44" r="3" fill="var(--warning)"/>
-      <text x="81" y="47" fill="var(--fg-dim)" font-size="7">aider-c3d4</text>
+      <text x="81" y="47" fill="var(--fg-dim)" font-size="7">pi-c3d4</text>
       <rect x="85" y="60" width="30" height="12" rx="3" fill="var(--success)" opacity="0.2" stroke="var(--success)" stroke-width="1"/>
       <text x="92" y="69" fill="var(--success)" font-size="7">Merge</text>
     </svg>`,

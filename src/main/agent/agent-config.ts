@@ -4,7 +4,7 @@ const AGENT_DEFAULTS: Record<Exclude<AgentType, 'custom'>, Omit<AgentConfig, 'cw
   claude: { type: 'claude', command: 'claude', args: [], label: 'Claude Code' },
   gemini: { type: 'gemini', command: 'gemini', args: [], label: 'Gemini CLI' },
   codex: { type: 'codex', command: 'codex', args: [], label: 'Codex' },
-  aider: { type: 'aider', command: 'aider', args: [], label: 'Aider' },
+  pi: { type: 'pi', command: 'pi', args: [], label: 'Pi' },
   opencode: { type: 'opencode', command: 'opencode', args: [], label: 'OpenCode' },
   cline: { type: 'cline', command: 'cline', args: [], label: 'Cline' },
   copilot: { type: 'copilot', command: 'copilot', args: [], label: 'Copilot CLI' },
