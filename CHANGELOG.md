@@ -2,6 +2,12 @@
 
 All notable changes to VibeIDE are documented in this file.
 
+## [0.5.1] — 2026-04-04
+
+### Changed
+
+- **Replaced Aider with Pi** — swapped Aider agent for [Pi](https://pi.dev), a minimal TypeScript-extensible terminal coding harness, across all agent registries, UI, command palette, voice commands, and skills manifest.
+
 ## [0.5.0] — 2026-04-03
 
 ### Added
