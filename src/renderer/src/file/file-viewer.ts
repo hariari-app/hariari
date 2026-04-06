@@ -1,6 +1,7 @@
 import { EditorView, basicSetup } from 'codemirror';
 import { EditorState, Compartment } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
+import { autocompletion, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { MergeView } from '@codemirror/merge';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { search } from '@codemirror/search';
@@ -367,6 +368,9 @@ export class FileViewer {
         basicSetup,
         this.languageCompartment.of(langExt),
         this.readOnlyCompartment.of(EditorState.readOnly.of(!this.isEditing)),
+        autocompletion({ activateOnTyping: true }),
+        closeBrackets(),
+        keymap.of(closeBracketsKeymap),
         oneDark,
         search(),
         keymap.of([{ key: 'Mod-s', run: () => { this.saveFile(); return true; } }]),

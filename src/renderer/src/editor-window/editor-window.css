@@ -151,6 +151,24 @@
   color: var(--bg);
 }
 
+.ew-save-btn {
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+.ew-save-btn:hover {
+  background: #3b82f6;
+  color: #fff;
+}
+
+.ew-discard-btn {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+.ew-discard-btn:hover {
+  background: #ef4444;
+  color: #fff;
+}
+
 .ew-editor-container {
   flex: 1;
   min-height: 0;

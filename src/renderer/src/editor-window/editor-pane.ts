@@ -1,6 +1,7 @@
 import { EditorView, basicSetup } from 'codemirror';
 import { EditorState, Compartment } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
+import { autocompletion, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { MergeView } from '@codemirror/merge';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { search } from '@codemirror/search';
@@ -26,11 +27,14 @@ export class EditorPane {
   private editorView: EditorView | null = null;
   private mergeView: MergeView | null = null;
   private currentFilePath = '';
+  private originalContent = '';
   private isEditing = false;
   private hasUnsavedChanges = false;
   private readonly readOnlyCompartment = new Compartment();
   private readonly languageCompartment = new Compartment();
   private diffActionBar: HTMLElement | null = null;
+  private saveBtn!: HTMLButtonElement;
+  private discardBtn!: HTMLButtonElement;
 
   constructor(container: HTMLElement, rootPath: string, callbacks: EditorPaneCallbacks) {
     this.rootPath = rootPath;
@@ -58,8 +62,24 @@ export class EditorPane {
     this.editToggle.style.display = 'none';
     this.editToggle.addEventListener('click', () => this.toggleEdit());
 
+    this.saveBtn = document.createElement('button');
+    this.saveBtn.className = 'ew-edit-btn ew-save-btn';
+    this.saveBtn.textContent = 'Save';
+    this.saveBtn.title = 'Save changes (Ctrl+S)';
+    this.saveBtn.style.display = 'none';
+    this.saveBtn.addEventListener('click', () => this.saveFile());
+
+    this.discardBtn = document.createElement('button');
+    this.discardBtn.className = 'ew-edit-btn ew-discard-btn';
+    this.discardBtn.textContent = 'Discard';
+    this.discardBtn.title = 'Discard changes and revert to saved version';
+    this.discardBtn.style.display = 'none';
+    this.discardBtn.addEventListener('click', () => this.discardChanges());
+
     header.appendChild(this.breadcrumb);
     header.appendChild(this.saveIndicator);
+    header.appendChild(this.discardBtn);
+    header.appendChild(this.saveBtn);
     header.appendChild(this.editToggle);
 
     // Editor area
@@ -74,6 +94,11 @@ export class EditorPane {
   }
 
   async openFile(filePath: string): Promise<void> {
+    // Prompt-free discard on file switch — user explicitly chose a new file
+    if (this.hasUnsavedChanges) {
+      this.hasUnsavedChanges = false;
+    }
+
     try {
       const result: FileContent = await window.api.file.read(filePath);
       if ('error' in (result as unknown as Record<string, unknown>)) {
@@ -82,12 +107,14 @@ export class EditorPane {
       }
 
       this.currentFilePath = filePath;
+      this.originalContent = result.content;
       this.hasUnsavedChanges = false;
       this.saveIndicator.textContent = '';
       this.editToggle.style.display = '';
       this.isEditing = false;
       this.editToggle.textContent = 'Edit';
       this.editToggle.classList.remove('active');
+      this.updateEditButtons();
 
       const relativePath = filePath.startsWith(this.rootPath)
         ? filePath.slice(this.rootPath.length + 1) : filePath;
@@ -142,6 +169,9 @@ export class EditorPane {
         basicSetup,
         this.languageCompartment.of(langExt),
         this.readOnlyCompartment.of(EditorState.readOnly.of(!this.isEditing)),
+        autocompletion({ activateOnTyping: true }),
+        closeBrackets(),
+        keymap.of(closeBracketsKeymap),
         oneDark,
         search(),
         keymap.of([{ key: 'Mod-s', run: () => { this.saveFile(); return true; } }]),
@@ -150,6 +180,7 @@ export class EditorPane {
             this.hasUnsavedChanges = true;
             this.saveIndicator.textContent = '\u25CF';
             this.saveIndicator.title = 'Unsaved changes';
+            this.updateEditButtons();
           }
         }),
         cmTheme,
@@ -244,13 +275,30 @@ export class EditorPane {
 
   private toggleEdit(): void {
     this.isEditing = !this.isEditing;
-    this.editToggle.textContent = this.isEditing ? 'Viewing' : 'Edit';
+    this.editToggle.textContent = this.isEditing ? 'Editing' : 'Edit';
     this.editToggle.classList.toggle('active', this.isEditing);
+    this.updateEditButtons();
     if (this.editorView) {
       this.editorView.dispatch({
         effects: this.readOnlyCompartment.reconfigure(EditorState.readOnly.of(!this.isEditing)),
       });
     }
+  }
+
+  private updateEditButtons(): void {
+    const show = this.isEditing && this.hasUnsavedChanges;
+    this.saveBtn.style.display = show ? '' : 'none';
+    this.discardBtn.style.display = show ? '' : 'none';
+  }
+
+  private discardChanges(): void {
+    if (!this.editorView || !this.currentFilePath) return;
+    this.editorView.dispatch({
+      changes: { from: 0, to: this.editorView.state.doc.length, insert: this.originalContent },
+    });
+    this.hasUnsavedChanges = false;
+    this.saveIndicator.textContent = '';
+    this.updateEditButtons();
   }
 
   private async saveFile(): Promise<void> {
@@ -260,8 +308,10 @@ export class EditorPane {
       const result = await window.api.file.write(this.currentFilePath, content);
       if (result.success) {
         this.hasUnsavedChanges = false;
+        this.originalContent = content;
         this.saveIndicator.textContent = '\u2713';
         this.saveIndicator.title = 'Saved';
+        this.updateEditButtons();
         setTimeout(() => { if (!this.hasUnsavedChanges) this.saveIndicator.textContent = ''; }, 2000);
       } else {
         this.saveIndicator.textContent = '\u00D7';

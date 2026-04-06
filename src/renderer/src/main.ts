@@ -851,7 +851,7 @@ function main(): void {
   commandPalette.register({
     id: 'split-h',
     label: 'Split Horizontal',
-    shortcut: 'Ctrl+Shift+E',
+    shortcut: 'Ctrl+Shift+R',
     category: 'Layout',
     action: () => spawnInActiveProject('shell', 'horizontal'),
   });
@@ -1334,13 +1334,11 @@ function main(): void {
   // Load saved keybindings from file, then register
   loadUserKeybindingsAsync().then(() => {
     registerAllKeybindings();
-    // Ctrl+Shift+V via globalShortcut push from main process —
-    // Chromium on Linux intercepts Ctrl+Shift+V as a native paste before JS keydown fires,
-    // so we register it in the main process and push an IPC event here instead.
+    // Ctrl+Shift+V image paste — the main process intercepts this via
+    // before-input-event (prevents Chromium's native "paste as plain text")
+    // and pushes an IPC event here. This is the primary path on all platforms.
     window.api.clipboard.onTriggerPaste(() => {
-      console.log('[onTriggerPaste] IPC fired');
       const sessionId = workspaceSwitcher.getFocusedSessionId();
-      console.log('[onTriggerPaste] focusedSessionId:', sessionId);
       if (!sessionId) return;
       for (const ws of workspaceSwitcher.getAllWorkspaces()) {
         const panel = ws.terminalManager.getTerminal(sessionId);
@@ -1351,12 +1349,11 @@ function main(): void {
       }
     });
 
-    // Ctrl+Shift+V JS-level fallback — kept for non-Linux or if globalShortcut is unavailable.
-    // When xterm has focus, keybindings.ts lets the event through to xterm's custom key handler instead.
+    // Ctrl+Shift+V JS-level fallback for popout windows or if
+    // the main process handler is unavailable.
     keybindings.register('ctrl+shift+v', () => {
       const sessionId = workspaceSwitcher.getFocusedSessionId();
       if (!sessionId) return;
-      // Search all workspace terminal managers for the focused session
       for (const ws of workspaceSwitcher.getAllWorkspaces()) {
         const panel = ws.terminalManager.getTerminal(sessionId);
         if (panel) {
