@@ -137,6 +137,10 @@ contextBridge.exposeInMainWorld('api', {
     read: () => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_READ),
     readImage: () => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_READ_IMAGE) as Promise<string | null>,
     write: (text: string) => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_WRITE, text),
+    onTriggerPaste: (handler: () => void) => {
+      ipcRenderer.on(IPC_CHANNELS.CLIPBOARD_TRIGGER_PASTE, handler);
+      return () => { ipcRenderer.removeListener(IPC_CHANNELS.CLIPBOARD_TRIGGER_PASTE, handler); };
+    },
   },
   onboarding: {
     detectProjects: () => ipcRenderer.invoke(IPC_CHANNELS.ONBOARDING_DETECT_PROJECTS),

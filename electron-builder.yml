@@ -47,6 +47,7 @@ mac:
   entitlements: resources/entitlements.mac.plist
   entitlementsInherit: resources/entitlements.mac.inherit.plist
   notarize: false
+afterPack: scripts/after-pack.js
 afterSign: scripts/notarize.js
 dmg:
   artifactName: VibeIDE-${version}-${arch}.dmg

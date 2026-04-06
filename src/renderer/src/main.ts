@@ -1334,7 +1334,24 @@ function main(): void {
   // Load saved keybindings from file, then register
   loadUserKeybindingsAsync().then(() => {
     registerAllKeybindings();
-    // Ctrl+Shift+V fallback — fires only when xterm does NOT have focus (e.g. sidebar is active).
+    // Ctrl+Shift+V via globalShortcut push from main process —
+    // Chromium on Linux intercepts Ctrl+Shift+V as a native paste before JS keydown fires,
+    // so we register it in the main process and push an IPC event here instead.
+    window.api.clipboard.onTriggerPaste(() => {
+      console.log('[onTriggerPaste] IPC fired');
+      const sessionId = workspaceSwitcher.getFocusedSessionId();
+      console.log('[onTriggerPaste] focusedSessionId:', sessionId);
+      if (!sessionId) return;
+      for (const ws of workspaceSwitcher.getAllWorkspaces()) {
+        const panel = ws.terminalManager.getTerminal(sessionId);
+        if (panel) {
+          panel.triggerImagePaste();
+          return;
+        }
+      }
+    });
+
+    // Ctrl+Shift+V JS-level fallback — kept for non-Linux or if globalShortcut is unavailable.
     // When xterm has focus, keybindings.ts lets the event through to xterm's custom key handler instead.
     keybindings.register('ctrl+shift+v', () => {
       const sessionId = workspaceSwitcher.getFocusedSessionId();

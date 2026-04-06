@@ -220,6 +220,7 @@ export interface VibeIDEApi {
     read(): Promise<string>;
     readImage(): Promise<string | null>;
     write(text: string): Promise<void>;
+    onTriggerPaste(handler: () => void): () => void;
   };
   onboarding: {
     detectProjects(): Promise<Array<{ name: string; path: string }>>;

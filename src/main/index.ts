@@ -302,6 +302,20 @@ app.whenReady().then(() => {
   autoUpdateManager = new AutoUpdateManager();
   autoUpdateManager.start(mainWindow);
 
+  // Ctrl+Shift+V must be caught at the globalShortcut level on Linux —
+  // Chromium intercepts it as a native paste before JavaScript keydown fires.
+  // Intercept Ctrl+Shift+V before Chromium's native paste handler consumes it.
+  // globalShortcut can't be used here because another app owns the combo system-wide.
+  // before-input-event fires in the main process before any renderer JS or Chromium
+  // default handlers run, so we can preventDefault and push our own IPC instead.
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.control && input.shift && input.key === 'v') {
+      console.log('[before-input-event] Ctrl+Shift+V intercepted');
+      event.preventDefault();
+      mainWindow!.webContents.send('clipboard:trigger-paste');
+    }
+  });
+
   // Save window bounds on before-quit
   app.on('before-quit', () => {
     try {

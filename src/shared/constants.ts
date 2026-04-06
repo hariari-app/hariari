@@ -43,6 +43,7 @@ export const IPC_CHANNELS = {
   CLIPBOARD_READ: 'clipboard:read',
   CLIPBOARD_READ_IMAGE: 'clipboard:read-image',
   CLIPBOARD_WRITE: 'clipboard:write',
+  CLIPBOARD_TRIGGER_PASTE: 'clipboard:trigger-paste',
   SKILLS_MANIFEST: 'skills:manifest',
   SKILLS_INSTALL: 'skills:install',
   SKILLS_INSTALLED: 'skills:installed',
