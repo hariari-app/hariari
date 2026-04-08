@@ -67,14 +67,14 @@ describe('Terminal Theme', () => {
       expect(theme.terminal.background).toBe('#002b36');
     });
 
-    it('returns default (tokyoNight) for unknown name', () => {
+    it('returns default (brutalist) for unknown name', () => {
       const theme = getTheme('nonExistentTheme');
-      expect(theme.terminal.background).toBe('#1a1b26');
+      expect(theme.terminal.background).toBe('#0f0f23');
     });
 
     it('returns default for empty string', () => {
       const theme = getTheme('');
-      expect(theme.terminal.background).toBe('#1a1b26');
+      expect(theme.terminal.background).toBe('#0f0f23');
     });
 
     it('enriches chrome with derived tokens', () => {
@@ -114,9 +114,9 @@ describe('Terminal Theme', () => {
   });
 
   describe('loadSavedTheme', () => {
-    it('returns "tokyoNight" when localStorage is empty', () => {
+    it('returns "brutalist" when localStorage is empty', () => {
       const result = loadSavedTheme();
-      expect(result).toBe('tokyoNight');
+      expect(result).toBe('brutalist');
     });
 
     it('returns saved theme name when valid', () => {
@@ -125,18 +125,18 @@ describe('Terminal Theme', () => {
       expect(result).toBe('solarizedDark');
     });
 
-    it('returns "tokyoNight" when saved name is invalid', () => {
+    it('returns "brutalist" when saved name is invalid', () => {
       localStorageMock.setItem('hariari-theme', 'nonExistentTheme');
       const result = loadSavedTheme();
-      expect(result).toBe('tokyoNight');
+      expect(result).toBe('brutalist');
     });
 
-    it('returns "tokyoNight" when localStorage throws', () => {
+    it('returns "brutalist" when localStorage throws', () => {
       localStorageMock.getItem.mockImplementationOnce(() => {
         throw new Error('localStorage disabled');
       });
       const result = loadSavedTheme();
-      expect(result).toBe('tokyoNight');
+      expect(result).toBe('brutalist');
     });
   });
 
