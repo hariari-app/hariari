@@ -10,13 +10,13 @@ By participating in this project, you agree to abide by our [Code of Conduct](CO
 
 ### Reporting Bugs
 
-1. Check [existing issues](https://github.com/hariari/hariari/issues) to avoid duplicates
+1. Check [existing issues](https://github.com/hariari-app/hariari/issues) to avoid duplicates
 2. Use the **Bug Report** issue template
 3. Include your OS, Hariari version, and steps to reproduce
 
 ### Suggesting Features
 
-1. Open a [Feature Request](https://github.com/hariari/hariari/issues/new?template=feature_request.yml)
+1. Open a [Feature Request](https://github.com/hariari-app/hariari/issues/new?template=feature_request.yml)
 2. Describe the problem you're trying to solve, not just the solution
 3. Check existing issues and discussions first
 

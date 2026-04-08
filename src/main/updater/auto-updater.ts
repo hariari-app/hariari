@@ -93,7 +93,7 @@ export class AutoUpdateManager {
     autoUpdater.on('update-available', (info) => {
       if (this.manualUpdateOnly) {
         // Non-AppImage Linux: direct user to download from GitHub
-        const downloadUrl = `https://github.com/hariari/hariari/releases/tag/v${info.version}`;
+        const downloadUrl = `https://github.com/hariari-app/hariari/releases/tag/v${info.version}`;
         this.sendStatus({
           state: 'manual-available',
           version: info.version,
