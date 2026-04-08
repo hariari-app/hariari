@@ -9,7 +9,6 @@ dist/
 .env.*
 .vibeide-worktrees/
 docs/
-marketing/
 agent-os/
 .gstack/
 todo.md
