@@ -5,7 +5,7 @@ export interface AppTheme {
   readonly chrome: Readonly<Record<string, string>>;
 }
 
-const THEME_STORAGE_KEY = 'vibeide-theme';
+const THEME_STORAGE_KEY = 'hariari-theme';
 
 const tokyoNight: AppTheme = {
   terminal: {

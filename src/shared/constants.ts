@@ -83,6 +83,13 @@ export const IPC_CHANNELS = {
   OPEN_EXTERNAL: 'shell:open-external',
 } as const;
 
+export const APP_NAME = 'Hariari';
+export const CONFIG_DIR_NAME = '.hariari';
+export const WORKTREE_DIR_NAME = '.hariari-worktrees';
+export const BRANCH_PREFIX = 'hariari';
+export const GITHUB_OWNER = 'hariari-app';
+export const GITHUB_REPO = 'hariari';
+
 export const FRAME_COALESCE_MS = 16;
 export const DEFAULT_SCROLLBACK = 10_000;
 export const DEFAULT_COLS = 120;

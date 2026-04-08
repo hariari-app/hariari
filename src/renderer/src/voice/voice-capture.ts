@@ -37,7 +37,7 @@ declare global {
   }
 }
 
-// Voice settings are cached in memory, loaded from ~/.vibeide/settings.json via IPC
+// Voice settings are cached in memory, loaded from ~/.hariari/settings.json via IPC
 let voiceSettings: { apiKey: string; provider: string; postProcessMode: string; deviceId: string } = { apiKey: '', provider: 'openai', postProcessMode: 'command', deviceId: '' };
 let settingsLoaded = false;
 

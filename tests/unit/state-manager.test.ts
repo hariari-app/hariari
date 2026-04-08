@@ -6,7 +6,7 @@ import type { AppState } from '../../src/shared/ipc-types';
 import type { LayoutNode } from '../../src/shared/layout-types';
 import { StateManager } from '../../src/main/state/state-manager';
 
-// Helper: create a StateManager that uses a custom directory instead of ~/.vibeide
+// Helper: create a StateManager that uses a custom directory instead of ~/.hariari
 function createTestStateManager(stateDir: string): StateManager {
   const manager = new StateManager();
   // Override private fields for testing with a temp directory
@@ -56,7 +56,7 @@ describe('StateManager', () => {
   let manager: ReturnType<typeof createTestStateManager>;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vibeide-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hariari-test-'));
     manager = createTestStateManager(tmpDir);
   });
 

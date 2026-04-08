@@ -15,7 +15,7 @@ function createTestProjectManager(configDir: string): ProjectManager {
     value: path.join(configDir, 'workspaces'),
     writable: false,
   });
-  // Clear the projects loaded from real ~/.vibeide
+  // Clear the projects loaded from real ~/.hariari
   Object.defineProperty(manager, 'projects', { value: [], writable: true });
   return manager;
 }
@@ -27,7 +27,7 @@ describe('ProjectManager', () => {
   let manager: ProjectManager;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vibeide-test-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hariari-test-'));
     const configDir = path.join(tempDir, 'config');
     fs.mkdirSync(configDir, { recursive: true });
 

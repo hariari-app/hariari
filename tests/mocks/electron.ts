@@ -5,10 +5,10 @@ import path from 'node:path';
 export const app = {
   getPath: vi.fn((name: string) => {
     if (name === 'home') return os.homedir();
-    if (name === 'userData') return path.join(os.tmpdir(), 'vibeide-test');
+    if (name === 'userData') return path.join(os.tmpdir(), 'hariari-test');
     return os.tmpdir();
   }),
-  getName: vi.fn(() => 'vibeide'),
+  getName: vi.fn(() => 'hariari'),
   getVersion: vi.fn(() => '0.1.0'),
   quit: vi.fn(),
   on: vi.fn(),

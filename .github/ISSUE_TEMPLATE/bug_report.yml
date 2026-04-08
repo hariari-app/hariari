@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug in VibeIDE
+description: Report a bug in Hariari
 labels: ["bug"]
 body:
   - type: markdown
@@ -9,7 +9,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: VibeIDE Version
+      label: Hariari Version
       description: Run `Help > About` or check the title bar
       placeholder: "0.5.4"
     validations:

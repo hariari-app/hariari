@@ -126,7 +126,7 @@ export interface UpdateStatus {
   readonly downloadUrl?: string;
 }
 
-export interface VibeIDEApi {
+export interface HariariApi {
   platform: NodeJS.Platform;
   appVersion: string;
   pty: {

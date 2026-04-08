@@ -4,7 +4,7 @@ import type { AgentType } from '../../shared/agent-types';
 import type { WorktreeInfo, WorktreeMergeResult, WorktreeDiffSummary, WorktreeDiffFile } from '../../shared/worktree-types';
 import { runGit, isGitRepo } from './git-executor';
 
-const WORKTREE_DIR = '.vibeide-worktrees';
+const WORKTREE_DIR = '.hariari-worktrees';
 
 export class WorktreeManager {
   private readonly worktrees = new Map<string, WorktreeInfo>();
@@ -17,12 +17,12 @@ export class WorktreeManager {
     if (!isGitRepo(projectPath)) return null;
 
     const shortId = agentId.slice(0, 8);
-    const branchName = `vibeide/${agentType}-${shortId}`;
+    const branchName = `hariari/${agentType}-${shortId}`;
     const worktreeBase = path.join(projectPath, WORKTREE_DIR);
     const worktreePath = path.join(worktreeBase, shortId);
 
     try {
-      // Ensure .vibeide-worktrees is in .gitignore
+      // Ensure .hariari-worktrees is in .gitignore
       await this.ensureGitignore(projectPath);
 
       // Ensure worktree base directory exists
@@ -97,7 +97,7 @@ export class WorktreeManager {
       // First, commit any uncommitted changes in the worktree
       await runGit(info.worktreePath, ['add', '-A']);
       await runGit(info.worktreePath, [
-        'commit', '-m', `vibeide: agent ${info.agentId.slice(0, 8)} changes`,
+        'commit', '-m', `hariari: agent ${info.agentId.slice(0, 8)} changes`,
         '--allow-empty',
       ]);
 

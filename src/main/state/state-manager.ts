@@ -87,7 +87,7 @@ export class StateManager {
   private readonly workspacesDir: string;
 
   constructor() {
-    this.stateDir = path.join(os.homedir(), '.vibeide');
+    this.stateDir = path.join(os.homedir(), '.hariari');
     this.statePath = path.join(this.stateDir, 'state.json');
     this.workspacesDir = path.join(this.stateDir, 'workspaces');
   }

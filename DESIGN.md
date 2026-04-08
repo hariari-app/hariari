@@ -1,10 +1,10 @@
-# VibeIDE Design System
+# Hariari Design System
 
 > Source of truth for visual design decisions. Update this document when changing tokens, components, or brand elements.
 
 ## Brand
 
-**Name:** VibeIDE
+**Name:** Hariari
 **Mascot:** Dragonfly (gradient blue-to-green wings, monochrome variant for chrome)
 **Default theme:** Tokyo Night
 **Tagline:** AI agent terminal orchestrator

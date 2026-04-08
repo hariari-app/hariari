@@ -37,7 +37,7 @@ export class ProjectManager {
   private projects: ProjectInfo[] = [];
 
   constructor() {
-    this.configDir = path.join(os.homedir(), '.vibeide');
+    this.configDir = path.join(os.homedir(), '.hariari');
     this.projectsPath = path.join(this.configDir, 'projects.json');
     this.workspacesDir = path.join(this.configDir, 'workspaces');
     this.loadProjects();

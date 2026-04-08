@@ -71,7 +71,7 @@ export class AgentStatusBar {
     this.branchEl = document.createElement('span');
     this.branchEl.className = 'status-bar-branch';
     if (agentInfo.worktree) {
-      const shortBranch = agentInfo.worktree.branchName.replace('vibeide/', '');
+      const shortBranch = agentInfo.worktree.branchName.replace('hariari/', '');
       this.branchEl.textContent = '\u2387 ' + shortBranch;
       this.branchEl.title = agentInfo.worktree.branchName;
     }

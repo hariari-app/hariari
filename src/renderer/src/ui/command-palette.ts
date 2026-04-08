@@ -21,7 +21,7 @@ interface ScoredCommand {
   readonly matchIndices: readonly number[];
 }
 
-const RECENT_STORAGE_KEY = 'vibeide-recent-commands';
+const RECENT_STORAGE_KEY = 'hariari-recent-commands';
 const MAX_RECENT = 5;
 
 function fuzzyMatch(text: string, query: string): { score: number; indices: number[] } | null {

@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Have an idea for VibeIDE? We'd love to hear it!
+        Have an idea for Hariari? We'd love to hear it!
   - type: textarea
     id: problem
     attributes:

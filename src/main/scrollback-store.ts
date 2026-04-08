@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
 
-const SCROLLBACK_DIR = join(homedir(), '.vibeide', 'scrollback');
+const SCROLLBACK_DIR = join(homedir(), '.hariari', 'scrollback');
 const MAX_SIZE_BYTES = 500 * 1024;
 const COMPRESS_THRESHOLD = 100 * 1024;
 const SESSION_ID_RE = /^[a-f0-9-]+$/i;

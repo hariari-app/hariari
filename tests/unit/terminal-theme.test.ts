@@ -120,13 +120,13 @@ describe('Terminal Theme', () => {
     });
 
     it('returns saved theme name when valid', () => {
-      localStorageMock.setItem('vibeide-theme', 'solarizedDark');
+      localStorageMock.setItem('hariari-theme', 'solarizedDark');
       const result = loadSavedTheme();
       expect(result).toBe('solarizedDark');
     });
 
     it('returns "tokyoNight" when saved name is invalid', () => {
-      localStorageMock.setItem('vibeide-theme', 'nonExistentTheme');
+      localStorageMock.setItem('hariari-theme', 'nonExistentTheme');
       const result = loadSavedTheme();
       expect(result).toBe('tokyoNight');
     });

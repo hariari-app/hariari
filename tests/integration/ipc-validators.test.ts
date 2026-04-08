@@ -174,7 +174,7 @@ describe('validateAgentSpawnRequest', () => {
 
   beforeEach(() => {
     originalHome = process.env.HOME;
-    process.env.HOME = '/tmp/vibeide-test-home';
+    process.env.HOME = '/tmp/hariari-test-home';
   });
 
   afterEach(() => {
@@ -233,7 +233,7 @@ describe('validateAgentSpawnRequest', () => {
     const result = validateAgentSpawnRequest({
       type: 'claude',
       projectId: VALID_UUID,
-      cwd: '/tmp/vibeide-test-home/projects',
+      cwd: '/tmp/hariari-test-home/projects',
     });
     // path.resolve may transform the path on Windows
     expect(result.cwd).toBeTruthy();
@@ -243,7 +243,7 @@ describe('validateAgentSpawnRequest', () => {
     const result = validateAgentSpawnRequest({
       type: 'claude',
       projectId: VALID_UUID,
-      cwd: '/tmp/vibeide-test-home',
+      cwd: '/tmp/hariari-test-home',
     });
     expect(result.cwd).toBeTruthy();
   });
@@ -263,7 +263,7 @@ describe('validateAgentSpawnRequest', () => {
     const result = validateAgentSpawnRequest({
       type: 'claude',
       projectId: VALID_UUID,
-      cwd: '/tmp/vibeide-test-home/../../etc',
+      cwd: '/tmp/hariari-test-home/../../etc',
     });
     expect(result.cwd).toBeTruthy();
   });

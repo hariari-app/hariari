@@ -1,6 +1,6 @@
-# VibeIDE Design TODOs
+# Hariari Design TODOs
 
-From design review on 2026-03-30 (branch: vibeide/claude-99198f97).
+From design review on 2026-03-30 (branch: hariari/claude-99198f97).
 
 ## Quick Fixes (< 15 min each with CC)
 
@@ -12,7 +12,7 @@ From design review on 2026-03-30 (branch: vibeide/claude-99198f97).
 
 ## Medium (15-30 min each with CC)
 
-- [x] **Replace Inter with Space Grotesk as primary UI font** — Change `font-family` in `global.css:82` from Inter to Space Grotesk. Keep Inter as fallback. JetBrains Mono stays for terminal/code. **Bundle SpaceGrotesk-Regular.ttf (400 weight)** from Google Fonts (~30KB) alongside existing Medium + Bold. Add `@font-face` for weight 400. Verify readability at 10-11px sizes. Gives VibeIDE typographic brand identity.
+- [x] **Replace Inter with Space Grotesk as primary UI font** — Change `font-family` in `global.css:82` from Inter to Space Grotesk. Keep Inter as fallback. JetBrains Mono stays for terminal/code. **Bundle SpaceGrotesk-Regular.ttf (400 weight)** from Google Fonts (~30KB) alongside existing Medium + Bold. Add `@font-face` for weight 400. Verify readability at 10-11px sizes. Gives Hariari typographic brand identity.
 
 - [x] **Add empty states for sidebar and search** — (a) Sidebar zero-project state: dragonfly icon + "No projects yet" + "Open Folder" button. **Note:** only shows when `onboardingComplete` is true (onboarding owns the first-run flow, sidebar owns post-onboarding empty state). Document this boundary in code comments. (b) Sidebar zero-agent state per project: "No agents running" + "Launch Agent" button. (c) Command palette: "No matching commands" message. (d) File finder: "No files found" message. Empty states are features, not afterthoughts.
 
@@ -36,6 +36,6 @@ From design review on 2026-03-30 (branch: vibeide/claude-99198f97).
 
 ## Approved Design Direction
 
-Mockup: `~/.gstack/projects/nandadevaiah-vibeide/designs/core-ui-review-20260330/variant-D.png`
+Mockup: `~/.gstack/projects/nandadevaiah-hariari/designs/core-ui-review-20260330/variant-D.png`
 
 Unified sidebar/icon-rail: expanded (240px) with project tree + agents, collapsed (48px) icon rail with stacked project letter avatars and agent type icons. Bottom hint bar stays separate with keyboard shortcuts. Animated toggle at 150ms ease-out.

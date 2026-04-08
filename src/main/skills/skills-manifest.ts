@@ -3,7 +3,7 @@
 import type { SkillManifest } from '../../shared/skills-types';
 
 // This manifest is bundled with the app. It describes what's available
-// without requiring a network request. Updated with each VibeIDE release.
+// without requiring a network request. Updated with each Hariari release.
 const BUNDLED_MANIFEST: SkillManifest = {
   version: '1.0.0',
   skills: [

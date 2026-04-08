@@ -989,7 +989,7 @@ function main(): void {
   });
 
   // Voice input
-  // Voice command router — detects "vibeide <command>" vs terminal text
+  // Voice command router — detects "hariari <command>" vs terminal text
   const voiceRouter = new VoiceRouter((text) => {
     const sessionId = workspaceSwitcher.getFocusedSessionId();
     if (sessionId) {

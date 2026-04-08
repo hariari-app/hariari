@@ -8,10 +8,10 @@ import type { AgentType } from '../../shared/agent-types';
 import type { SkillInstallRequest, SkillsInstallResponse, SkillInstallResult, InstalledSkillRecord } from '../../shared/skills-types';
 import { getSkillsManifest } from './skills-manifest';
 
-const SKILLS_DIR = path.join(homedir(), '.vibeide', 'skills');
+const SKILLS_DIR = path.join(homedir(), '.hariari', 'skills');
 const INSTALLED_JSON = path.join(SKILLS_DIR, 'installed.json');
 
-const REPO_OWNER = 'vibeide-app';
+const REPO_OWNER = 'hariari-app';
 const REPO_NAME = 'AISkills';
 const BRANCH = 'main';
 
@@ -92,7 +92,7 @@ function fetchRaw(filePath: string): Promise<string> {
 async function fetchDirectory(dirPath: string): Promise<Array<{ name: string; path: string; type: string }>> {
   const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${dirPath}?ref=${BRANCH}`;
   return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'User-Agent': 'VibeIDE', 'Accept': 'application/vnd.github.v3+json' } }, (res) => {
+    https.get(url, { headers: { 'User-Agent': 'Hariari', 'Accept': 'application/vnd.github.v3+json' } }, (res) => {
       if (res.statusCode === 403) {
         reject(new Error('GitHub API rate limit exceeded. Try again later.'));
         return;
@@ -157,7 +157,7 @@ export async function installSkills(request: SkillInstallRequest): Promise<Skill
     }
 
     try {
-      // Download to vibeide cache
+      // Download to hariari cache
       const cacheDir = path.join(SKILLS_DIR, 'cache', skill.id);
       await ensureDir(cacheDir);
       await installSkillFiles(skill.archivePath, cacheDir);

@@ -30,7 +30,7 @@ try { earlyIpcMain.removeHandler('settings:load'); } catch { /* */ }
 try { earlyIpcMain.removeHandler('settings:save'); } catch { /* */ }
 earlyIpcMain.handle('keybindings:load', () => {
   try {
-    const filePath = earlyPath.join(earlyOs.homedir(), '.vibeide', 'keybindings.json');
+    const filePath = earlyPath.join(earlyOs.homedir(), '.hariari', 'keybindings.json');
     if (!earlyFs.existsSync(filePath)) return {};
     const raw = earlyFs.readFileSync(filePath, 'utf-8');
     const parsed = JSON.parse(raw);
@@ -41,7 +41,7 @@ earlyIpcMain.handle('keybindings:load', () => {
 earlyIpcMain.handle('keybindings:save', (_event: unknown, raw: unknown) => {
   try {
     if (typeof raw !== 'object' || raw === null) return;
-    const dir = earlyPath.join(earlyOs.homedir(), '.vibeide');
+    const dir = earlyPath.join(earlyOs.homedir(), '.hariari');
     earlyFs.mkdirSync(dir, { recursive: true });
     earlyFs.writeFileSync(earlyPath.join(dir, 'keybindings.json'), JSON.stringify(raw, null, 2), 'utf-8');
   } catch { /* */ }
@@ -49,7 +49,7 @@ earlyIpcMain.handle('keybindings:save', (_event: unknown, raw: unknown) => {
 
 earlyIpcMain.handle('settings:load', () => {
   try {
-    const filePath = earlyPath.join(earlyOs.homedir(), '.vibeide', 'settings.json');
+    const filePath = earlyPath.join(earlyOs.homedir(), '.hariari', 'settings.json');
     if (!earlyFs.existsSync(filePath)) return {};
     const raw = earlyFs.readFileSync(filePath, 'utf-8');
     const parsed = JSON.parse(raw);
@@ -60,7 +60,7 @@ earlyIpcMain.handle('settings:load', () => {
 earlyIpcMain.handle('settings:save', (_event: unknown, raw: unknown) => {
   try {
     if (typeof raw !== 'object' || raw === null) return;
-    const dir = earlyPath.join(earlyOs.homedir(), '.vibeide');
+    const dir = earlyPath.join(earlyOs.homedir(), '.hariari');
     earlyFs.mkdirSync(dir, { recursive: true });
     earlyFs.writeFileSync(earlyPath.join(dir, 'settings.json'), JSON.stringify(raw, null, 2), 'utf-8');
   } catch { /* */ }
@@ -135,7 +135,7 @@ earlyIpcMain.handle('clipboard:read-image', async () => {
   const size = image.getSize();
   if (size.width * size.height > 7680 * 4320) return null;
   const png = image.toPNG();
-  const dir = path.join(app.getPath('temp'), 'vibeide-clipboard');
+  const dir = path.join(app.getPath('temp'), 'hariari-clipboard');
   await fs.mkdir(dir, { recursive: true });
   const filePath = path.join(dir, `screenshot-${Date.now()}.png`);
   await fs.writeFile(filePath, png);
@@ -168,7 +168,7 @@ earlyIpcMain.handle('window:popout-file', async (_event: unknown, args: { projec
   const popout = new BW({
     width: 1000,
     height: 750,
-    title: `${projectName} — File Viewer — VibeIDE`,
+    title: `${projectName} — File Viewer — Hariari`,
     webPreferences: {
       preload: nodePath.join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -216,7 +216,7 @@ earlyIpcMain.handle('window:popout-editor', async (_event: unknown, raw: unknown
       height: 800,
       minWidth: 600,
       minHeight: 400,
-      title: `${projectName} — VibeIDE`,
+      title: `${projectName} — Hariari`,
       webPreferences: {
         preload: nodePath.join(__dirname, '../preload/index.js'),
         sandbox: false,
