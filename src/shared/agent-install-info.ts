@@ -81,12 +81,9 @@ export const AGENT_INSTALL_INFO: Partial<Record<AgentType, AgentInstallInfo>> = 
   copilot: {
     command: 'copilot',
     displayName: 'GitHub Copilot CLI',
-    installCommand: pick({
-      npm: 'npm install -g @github/copilot',
-      win: 'winget install GitHub.cli && gh extension install github/gh-copilot',
-    }),
+    installCommand: 'gh extension install github/gh-copilot',
     docsUrl: 'https://docs.github.com/en/copilot',
-    description: 'GitHub\'s AI coding assistant for the terminal',
+    description: 'GitHub\'s AI coding assistant for the terminal (requires GitHub CLI)',
   },
   amp: {
     command: 'amp',
