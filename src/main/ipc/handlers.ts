@@ -871,19 +871,8 @@ export function registerIpcHandlers(
         child.on('close', async (code) => {
           if (win && !win.isDestroyed()) win.removeListener('closed', onWindowClosed);
           if (code === 0) {
-            sendOutput('\n✓ Install complete. Verifying...\n');
-            // Verify the agent is now available
-            const { execFile } = await import('node:child_process');
-            const lookupCmd = isWin ? 'where.exe' : 'which';
-            execFile(lookupCmd, [info.command], { timeout: 5000, env }, (err) => {
-              if (err) {
-                sendOutput('⚠ Installed but command not found in PATH. You may need to restart.\n');
-                resolve({ success: false, error: 'Installed but not found in PATH' });
-              } else {
-                sendOutput(`✓ ${info.displayName} is ready.\n`);
-                resolve({ success: true });
-              }
-            });
+            sendOutput(`\n✓ ${info.displayName} installed successfully.\n`);
+            resolve({ success: true });
           } else {
             sendOutput(`\n✗ Install failed (exit code ${code}).\n`);
             resolve({ success: false, error: `Exit code ${code}` });
