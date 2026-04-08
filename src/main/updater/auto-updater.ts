@@ -98,7 +98,7 @@ export class AutoUpdateManager {
       this.sendStatus({ state: 'checking' });
     });
 
-    getAutoUpdater().on('update-available', (info) => {
+    getAutoUpdater().on('update-available', (info: { version: string }) => {
       if (this.manualUpdateOnly) {
         // Non-AppImage Linux: direct user to download from GitHub
         const downloadUrl = `https://github.com/hariari-app/hariari/releases/tag/v${info.version}`;
@@ -119,21 +119,21 @@ export class AutoUpdateManager {
       this.sendStatus({ state: 'not-available' });
     });
 
-    getAutoUpdater().on('download-progress', (progress) => {
+    getAutoUpdater().on('download-progress', (progress: { percent: number }) => {
       this.sendStatus({
         state: 'downloading',
         progress: Math.round(progress.percent),
       });
     });
 
-    getAutoUpdater().on('update-downloaded', (info) => {
+    getAutoUpdater().on('update-downloaded', (info: { version: string }) => {
       this.sendStatus({
         state: 'downloaded',
         version: info.version,
       });
     });
 
-    getAutoUpdater().on('error', (err) => {
+    getAutoUpdater().on('error', (err: Error) => {
       console.error('[AutoUpdater] Error:', err.message);
       // Sanitize error — don't expose internal paths or API responses to renderer
       const safeError = err.message.includes('net::')
