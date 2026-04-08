@@ -69,7 +69,7 @@ exports.default = async function notarizing(context) {
     } catch {
       console.log('  • notarization still in progress at Apple — build will continue');
       console.log('  • the signed .dmg will be produced without the notarization ticket');
-      console.log('  • staple manually later: xcrun stapler staple VibeIDE.app');
+      console.log('  • staple manually later: xcrun stapler staple Hariari.app');
     }
   } catch (error) {
     console.error('  • notarization submission failed:', error.message);

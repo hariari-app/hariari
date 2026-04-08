@@ -1,5 +1,5 @@
-appId: com.vibeide.app
-productName: VibeIDE
+appId: com.hariari.app
+productName: Hariari
 directories:
   buildResources: resources
   output: dist
@@ -17,11 +17,11 @@ linux:
   icon: resources/icons/512x512.png
   synopsis: AI agent terminal orchestrator for vibe coders
   description: >
-    VibeIDE is a project-centric terminal orchestrator for developers who use
+    Hariari is a project-centric terminal orchestrator for developers who use
     AI agents. Manage multiple projects, spawn terminals and AI agents,
     switch between workspaces, and monitor agent status — all from one app.
   desktop:
-    StartupWMClass: vibeide
+    StartupWMClass: hariari
 deb:
   afterInstall: scripts/post-install.sh
   depends:
@@ -34,14 +34,14 @@ deb:
     - libatspi2.0-0
     - libuuid1
 appImage:
-  artifactName: VibeIDE-${version}-${arch}.AppImage
+  artifactName: Hariari-${version}-${arch}.AppImage
 mac:
   target:
     - dmg
     - zip
   category: public.app-category.developer-tools
   icon: resources/icons/512x512.png
-  artifactName: VibeIDE-${version}-${arch}.${ext}
+  artifactName: Hariari-${version}-${arch}.${ext}
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: resources/entitlements.mac.plist
@@ -50,12 +50,12 @@ mac:
 afterPack: scripts/after-pack.js
 afterSign: scripts/notarize.js
 dmg:
-  artifactName: VibeIDE-${version}-${arch}.dmg
+  artifactName: Hariari-${version}-${arch}.dmg
 win:
   target:
     - nsis
   icon: resources/icons/512x512.png
-  artifactName: VibeIDE-${version}-${arch}.${ext}
+  artifactName: Hariari-${version}-${arch}.${ext}
   signtoolOptions:
     sign: ./scripts/azure-sign.js
     signingHashAlgorithms:
@@ -63,8 +63,8 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  shortcutName: VibeIDE
+  shortcutName: Hariari
 publish:
   provider: github
-  owner: vibeide-app
-  repo: vibeide
+  owner: hariari-app
+  repo: hariari

@@ -26,7 +26,7 @@ describe('StateManager - project workspace state', () => {
   let manager: StateManager;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vibeide-ws-test-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hariari-ws-test-'));
     manager = createTestStateManager(tempDir);
   });
 

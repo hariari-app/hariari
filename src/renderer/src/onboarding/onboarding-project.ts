@@ -13,7 +13,7 @@ export class ProjectStep implements StepRenderer {
 
     const subhead = document.createElement('p');
     subhead.className = 'onboarding-body';
-    subhead.textContent = 'Point VibeIDE at a code directory.';
+    subhead.textContent = 'Point Hariari at a code directory.';
 
     const listContainer = document.createElement('div');
     listContainer.className = 'onboarding-project-list';

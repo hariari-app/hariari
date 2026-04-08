@@ -1,4 +1,4 @@
-// VibeIDE dragonfly logo — inline SVG for use in UI components
+// Hariari dragonfly logo — inline SVG for use in UI components
 
 /** Dragonfly logo with gradient wings (for color contexts like onboarding). */
 export function logoSvg(size: number): string {

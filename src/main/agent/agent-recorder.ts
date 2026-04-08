@@ -16,7 +16,7 @@ export class AgentRecorder {
   private readonly basePath: string;
 
   constructor() {
-    this.basePath = path.join(app.getPath('home'), '.vibeide', 'sessions');
+    this.basePath = path.join(app.getPath('home'), '.hariari', 'sessions');
   }
 
   startRecording(agentId: string, sessionId: string): void {

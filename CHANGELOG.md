@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to VibeIDE are documented in this file.
+All notable changes to Hariari are documented in this file.
 
 ## [0.5.2] — 2026-04-04
 

@@ -1,5 +1,5 @@
 // Voice command router — detects app commands vs terminal text
-// App commands are prefixed with "vibeide" or match known command aliases
+// App commands are prefixed with "hariari" or match known command aliases
 // Everything else is typed into the focused terminal
 
 export interface VoiceCommand {

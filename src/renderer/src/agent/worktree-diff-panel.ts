@@ -57,7 +57,7 @@ export class WorktreeDiffPanel {
 
     const branch = document.createElement('span');
     branch.className = 'wt-diff-branch';
-    branch.textContent = branchName.replace('vibeide/', '');
+    branch.textContent = branchName.replace('hariari/', '');
 
     const closeBtn = document.createElement('button');
     closeBtn.className = 'file-viewer-close';

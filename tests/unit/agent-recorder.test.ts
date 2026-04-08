@@ -24,8 +24,8 @@ describe('AgentRecorder', () => {
 
   beforeEach(() => {
     recorder = new AgentRecorder();
-    // The recorder uses app.getPath('home') + '/.vibeide/sessions'
-    basePath = path.join(os.homedir(), '.vibeide', 'sessions');
+    // The recorder uses app.getPath('home') + '/.hariari/sessions'
+    basePath = path.join(os.homedir(), '.hariari', 'sessions');
   });
 
   afterEach(() => {

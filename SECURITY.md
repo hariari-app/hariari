@@ -15,8 +15,8 @@ We only patch the latest release. Please upgrade to the latest version before re
 
 Instead, please report them privately:
 
-1. **GitHub Security Advisories** (preferred): Go to the [Security tab](https://github.com/vibeide-app/vibeide/security/advisories/new) and create a new advisory
-2. **Email**: Send details to **hello@vibeide.app** with subject line `[SECURITY]`
+1. **GitHub Security Advisories** (preferred): Go to the [Security tab](https://github.com/hariari-app/hariari/security/advisories/new) and create a new advisory
+2. **Email**: Send details to **hello@hariari.app** with subject line `[SECURITY]`
 
 ### What to Include
 
@@ -42,7 +42,7 @@ Instead, please report them privately:
 
 The following are in scope:
 
-- The VibeIDE Electron application
+- The Hariari Electron application
 - IPC communication between main and renderer processes
 - PTY/terminal handling and command execution
 - File system access and permissions

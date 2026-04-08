@@ -1,5 +1,5 @@
 /**
- * Generate VibeIDE vector icon — abstract geometric dragonfly.
+ * Generate Hariari vector icon — abstract geometric dragonfly.
  * Clean SVG with proper vector paths, rendered to PNG at all sizes.
  * Run: node scripts/generate-icon.js
  */

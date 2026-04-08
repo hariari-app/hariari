@@ -1,4 +1,4 @@
-# VibeIDE
+# Hariari
 
 **The AI agent terminal orchestrator for vibe coders.**
 
@@ -27,7 +27,7 @@ Run Claude, Gemini, Aider, and 9 more AI agents side by side — in split panes,
 
 ## AI Skills
 
-VibeIDE bundles pre-packaged skills from the [AISkills](https://github.com/vibeide-app/AISkills) repository. During onboarding (or later from the command palette), you can install:
+Hariari bundles pre-packaged skills from the [AISkills](https://github.com/hariari-app/AISkills) repository. During onboarding (or later from the command palette), you can install:
 
 - **Coding standards** — universal best practices, language-specific rules
 - **TDD workflow** — test-driven development with 80%+ coverage enforcement
@@ -40,37 +40,37 @@ Skills are installed to each agent's config directory (`~/.claude/skills/`, `~/.
 
 ## Install
 
-Download the latest release from the [Releases](https://github.com/vibeide-app/vibeide/releases) page, or use the commands below.
+Download the latest release from the [Releases](https://github.com/hariari-app/hariari/releases) page, or use the commands below.
 
 ### Linux
 
 ```bash
 # Debian/Ubuntu
-gh release download --repo vibeide-app/vibeide --pattern "*.deb" && sudo dpkg -i vibeide_*_amd64.deb
+gh release download --repo hariari-app/hariari --pattern "*.deb" && sudo dpkg -i hariari_*_amd64.deb
 
 # AppImage (any distro, no install needed)
-gh release download --repo vibeide-app/vibeide --pattern "*.AppImage" && chmod +x VibeIDE-*.AppImage
+gh release download --repo hariari-app/hariari --pattern "*.AppImage" && chmod +x Hariari-*.AppImage
 ```
 
 ### macOS
 
 ```bash
-gh release download --repo vibeide-app/vibeide --pattern "*.dmg"
+gh release download --repo hariari-app/hariari --pattern "*.dmg"
 ```
 
-Open the downloaded `.dmg` and drag VibeIDE to Applications. macOS builds are code-signed and notarized.
+Open the downloaded `.dmg` and drag Hariari to Applications. macOS builds are code-signed and notarized.
 
 ### Windows
 
 ```bash
-gh release download --repo vibeide-app/vibeide --pattern "*.exe"
+gh release download --repo hariari-app/hariari --pattern "*.exe"
 ```
 
 Run the downloaded `.exe` installer. Windows builds are signed with Azure Trusted Signing.
 
 ## Quick Start
 
-1. Open VibeIDE — the onboarding wizard detects installed agents
+1. Open Hariari — the onboarding wizard detects installed agents
 2. Install AI Skills (recommended preset or custom selection)
 3. Add a project directory
 4. Click **+** on a project to spawn an agent, or use **Launch Workspace** (sidebar play button) for multi-agent setup
@@ -101,8 +101,8 @@ On macOS, `Ctrl` is replaced by `Cmd` (`⌘`).
 ## Build from Source
 
 ```bash
-git clone https://github.com/vibeide-app/vibeide.git
-cd vibeide
+git clone https://github.com/hariari-app/hariari.git
+cd hariari
 npm install
 npm run dev        # development
 npm run dist:linux # build .deb + .AppImage

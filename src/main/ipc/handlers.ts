@@ -32,7 +32,7 @@ const MAX_AGENTS = 20;
 /** Read voice API key directly from settings file in main process */
 function readVoiceApiKey(): string {
   try {
-    const filePath = path.join(os.homedir(), '.vibeide', 'settings.json');
+    const filePath = path.join(os.homedir(), '.hariari', 'settings.json');
     if (!fs.existsSync(filePath)) return '';
     const raw = fs.readFileSync(filePath, 'utf-8');
     const parsed = JSON.parse(raw);
@@ -351,7 +351,7 @@ export function registerIpcHandlers(
       }
 
       // Build multipart form data manually for Node.js fetch (Groq/OpenAI)
-      const boundary = '----VibeIDEBoundary' + Date.now();
+      const boundary = '----HariariBoundary' + Date.now();
       const parts: Buffer[] = [];
 
       // File part
