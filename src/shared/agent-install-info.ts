@@ -8,33 +8,6 @@ export interface AgentInstallInfo {
   readonly description: string;
 }
 
-type Platform = 'darwin' | 'win32' | 'linux';
-
-interface PlatformCommands {
-  readonly npm: string;
-  readonly mac?: string;
-  readonly win?: string;
-}
-
-function getPlatform(): Platform {
-  // @ts-ignore - window is not defined in node context
-  if (typeof window !== 'undefined' && 'api' in window) {
-    // @ts-ignore
-    return (window as { api: { platform: Platform } }).api.platform;
-  }
-  if (typeof process !== 'undefined') {
-    return process.platform as Platform;
-  }
-  return 'linux';
-}
-
-function pick(commands: PlatformCommands): string {
-  const platform = getPlatform();
-  if (platform === 'darwin' && commands.mac) return commands.mac;
-  if (platform === 'win32' && commands.win) return commands.win;
-  return commands.npm;
-}
-
 export const AGENT_INSTALL_INFO: Partial<Record<AgentType, AgentInstallInfo>> = {
   claude: {
     command: 'claude',
@@ -78,13 +51,6 @@ export const AGENT_INSTALL_INFO: Partial<Record<AgentType, AgentInstallInfo>> = 
     docsUrl: 'https://cline.bot',
     description: 'AI agent control plane for your terminal',
   },
-  copilot: {
-    command: 'copilot',
-    displayName: 'GitHub Copilot CLI',
-    installCommand: 'gh extension install github/gh-copilot',
-    docsUrl: 'https://docs.github.com/en/copilot',
-    description: 'GitHub\'s AI coding assistant for the terminal (requires GitHub CLI)',
-  },
   amp: {
     command: 'amp',
     displayName: 'Amp',
@@ -98,23 +64,6 @@ export const AGENT_INSTALL_INFO: Partial<Record<AgentType, AgentInstallInfo>> = 
     installCommand: 'npm install -g @continuedev/cli',
     docsUrl: 'https://docs.continue.dev/cli/overview',
     description: 'Open-source AI code assistant — same engine as the IDE extension',
-  },
-  cursor: {
-    command: 'cursor-agent',
-    displayName: 'Cursor CLI',
-    installCommand: pick({
-      npm: 'curl https://cursor.com/install -fsS | bash',
-      win: 'powershell -c "irm https://cursor.com/install.ps1 | iex"',
-    }),
-    docsUrl: 'https://cursor.com/cli',
-    description: 'Cursor\'s AI coding agent for the terminal',
-  },
-  crush: {
-    command: 'crush',
-    displayName: 'Crush',
-    installCommand: 'go install github.com/charmbracelet/crush@latest',
-    docsUrl: 'https://github.com/charmbracelet/crush',
-    description: 'Charmbracelet\'s terminal AI agent with Bubble Tea TUI (requires Go)',
   },
   qwen: {
     command: 'qwen',

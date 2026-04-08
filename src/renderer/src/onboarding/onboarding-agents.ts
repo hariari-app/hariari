@@ -18,11 +18,8 @@ const AGENT_ORDER: readonly AgentRow[] = [
   { type: 'codex', displayName: 'Codex CLI', command: 'codex' },
   { type: 'amp', displayName: 'Amp', command: 'amp' },
   { type: 'opencode', displayName: 'OpenCode', command: 'opencode' },
-  { type: 'copilot', displayName: 'Copilot CLI', command: 'copilot' },
-  { type: 'cursor', displayName: 'Cursor CLI', command: 'cursor-agent' },
   { type: 'cline', displayName: 'Cline CLI', command: 'cline' },
   { type: 'continue', displayName: 'Continue', command: 'cn' },
-  { type: 'crush', displayName: 'Crush', command: 'crush' },
   { type: 'qwen', displayName: 'Qwen Code', command: 'qwen' },
 ];
 
