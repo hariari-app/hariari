@@ -1553,6 +1553,7 @@
   align-items: center;
   padding: 0;
   animation: overlay-in var(--transition-normal);
+  -webkit-app-region: no-drag;
 }
 
 /* Pop-out mode: no backdrop, panel fills window */
@@ -1602,6 +1603,7 @@
   background: var(--bg-deep);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  -webkit-app-region: no-drag;
 }
 
 .file-viewer-title {

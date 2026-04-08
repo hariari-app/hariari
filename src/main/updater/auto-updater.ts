@@ -1,6 +1,14 @@
-import { autoUpdater } from 'electron-updater';
 import { app, ipcMain, type BrowserWindow } from 'electron';
 import { IPC_CHANNELS } from '../../shared/constants';
+
+// Lazy-load electron-updater so dev mode never crashes on missing native deps
+let _cachedAutoUpdater: any;
+function getAutoUpdater() {
+  if (!_cachedAutoUpdater) {
+    _cachedAutoUpdater = require('electron-updater').autoUpdater;
+  }
+  return _cachedAutoUpdater;
+}
 
 export type UpdateState =
   | 'checking'
@@ -73,24 +81,24 @@ export class AutoUpdateManager {
     ipcMain.removeHandler(IPC_CHANNELS.UPDATE_DOWNLOAD);
     ipcMain.removeHandler(IPC_CHANNELS.UPDATE_INSTALL);
     // Remove autoUpdater event listeners to prevent stacking on reload
-    autoUpdater.removeAllListeners();
+    if (app.isPackaged) getAutoUpdater().removeAllListeners();
   }
 
   private readonly manualUpdateOnly = isLinuxNonAppImage();
 
   private configureUpdater(): void {
     // Non-AppImage Linux installs can't auto-update — only check for new versions
-    autoUpdater.autoDownload = !this.manualUpdateOnly;
-    autoUpdater.autoInstallOnAppQuit = !this.manualUpdateOnly;
-    autoUpdater.autoRunAppAfterInstall = true;
+    getAutoUpdater().autoDownload = !this.manualUpdateOnly;
+    getAutoUpdater().autoInstallOnAppQuit = !this.manualUpdateOnly;
+    getAutoUpdater().autoRunAppAfterInstall = true;
   }
 
   private registerEvents(): void {
-    autoUpdater.on('checking-for-update', () => {
+    getAutoUpdater().on('checking-for-update', () => {
       this.sendStatus({ state: 'checking' });
     });
 
-    autoUpdater.on('update-available', (info) => {
+    getAutoUpdater().on('update-available', (info) => {
       if (this.manualUpdateOnly) {
         // Non-AppImage Linux: direct user to download from GitHub
         const downloadUrl = `https://github.com/hariari-app/hariari/releases/tag/v${info.version}`;
@@ -107,25 +115,25 @@ export class AutoUpdateManager {
       });
     });
 
-    autoUpdater.on('update-not-available', () => {
+    getAutoUpdater().on('update-not-available', () => {
       this.sendStatus({ state: 'not-available' });
     });
 
-    autoUpdater.on('download-progress', (progress) => {
+    getAutoUpdater().on('download-progress', (progress) => {
       this.sendStatus({
         state: 'downloading',
         progress: Math.round(progress.percent),
       });
     });
 
-    autoUpdater.on('update-downloaded', (info) => {
+    getAutoUpdater().on('update-downloaded', (info) => {
       this.sendStatus({
         state: 'downloaded',
         version: info.version,
       });
     });
 
-    autoUpdater.on('error', (err) => {
+    getAutoUpdater().on('error', (err) => {
       console.error('[AutoUpdater] Error:', err.message);
       // Sanitize error — don't expose internal paths or API responses to renderer
       const safeError = err.message.includes('net::')
@@ -151,7 +159,7 @@ export class AutoUpdateManager {
         return { ok: false, error: 'Download already in progress' };
       }
       try {
-        await autoUpdater.downloadUpdate();
+        await getAutoUpdater().downloadUpdate();
         return { ok: true };
       } catch (err) {
         console.error('[AutoUpdater] Download failed:', err);
@@ -167,7 +175,7 @@ export class AutoUpdateManager {
         return { ok: false, error: 'Install already triggered' };
       }
       this.installTriggered = true;
-      autoUpdater.quitAndInstall(false, true);
+      getAutoUpdater().quitAndInstall(false, true);
     });
   }
 
@@ -177,7 +185,7 @@ export class AutoUpdateManager {
     if (this.currentStatus.state === 'downloading' || this.currentStatus.state === 'downloaded') return;
     this.isChecking = true;
     try {
-      await autoUpdater.checkForUpdates();
+      await getAutoUpdater().checkForUpdates();
     } catch (err) {
       console.warn('[AutoUpdater] Check failed:', (err as Error).message);
     } finally {
