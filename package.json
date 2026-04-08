@@ -4,7 +4,7 @@
   "description": "AI agent terminal orchestrator for vibe coders",
   "author": {
     "name": "VibeIDE",
-    "email": "hello@vibeide.dev"
+    "email": "hello@vibeide.app"
   },
   "license": "AGPL-3.0-or-later",
   "homepage": "https://github.com/vibeide-app/vibeide",
