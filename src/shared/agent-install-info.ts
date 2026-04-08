@@ -114,15 +114,12 @@ export const AGENT_INSTALL_INFO: Partial<Record<AgentType, AgentInstallInfo>> = 
     displayName: 'Crush',
     installCommand: 'go install github.com/charmbracelet/crush@latest',
     docsUrl: 'https://github.com/charmbracelet/crush',
-    description: 'Charmbracelet\'s terminal AI agent with Bubble Tea TUI',
+    description: 'Charmbracelet\'s terminal AI agent with Bubble Tea TUI (requires Go)',
   },
   qwen: {
     command: 'qwen',
     displayName: 'Qwen Code',
-    installCommand: pick({
-      npm: 'curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.sh | bash',
-      win: 'powershell -c "irm https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.ps1 | iex"',
-    }),
+    installCommand: 'npm install -g qwen-code',
     docsUrl: 'https://github.com/QwenLM/qwen-code',
     description: 'Alibaba\'s AI coding agent — 1,000 free requests/day',
   },
