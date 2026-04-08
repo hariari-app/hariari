@@ -1,0 +1,36 @@
+{
+  "name": "hariari",
+  "version": "0.5.7",
+  "description": "AI agent terminal orchestrator for vibe coders — run 12 AI coding agents side by side",
+  "author": {
+    "name": "Hariari",
+    "email": "hello@hariari.app"
+  },
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://github.com/hariari-app/hariari",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hariari-app/hariari.git"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "terminal",
+    "orchestrator",
+    "claude",
+    "gemini",
+    "codex",
+    "copilot",
+    "vibe-coding",
+    "developer-tools"
+  ],
+  "bin": {
+    "hariari": "bin/cli.js"
+  },
+  "files": [
+    "bin/"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,8 +1,19 @@
 # Hariari
 
-**The AI agent terminal orchestrator for vibe coders.**
+[![npm version](https://img.shields.io/npm/v/hariari)](https://www.npmjs.com/package/hariari)
+[![npm downloads](https://img.shields.io/npm/dm/hariari)](https://www.npmjs.com/package/hariari)
+[![GitHub release](https://img.shields.io/github/v/release/hariari-app/hariari)](https://github.com/hariari-app/hariari/releases)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
-Run Claude, Gemini, Aider, and 9 more AI agents side by side — in split panes, with voice input and git worktree isolation.
+**The agent orchestrator for vibe coders.**
+
+Run 12 AI coding agents side by side — Claude Code, Gemini CLI, Codex, and 9 more — with voice input, git worktree isolation, and split-pane terminals.
+
+```bash
+npx hariari
+```
+
+Or install globally: `npm install -g hariari`
 
 ## Features
 
@@ -40,9 +51,26 @@ Skills are installed to each agent's config directory (`~/.claude/skills/`, `~/.
 
 ## Install
 
-Download the latest release from the [Releases](https://github.com/hariari-app/hariari/releases) page, or use the commands below.
+### Quick Install (all platforms)
 
-### Linux
+```bash
+npx hariari
+```
+
+This auto-detects your platform, downloads the latest release, verifies the checksum, and launches Hariari. Subsequent runs use the cached binary and auto-update when a new version is available.
+
+Or install globally:
+
+```bash
+npm install -g hariari
+hariari
+```
+
+### Manual Install
+
+Download from the [Releases](https://github.com/hariari-app/hariari/releases) page, or use the commands below.
+
+#### Linux
 
 ```bash
 # Debian/Ubuntu
@@ -52,7 +80,7 @@ gh release download --repo hariari-app/hariari --pattern "*.deb" && sudo dpkg -i
 gh release download --repo hariari-app/hariari --pattern "*.AppImage" && chmod +x Hariari-*.AppImage
 ```
 
-### macOS
+#### macOS
 
 ```bash
 gh release download --repo hariari-app/hariari --pattern "*.dmg"
@@ -60,7 +88,7 @@ gh release download --repo hariari-app/hariari --pattern "*.dmg"
 
 Open the downloaded `.dmg` and drag Hariari to Applications. macOS builds are code-signed and notarized.
 
-### Windows
+#### Windows
 
 ```bash
 gh release download --repo hariari-app/hariari --pattern "*.exe"

@@ -162,6 +162,15 @@ jobs:
         with:
           name: windows-builds
           path: artifacts/windows
+      - name: Generate SHA256 checksums
+        run: |
+          cd artifacts
+          find . -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.dmg" -o -name "*.zip" -o -name "*.exe" \) | while read f; do
+            sha256sum "$f" | sed "s|  .*/|  |" >> SHA256SUMS.txt
+          done
+          cat SHA256SUMS.txt
+          mv SHA256SUMS.txt ../SHA256SUMS.txt
+
       - uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2
         with:
           draft: false
@@ -175,5 +184,25 @@ jobs:
             artifacts/macos/latest-mac.yml
             artifacts/windows/*.exe
             artifacts/windows/latest.yml
+            SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-npm:
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - name: Update npm launcher version and publish
+        working-directory: npm-launcher
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
