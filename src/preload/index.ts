@@ -21,6 +21,15 @@ contextBridge.exposeInMainWorld('api', {
   },
   agent: {
     checkInstalled: (command: string) => ipcRenderer.invoke(IPC_CHANNELS.AGENT_CHECK_INSTALLED, command),
+    install: (agentType: string) => ipcRenderer.invoke(IPC_CHANNELS.AGENT_INSTALL, agentType),
+    onInstallOutput: (callback: (event: { agentType: string; data: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: { agentType: string; data: string }) =>
+        callback(data);
+      ipcRenderer.on(IPC_CHANNELS.AGENT_INSTALL_OUTPUT, handler);
+      return () => {
+        ipcRenderer.removeListener(IPC_CHANNELS.AGENT_INSTALL_OUTPUT, handler);
+      };
+    },
     spawn: (request: unknown) => ipcRenderer.invoke(IPC_CHANNELS.AGENT_SPAWN, request),
     kill: (agentId: string) => ipcRenderer.invoke(IPC_CHANNELS.AGENT_KILL, agentId),
     list: () => ipcRenderer.invoke(IPC_CHANNELS.AGENT_LIST),

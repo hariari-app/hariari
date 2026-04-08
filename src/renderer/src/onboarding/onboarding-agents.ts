@@ -3,7 +3,6 @@
 import type { StepRenderer } from './onboarding-wizard';
 import { createAgentIcon } from '../ui/agent-icons';
 import { AGENT_INSTALL_INFO } from '../../../shared/agent-install-info';
-import { showAgentInstallDialog, setDialogCloseCallback } from '../ui/agent-install-dialog';
 import type { AgentType } from '../../../shared/agent-types';
 
 interface AgentRow {
@@ -35,9 +34,10 @@ export class AgentsStep implements StepRenderer {
   private availability: Record<string, boolean> = {};
   private badgeEls = new Map<string, HTMLElement>();
   private unsubAvailability: (() => void) | null = null;
+  private unsubInstallOutput: (() => void) | null = null;
   private installedCount = 0;
   private countEl: HTMLElement | null = null;
-  private pendingAgent: AgentRow | null = null;
+  private installingAgent: string | null = null;
 
   render(container: HTMLElement): void {
     const headline = document.createElement('h2');
@@ -100,13 +100,10 @@ export class AgentsStep implements StepRenderer {
       this.updateBadges();
     });
 
-    // Re-scan after install dialog closes
-    setDialogCloseCallback(() => {
-      if (this.pendingAgent) {
-        const agent = this.pendingAgent;
-        this.pendingAgent = null;
-        this.setBadgeLoading(agent.type);
-        this.rescanAgent(agent, RESCAN_ATTEMPTS);
+    // Listen for install output to show progress
+    this.unsubInstallOutput = window.api.agent.onInstallOutput((event) => {
+      if (event.agentType === this.installingAgent) {
+        this.appendInstallOutput(event.agentType, event.data);
       }
     });
   }
@@ -120,7 +117,10 @@ export class AgentsStep implements StepRenderer {
       this.unsubAvailability();
       this.unsubAvailability = null;
     }
-    setDialogCloseCallback(() => {});
+    if (this.unsubInstallOutput) {
+      this.unsubInstallOutput();
+      this.unsubInstallOutput = null;
+    }
   }
 
   private async scanAgents(): Promise<void> {
@@ -184,6 +184,16 @@ export class AgentsStep implements StepRenderer {
     }
   }
 
+  private appendInstallOutput(agentType: string, data: string): void {
+    const badge = this.badgeEls.get(agentType);
+    if (!badge) return;
+    const lines = data.split('\n').filter((l) => l.trim().length > 0);
+    if (lines.length > 0) {
+      const lastLine = lines[lines.length - 1].trim();
+      badge.textContent = lastLine.slice(0, 45) || 'Installing...';
+    }
+  }
+
   private createAgentRow(agent: AgentRow): HTMLElement {
     const row = document.createElement('div');
     row.className = 'onboarding-agent-row';
@@ -197,12 +207,33 @@ export class AgentsStep implements StepRenderer {
     const badge = document.createElement('button');
     badge.className = 'onboarding-agent-install-btn';
     badge.textContent = 'Install';
-    badge.addEventListener('click', () => {
-      if (this.availability[agent.type]) return; // already installed
+    badge.addEventListener('click', async () => {
+      if (this.availability[agent.type]) return;
+      if (this.installingAgent) return; // one at a time
+
       const info = AGENT_INSTALL_INFO[agent.type];
-      if (info) {
-        this.pendingAgent = agent;
-        showAgentInstallDialog(agent.type, info);
+      if (!info) return;
+
+      this.installingAgent = agent.type;
+      badge.className = 'onboarding-agent-checking';
+      badge.textContent = 'Installing...';
+      badge.setAttribute('disabled', 'true');
+
+      try {
+        const result = await window.api.agent.install(agent.type);
+        if (result.success) {
+          this.availability[agent.type] = true;
+          this.updateBadges();
+        } else {
+          badge.className = 'onboarding-agent-install-btn';
+          badge.textContent = 'Retry';
+        }
+      } catch {
+        badge.className = 'onboarding-agent-install-btn';
+        badge.textContent = 'Retry';
+      } finally {
+        this.installingAgent = null;
+        badge.removeAttribute('disabled');
       }
     });
 

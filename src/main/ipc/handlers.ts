@@ -780,6 +780,126 @@ export function registerIpcHandlers(
     }
   });
 
+  // Agent install — run install command in background, stream output to renderer
+  const ALLOWED_AGENT_TYPES = new Set(['claude', 'gemini', 'codex', 'pi', 'opencode',
+    'cline', 'copilot', 'amp', 'continue', 'cursor', 'crush', 'qwen']);
+
+  ipcMain.handle(IPC_CHANNELS.AGENT_INSTALL, async (event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'string' || !ALLOWED_AGENT_TYPES.has(raw)) {
+        return { success: false, error: 'Invalid agent type' };
+      }
+
+      // Dynamically import agent install info to get the install command
+      const { AGENT_INSTALL_INFO } = await import('../../shared/agent-install-info');
+      const info = AGENT_INSTALL_INFO[raw as keyof typeof AGENT_INSTALL_INFO];
+      if (!info) {
+        return { success: false, error: 'No install info for agent' };
+      }
+
+      const installCommand = info.installCommand;
+      const agentType = raw;
+      const win = BrowserWindow.fromWebContents(event.sender);
+
+      const isWin = process.platform === 'win32';
+      const shell = isWin ? 'cmd.exe' : '/bin/bash';
+      const shellArgs = isWin ? ['/c', installCommand] : ['-c', installCommand];
+
+      // Build enriched PATH (same logic as checkInstalled)
+      const home = isWin
+        ? (process.env.USERPROFILE || process.env.HOME || '')
+        : (process.env.HOME || '');
+      const extraPaths: string[] = [];
+
+      if (isWin) {
+        const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+        const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+        extraPaths.push(
+          path.join(appData, 'npm'),
+          path.join(home, '.cargo', 'bin'),
+          path.join(home, 'scoop', 'shims'),
+        );
+        const nvmSymlink = process.env.NVM_SYMLINK || path.join(appData, 'nvm', 'current');
+        if (fs.existsSync(nvmSymlink)) extraPaths.unshift(nvmSymlink);
+      } else {
+        if (process.platform === 'darwin') {
+          extraPaths.push('/opt/homebrew/bin', '/opt/homebrew/sbin');
+        }
+        extraPaths.push(
+          '/usr/local/bin', '/usr/local/sbin',
+          path.join(home, '.local', 'bin'),
+          path.join(home, '.cargo', 'bin'),
+        );
+        const nvmDir = process.env.NVM_DIR || path.join(home, '.nvm');
+        try {
+          const versionsDir = path.join(nvmDir, 'versions', 'node');
+          if (fs.existsSync(versionsDir)) {
+            const versions = fs.readdirSync(versionsDir).sort().reverse();
+            if (versions.length > 0) {
+              extraPaths.unshift(path.join(versionsDir, versions[0], 'bin'));
+            }
+          }
+        } catch { /* nvm not installed */ }
+      }
+
+      const pathSep = isWin ? ';' : ':';
+      const enrichedPath = [...extraPaths, process.env.PATH || ''].join(pathSep);
+      const env = { ...process.env, PATH: enrichedPath };
+
+      const { spawn: spawnChild } = await import('node:child_process');
+
+      return new Promise<{ success: boolean; error?: string }>((resolve) => {
+        const child = spawnChild(shell, shellArgs, {
+          env,
+          cwd: home,
+          timeout: 120_000,
+        });
+
+        const sendOutput = (data: string) => {
+          if (win && !win.isDestroyed()) {
+            win.webContents.send(IPC_CHANNELS.AGENT_INSTALL_OUTPUT, { agentType, data });
+          }
+        };
+
+        // Kill child process if window is destroyed mid-install
+        const onWindowClosed = () => { try { child.kill(); } catch { /* already exited */ } };
+        if (win) win.once('closed', onWindowClosed);
+
+        child.stdout?.on('data', (chunk: Buffer) => sendOutput(chunk.toString()));
+        child.stderr?.on('data', (chunk: Buffer) => sendOutput(chunk.toString()));
+
+        child.on('close', async (code) => {
+          if (win && !win.isDestroyed()) win.removeListener('closed', onWindowClosed);
+          if (code === 0) {
+            sendOutput('\n✓ Install complete. Verifying...\n');
+            // Verify the agent is now available
+            const { execFile } = await import('node:child_process');
+            const lookupCmd = isWin ? 'where.exe' : 'which';
+            execFile(lookupCmd, [info.command], { timeout: 5000, env }, (err) => {
+              if (err) {
+                sendOutput('⚠ Installed but command not found in PATH. You may need to restart.\n');
+                resolve({ success: false, error: 'Installed but not found in PATH' });
+              } else {
+                sendOutput(`✓ ${info.displayName} is ready.\n`);
+                resolve({ success: true });
+              }
+            });
+          } else {
+            sendOutput(`\n✗ Install failed (exit code ${code}).\n`);
+            resolve({ success: false, error: `Exit code ${code}` });
+          }
+        });
+
+        child.on('error', (err) => {
+          sendOutput(`\n✗ Error: ${err.message}\n`);
+          resolve({ success: false, error: err.message });
+        });
+      });
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
   // Recursive file listing (respects .gitignore patterns)
   ipcMain.handle(IPC_CHANNELS.FILE_LIST_ALL, async (_event, raw: unknown) => {
     try {

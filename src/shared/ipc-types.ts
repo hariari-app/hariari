@@ -138,6 +138,8 @@ export interface HariariApi {
   };
   agent: {
     checkInstalled(command: string): Promise<{ installed: boolean; version?: string }>;
+    install(agentType: string): Promise<{ success: boolean; error?: string }>;
+    onInstallOutput(callback: (event: { agentType: string; data: string }) => void): () => void;
     spawn(request: AgentSpawnRequest): Promise<AgentInfo>;
     kill(agentId: string): Promise<void>;
     list(): Promise<AgentInfo[]>;

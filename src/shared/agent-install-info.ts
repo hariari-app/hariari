@@ -46,7 +46,7 @@ export const AGENT_INSTALL_INFO: Partial<Record<AgentType, AgentInstallInfo>> = 
   gemini: {
     command: 'gemini',
     displayName: 'Gemini CLI',
-    installCommand: 'npm install -g @anthropic-ai/gemini-cli',
+    installCommand: 'npm install -g @google/gemini-cli',
     docsUrl: 'https://ai.google.dev/gemini-api/docs',
     description: 'Google\'s AI coding agent',
   },

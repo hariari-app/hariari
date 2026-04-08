@@ -38,6 +38,8 @@ export const IPC_CHANNELS = {
   GIT_AHEAD_BEHIND: 'git:ahead-behind',
   FILE_SEARCH: 'file:search',
   AGENT_CHECK_INSTALLED: 'agent:check-installed',
+  AGENT_INSTALL: 'agent:install',
+  AGENT_INSTALL_OUTPUT: 'agent:install-output',
   AGENT_VERSION: 'agent:version',
   AGENT_AVAILABILITY_CHANGED: 'agent:availability-changed',
   CLIPBOARD_READ: 'clipboard:read',
