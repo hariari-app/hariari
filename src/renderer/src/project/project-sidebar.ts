@@ -452,7 +452,7 @@ export class ProjectSidebar {
     logoEl.innerHTML = logoMonoSvg(32);
     const logoText = document.createElement('span');
     logoText.className = 'sidebar-logo-text';
-    logoText.innerHTML = 'Vibe<span class="sidebar-logo-text-ide">IDE</span>';
+    logoText.innerHTML = 'Hari<span class="sidebar-logo-text-accent">Ari</span>';
     logoBanner.appendChild(logoEl);
     logoBanner.appendChild(logoText);
     expandedContent.appendChild(logoBanner);

@@ -370,7 +370,7 @@
   user-select: none;
 }
 
-.sidebar-logo-text-ide {
+.sidebar-logo-text-accent {
   color: var(--accent);
   font-weight: 500;
 }
