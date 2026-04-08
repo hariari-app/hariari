@@ -784,7 +784,7 @@ function enrichChrome(chrome: Readonly<Record<string, string>>): Readonly<Record
 }
 
 export function getTheme(name: string): AppTheme {
-  const theme = themes[name] ?? tokyoNight;
+  const theme = themes[name] ?? brutalist;
   return {
     terminal: theme.terminal,
     chrome: enrichChrome(theme.chrome),
@@ -810,9 +810,9 @@ export function applyTheme(name: string): void {
 
 export function loadSavedTheme(): string {
   try {
-    const name = localStorage.getItem(THEME_STORAGE_KEY) ?? 'tokyoNight';
-    return name in themes ? name : 'tokyoNight';
+    const name = localStorage.getItem(THEME_STORAGE_KEY) ?? 'brutalist';
+    return name in themes ? name : 'brutalist';
   } catch {
-    return 'tokyoNight';
+    return 'brutalist';
   }
 }
