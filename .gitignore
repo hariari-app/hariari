@@ -11,4 +11,5 @@ dist/
 docs/
 marketing/
 agent-os/
+.gstack/
 todo.md

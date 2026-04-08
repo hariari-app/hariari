@@ -119,9 +119,9 @@ export async function formatWithLLM(
   try {
     const messages = buildMessages(rawText);
 
+    // API key is read from settings in main process — not sent from renderer
     const result = await window.api.voice.formatLLM({
       provider,
-      apiKey,
       messages,
     });
 

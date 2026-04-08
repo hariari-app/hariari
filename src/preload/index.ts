@@ -83,9 +83,9 @@ contextBridge.exposeInMainWorld('api', {
     save: (overrides: unknown) => ipcRenderer.invoke(IPC_CHANNELS.KEYBINDINGS_SAVE, overrides),
   },
   voice: {
-    transcribe: (request: { provider: string; apiKey: string; audioBase64: string }) =>
+    transcribe: (request: { provider: string; audioBase64: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.VOICE_TRANSCRIBE, request),
-    formatLLM: (request: { provider: string; apiKey: string; messages: Array<{ role: string; content: string }> }) =>
+    formatLLM: (request: { provider: string; messages: Array<{ role: string; content: string }> }) =>
       ipcRenderer.invoke(IPC_CHANNELS.VOICE_FORMAT_LLM, request),
   },
   git: {

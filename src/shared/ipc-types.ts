@@ -174,8 +174,8 @@ export interface VibeIDEApi {
     save(overrides: Record<string, string>): Promise<void>;
   };
   voice: {
-    transcribe(request: { provider: string; apiKey: string; audioBase64: string }): Promise<{ text?: string; error?: string }>;
-    formatLLM(request: { provider: string; apiKey: string; messages: Array<{ role: string; content: string }> }): Promise<{ text?: string; error?: string }>;
+    transcribe(request: { provider: string; audioBase64: string }): Promise<{ text?: string; error?: string }>;
+    formatLLM(request: { provider: string; messages: Array<{ role: string; content: string }> }): Promise<{ text?: string; error?: string }>;
   };
   git: {
     status(projectPath: string): Promise<import('./git-types').GitStatusResult>;

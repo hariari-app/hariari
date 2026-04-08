@@ -29,6 +29,19 @@ import {
 
 const MAX_AGENTS = 20;
 
+/** Read voice API key directly from settings file in main process */
+function readVoiceApiKey(): string {
+  try {
+    const filePath = path.join(os.homedir(), '.vibeide', 'settings.json');
+    if (!fs.existsSync(filePath)) return '';
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object' && typeof parsed.voiceApiKey === 'string')
+      ? parsed.voiceApiKey
+      : '';
+  } catch { return ''; }
+}
+
 function parseSearchResults(output: string, projectPath: string, isRipgrep: boolean): unknown[] {
   const results: unknown[] = [];
   const pathPrefix = projectPath.endsWith('/') ? projectPath : projectPath + '/';
@@ -289,9 +302,12 @@ export function registerIpcHandlers(
       if (typeof raw !== 'object' || raw === null) return { error: 'invalid_request' };
       const req = raw as Record<string, unknown>;
       const provider = req.provider as string;
-      const apiKey = req.apiKey as string;
       const audioBase64 = req.audioBase64 as string;
-      if (!provider || !apiKey || !audioBase64) return { error: 'missing_fields' };
+      if (!provider || !audioBase64) return { error: 'missing_fields' };
+
+      // Read API key from settings in main process — never trust renderer with secrets
+      const apiKey = req.apiKey as string | undefined || readVoiceApiKey();
+      if (!apiKey) return { error: 'no_api_key' };
 
       const audioBuffer = Buffer.from(audioBase64, 'base64');
       console.log(`[IPC][voice:transcribe] provider=${provider}, audioSize=${audioBuffer.length} bytes`);
@@ -389,9 +405,12 @@ export function registerIpcHandlers(
       if (typeof raw !== 'object' || raw === null) return { error: 'invalid_request' };
       const req = raw as Record<string, unknown>;
       const provider = req.provider as string;
-      const apiKey = req.apiKey as string;
       const messages = req.messages as Array<{ role: string; content: string }>;
-      if (!provider || !apiKey || !messages) return { error: 'missing_fields' };
+      if (!provider || !messages) return { error: 'missing_fields' };
+
+      // Read API key from settings in main process — never trust renderer with secrets
+      const apiKey = req.apiKey as string | undefined || readVoiceApiKey();
+      if (!apiKey) return { error: 'no_api_key' };
 
       let url: string;
       let model: string;

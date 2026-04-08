@@ -162,7 +162,7 @@ jobs:
         with:
           name: windows-builds
           path: artifacts/windows
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2
         with:
           draft: false
           generate_release_notes: true

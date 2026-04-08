@@ -139,11 +139,26 @@ export class LaunchWorkspaceDialog {
         const name = dir.split('/').pop() || dir;
         const row = document.createElement('div');
         row.className = 'launch-ws-project-row selected';
-        row.innerHTML = `<span class="launch-ws-folder-icon">\uD83D\uDCC1</span>
-          <div class="launch-ws-project-info">
-            <div class="launch-ws-project-name">${name}</div>
-            <div class="launch-ws-project-path">${dir.replace(/^\/home\/[^/]+/, '~')}</div>
-          </div>`;
+
+        const icon = document.createElement('span');
+        icon.className = 'launch-ws-folder-icon';
+        icon.textContent = '\uD83D\uDCC1';
+
+        const info = document.createElement('div');
+        info.className = 'launch-ws-project-info';
+
+        const nameEl = document.createElement('div');
+        nameEl.className = 'launch-ws-project-name';
+        nameEl.textContent = name;
+
+        const pathEl = document.createElement('div');
+        pathEl.className = 'launch-ws-project-path';
+        pathEl.textContent = dir.replace(/^\/home\/[^/]+/, '~');
+
+        info.appendChild(nameEl);
+        info.appendChild(pathEl);
+        row.appendChild(icon);
+        row.appendChild(info);
         projectList.querySelectorAll('.launch-ws-project-row').forEach((r) =>
           r.classList.remove('selected'));
         projectList.appendChild(row);

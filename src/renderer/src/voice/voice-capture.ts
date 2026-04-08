@@ -367,7 +367,7 @@ export class VoiceCapture {
     }
   }
 
-  private async transcribeViaIPC(audioBlob: Blob, apiKey: string, provider: string): Promise<void> {
+  private async transcribeViaIPC(audioBlob: Blob, _apiKey: string, provider: string): Promise<void> {
     const arrayBuffer = await audioBlob.arrayBuffer();
     const uint8 = new Uint8Array(arrayBuffer);
     // Convert to base64 in chunks to avoid call stack overflow
@@ -378,7 +378,8 @@ export class VoiceCapture {
     }
     base64 = btoa(base64);
 
-    const result = await window.api.voice.transcribe({ provider, apiKey, audioBase64: base64 });
+    // API key is read from settings in main process — not sent from renderer
+    const result = await window.api.voice.transcribe({ provider, audioBase64: base64 });
 
     if (result.error) {
       throw new Error(`Transcription error: ${result.error}`);
