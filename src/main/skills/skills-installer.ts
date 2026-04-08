@@ -11,7 +11,7 @@ import { getSkillsManifest } from './skills-manifest';
 const SKILLS_DIR = path.join(homedir(), '.hariari', 'skills');
 const INSTALLED_JSON = path.join(SKILLS_DIR, 'installed.json');
 
-const REPO_OWNER = 'hariari-app';
+const REPO_OWNER = 'hariari';
 const REPO_NAME = 'AISkills';
 const BRANCH = 'main';
 

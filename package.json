@@ -7,7 +7,7 @@
     "email": "hello@hariari.app"
   },
   "license": "AGPL-3.0-or-later",
-  "homepage": "https://github.com/hariari-app/hariari",
+  "homepage": "https://github.com/hariari/hariari",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",

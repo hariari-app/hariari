@@ -1,2 +1,2 @@
 # Require maintainer review for CI/CD workflow changes
-.github/workflows/ @hariari-app/maintainers
+.github/workflows/ @hariari/maintainers

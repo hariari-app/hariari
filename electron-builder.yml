@@ -66,5 +66,5 @@ nsis:
   shortcutName: Hariari
 publish:
   provider: github
-  owner: hariari-app
+  owner: hariari
   repo: hariari

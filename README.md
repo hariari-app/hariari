@@ -27,7 +27,7 @@ Run Claude, Gemini, Aider, and 9 more AI agents side by side — in split panes,
 
 ## AI Skills
 
-Hariari bundles pre-packaged skills from the [AISkills](https://github.com/hariari-app/AISkills) repository. During onboarding (or later from the command palette), you can install:
+Hariari bundles pre-packaged skills from the [AISkills](https://github.com/hariari/AISkills) repository. During onboarding (or later from the command palette), you can install:
 
 - **Coding standards** — universal best practices, language-specific rules
 - **TDD workflow** — test-driven development with 80%+ coverage enforcement
@@ -40,22 +40,22 @@ Skills are installed to each agent's config directory (`~/.claude/skills/`, `~/.
 
 ## Install
 
-Download the latest release from the [Releases](https://github.com/hariari-app/hariari/releases) page, or use the commands below.
+Download the latest release from the [Releases](https://github.com/hariari/hariari/releases) page, or use the commands below.
 
 ### Linux
 
 ```bash
 # Debian/Ubuntu
-gh release download --repo hariari-app/hariari --pattern "*.deb" && sudo dpkg -i hariari_*_amd64.deb
+gh release download --repo hariari/hariari --pattern "*.deb" && sudo dpkg -i hariari_*_amd64.deb
 
 # AppImage (any distro, no install needed)
-gh release download --repo hariari-app/hariari --pattern "*.AppImage" && chmod +x Hariari-*.AppImage
+gh release download --repo hariari/hariari --pattern "*.AppImage" && chmod +x Hariari-*.AppImage
 ```
 
 ### macOS
 
 ```bash
-gh release download --repo hariari-app/hariari --pattern "*.dmg"
+gh release download --repo hariari/hariari --pattern "*.dmg"
 ```
 
 Open the downloaded `.dmg` and drag Hariari to Applications. macOS builds are code-signed and notarized.
@@ -63,7 +63,7 @@ Open the downloaded `.dmg` and drag Hariari to Applications. macOS builds are co
 ### Windows
 
 ```bash
-gh release download --repo hariari-app/hariari --pattern "*.exe"
+gh release download --repo hariari/hariari --pattern "*.exe"
 ```
 
 Run the downloaded `.exe` installer. Windows builds are signed with Azure Trusted Signing.
@@ -101,7 +101,7 @@ On macOS, `Ctrl` is replaced by `Cmd` (`⌘`).
 ## Build from Source
 
 ```bash
-git clone https://github.com/hariari-app/hariari.git
+git clone https://github.com/hariari/hariari.git
 cd hariari
 npm install
 npm run dev        # development
