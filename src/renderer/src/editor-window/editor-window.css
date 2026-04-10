@@ -153,21 +153,21 @@
 }
 
 .ew-save-btn {
-  border-color: #3b82f6;
-  color: #3b82f6;
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .ew-save-btn:hover {
-  background: #3b82f6;
-  color: #fff;
+  background: var(--accent);
+  color: var(--bg);
 }
 
 .ew-discard-btn {
-  border-color: #ef4444;
-  color: #ef4444;
+  border-color: var(--error);
+  color: var(--error);
 }
 .ew-discard-btn:hover {
-  background: #ef4444;
-  color: #fff;
+  background: var(--error);
+  color: var(--bg);
 }
 
 .ew-editor-container {
