@@ -167,7 +167,9 @@ export class ProjectTabBar {
     tab.badgeEl.textContent = total > 0 ? String(total) : '';
     tab.badgeEl.style.display = total > 0 ? '' : 'none';
     tab.notifyDot.style.display = needsInput > 0 ? '' : 'none';
-    tab.el.setAttribute('aria-label', `${tab.project.name}, ${total} agents`);
+    tab.el.classList.toggle('needs-input', needsInput > 0);
+    const ariaSuffix = needsInput > 0 ? ', needs input' : '';
+    tab.el.setAttribute('aria-label', `${tab.project.name}, ${total} agents${ariaSuffix}`);
   }
 
   setSinglePreviewActive(active: boolean): void {
@@ -213,6 +215,11 @@ export class ProjectTabBar {
       'aria-label': `${project.name}, 0 agents`,
       'data-project-id': project.id,
     }));
+
+    // Per-project color drives background tint, active underline,
+    // and the whole-tab attention pulse. Same deterministic HSL the
+    // sidebar rail uses, so identity is consistent across chrome.
+    tab.style.setProperty('--tab-color', avatarColor(project.name));
 
     // Avatar dot
     const dot = el('span', 'tab-avatar-dot');

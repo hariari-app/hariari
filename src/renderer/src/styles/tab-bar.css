@@ -4,7 +4,7 @@
 
 /* --- Container --- */
 .project-tab-bar {
-  height: 36px;
+  height: 42px;
   background: var(--bg-deep);
   border-bottom: 1px solid var(--border);
   display: flex;
@@ -19,7 +19,10 @@ body.platform-darwin .project-tab-bar {
   padding-left: 78px;
 }
 
-/* --- Tab --- */
+/* --- Tab ---
+   Each tab has a per-project --tab-color custom property set inline
+   (see ProjectTabBar.buildTab). We mix that color into backgrounds and
+   the active-state border so every tab carries a unique, scannable identity. */
 .tab-bar-tab {
   display: flex;
   align-items: center;
@@ -31,24 +34,24 @@ body.platform-darwin .project-tab-bar {
   border-bottom: 2px solid transparent;
   max-width: 200px;
   min-width: 80px;
-  background: transparent;
+  background: color-mix(in srgb, var(--tab-color, transparent) 5%, transparent);
   color: var(--fg-dim);
   font-weight: 400;
-  transition: background var(--transition-fast);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
   position: relative;
   white-space: nowrap;
   overflow: hidden;
 }
 
 .tab-bar-tab.active {
-  background: var(--bg);
+  background: color-mix(in srgb, var(--tab-color, var(--accent)) 18%, transparent);
   color: var(--fg);
   font-weight: 600;
-  border-bottom-color: var(--accent);
+  border-bottom-color: var(--tab-color, var(--accent));
 }
 
 .tab-bar-tab:hover:not(.active) {
-  background: var(--surface-hover);
+  background: color-mix(in srgb, var(--tab-color, var(--accent)) 12%, transparent);
 }
 
 .tab-bar-tab:focus-visible {
@@ -120,7 +123,9 @@ body.platform-darwin .project-tab-bar {
   cursor: default;
 }
 
-/* --- Notification dot --- */
+/* --- Notification dot ---
+   Retained for legacy/defense-in-depth, but hidden when the whole tab
+   is pulsing — the tab itself is the attention signal now. */
 .tab-notify-dot {
   position: absolute;
   top: 6px;
@@ -130,6 +135,53 @@ body.platform-darwin .project-tab-bar {
   background: var(--warning);
   border-radius: 50%;
   animation: pulse-input 1s ease-in-out infinite;
+}
+
+.tab-bar-tab.needs-input .tab-notify-dot {
+  display: none;
+}
+
+/* --- Whole-tab attention pulse ---
+   Fires when an agent in this project needs user input.
+   Slower cadence than the 1s dot pulse (pulse-input) because the tab
+   is a much larger surface and fast strobing on it would feel frantic.
+   Preserves project identity by pulsing between --tab-color baseline
+   and --warning peak, so users still know WHICH tab is shouting. */
+@keyframes pulse-tab-attention {
+  0%, 100% {
+    background: color-mix(in srgb, var(--tab-color, var(--warning)) 5%, transparent);
+  }
+  50% {
+    background: color-mix(in srgb, var(--warning) 24%, transparent);
+  }
+}
+
+@keyframes pulse-tab-attention-active {
+  0%, 100% {
+    background: color-mix(in srgb, var(--tab-color, var(--warning)) 18%, transparent);
+  }
+  50% {
+    background: color-mix(in srgb, var(--warning) 34%, transparent);
+  }
+}
+
+.tab-bar-tab.needs-input {
+  animation: pulse-tab-attention 1.6s ease-in-out infinite;
+}
+
+.tab-bar-tab.needs-input.active {
+  animation: pulse-tab-attention-active 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-bar-tab.needs-input,
+  .tab-bar-tab.needs-input.active {
+    animation: none;
+    background: color-mix(in srgb, var(--warning) 24%, transparent);
+  }
+  .tab-bar-tab.needs-input.active {
+    background: color-mix(in srgb, var(--warning) 34%, transparent);
+  }
 }
 
 /* --- Tab scroll container --- */

@@ -108,6 +108,14 @@ Dot (8px circle) + symbol (monospace). Seven states: running, needs-input, error
 
 ## Layout
 
+### Project Tab Bar
+
+- **Height:** 42px (doubles as the draggable window title bar)
+- **Per-project identity:** each tab sets a `--tab-color` custom property from `avatarColor(project.name)` — the same deterministic HSL the sidebar rail uses — so project identity is consistent across all chrome
+- **Background tint:** inactive tabs mix `--tab-color` at 5%, hover at 12%, active at 18%, via `color-mix(in srgb, ...)`. Gives every tab a unique scannable silhouette without fighting theme backgrounds
+- **Active underline:** 2px solid `var(--tab-color)` (replaces the old uniform `--accent` border) — active state stacks three signals: stronger tint + colored underline + 600 font weight
+- **Attention pulse:** when an agent needs input, the tab adds `.needs-input` and animates `background` between the project tint and `--warning` at 1.6s ease-in-out. Slower than the 1s `pulse-input` used on small dots because large surfaces strobing fast feels frantic. The small 8px `tab-notify-dot` is hidden during the pulse (the whole tab IS the signal). `prefers-reduced-motion` holds the tab statically at peak warning instead of animating
+
 ### Sidebar
 
 - **Expanded:** 240px wide, resizable (140-500px)
