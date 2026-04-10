@@ -627,8 +627,8 @@
 }
 
 @keyframes pulse-input {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(224, 175, 104, 0.4); }
-  50% { opacity: 0.5; box-shadow: 0 0 0 4px rgba(224, 175, 104, 0); }
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 40%, transparent); }
+  50% { opacity: 0.5; box-shadow: 0 0 0 4px transparent; }
 }
 
 /* Error — red dot + x */
@@ -2183,11 +2183,11 @@
 @keyframes pulse-recording {
   0%, 100% {
     opacity: 1;
-    box-shadow: 0 0 0 0 rgba(247, 118, 142, 0.5);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--error) 50%, transparent);
   }
   50% {
     opacity: 0.7;
-    box-shadow: 0 0 0 5px rgba(247, 118, 142, 0);
+    box-shadow: 0 0 0 5px transparent;
   }
 }
 
