@@ -175,7 +175,10 @@ function main(): void {
     },
   });
 
-  // On Windows/Linux, create custom window controls and append to tab bar
+  // On Windows/Linux, create custom window controls and append to tab bar.
+  // On macOS, skip entirely — the OS native traffic lights are positioned
+  // on the left via main-window.ts trafficLightPosition, and creating
+  // custom controls on the right would duplicate them.
   if (window.api.platform !== 'darwin') {
     const titleControls = document.createElement('div');
     titleControls.className = 'app-titlebar-controls';
@@ -185,16 +188,19 @@ function main(): void {
     const minimizeBtn = document.createElement('button');
     minimizeBtn.className = 'app-titlebar-btn minimize';
     minimizeBtn.setAttribute('aria-label', 'Minimize window');
+    minimizeBtn.textContent = '\u2212'; // − MINUS SIGN
     minimizeBtn.addEventListener('click', () => window.api.window.minimize());
 
     const maximizeBtn = document.createElement('button');
     maximizeBtn.className = 'app-titlebar-btn maximize';
     maximizeBtn.setAttribute('aria-label', 'Maximize window');
+    maximizeBtn.textContent = '\u25A1'; // □ WHITE SQUARE
     maximizeBtn.addEventListener('click', () => window.api.window.maximize());
 
     const closeBtn = document.createElement('button');
     closeBtn.className = 'app-titlebar-btn close';
     closeBtn.setAttribute('aria-label', 'Close window');
+    closeBtn.textContent = '\u2715'; // ✕ MULTIPLICATION X
     closeBtn.addEventListener('click', () => window.api.window.close());
 
     titleControls.appendChild(minimizeBtn);

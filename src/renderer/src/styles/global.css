@@ -121,35 +121,96 @@ html, body {
 }
 
 /* Custom title bar window controls (minimize/maximize/close).
-   Used by ProjectTabBar.appendWindowControls — the project tab bar
-   replaces the title bar but reuses these control buttons. The
-   .app-titlebar container class was removed after the tab bar took
-   over; only the controls remain. */
+   Created by main.ts only when platform !== 'darwin' and appended to
+   the project tab bar via ProjectTabBar.appendWindowControls. On
+   macOS the native traffic lights on the left (positioned via
+   main-window.ts trafficLightPosition) are the only window controls;
+   there are no custom controls and the platform-darwin safety guard
+   at the end of this block hides them if a future refactor ever
+   bypasses the main.ts platform check. */
 .app-titlebar-controls {
   display: flex;
   gap: var(--space-2);
   margin-left: auto;
   /* Right inset so the close button doesn't sit flush against the
-     window frame edge. Matches macOS traffic-light inset convention. */
+     window frame edge. Windows overrides to 0 (flush-to-edge is the
+     Win11 convention for window controls). */
   margin-right: var(--space-3);
   -webkit-app-region: no-drag;
 }
 
+/* Base button — platform-specific overrides below set size, shape,
+   and hover treatment per OS convention. */
 .app-titlebar-btn {
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
   border: none;
   cursor: pointer;
-  transition: opacity var(--transition-fast);
-  opacity: 0.8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--fg-dim);
+  font-family: inherit;
+  -webkit-app-region: no-drag;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-.app-titlebar-btn:hover { opacity: 1; }
+.app-titlebar-btn:hover {
+  color: var(--fg);
+}
 
-.app-titlebar-btn.close { background: var(--error); }
-.app-titlebar-btn.minimize { background: var(--warning); }
-.app-titlebar-btn.maximize { background: var(--success); }
+/* Windows: flat rectangular buttons, full tab-bar height, Win11-style
+   hover treatment (neutral gray for min/max, red for close). */
+body.platform-win32 .app-titlebar-controls {
+  gap: 0;
+  margin-right: 0;
+}
+
+body.platform-win32 .app-titlebar-btn {
+  width: 46px;
+  height: 100%;
+  font-size: var(--font-sm);
+  border-radius: 0;
+}
+
+body.platform-win32 .app-titlebar-btn:hover {
+  background: var(--surface-hover);
+}
+
+body.platform-win32 .app-titlebar-btn.close:hover {
+  background: var(--error);
+  color: var(--bg);
+}
+
+/* Linux (GNOME Adwaita-style): circular buttons with a neutral fill,
+   glyphs always visible. 28px hit target — slightly above GNOME's
+   stock 24px for comfortable clicking without feeling oversized.
+   Close button gets red hover. */
+body.platform-linux .app-titlebar-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--surface-hover);
+  font-size: var(--font-sm);
+}
+
+body.platform-linux .app-titlebar-btn:hover {
+  background: var(--fg-faint);
+  color: var(--fg);
+}
+
+body.platform-linux .app-titlebar-btn.close:hover {
+  background: var(--error);
+  color: var(--bg);
+}
+
+/* Safety guard — never render custom controls on macOS. Native traffic
+   lights are positioned via main-window.ts trafficLightPosition. The
+   main.ts platform check already prevents creation of these elements,
+   but this display:none is defense-in-depth so a future refactor that
+   bypasses the check doesn't end up with duplicate/colliding controls. */
+body.platform-darwin .app-titlebar-controls {
+  display: none;
+}
 
 /* Screen reader only — visually hidden but accessible */
 .sr-only {
