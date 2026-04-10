@@ -445,7 +445,7 @@
 .scm-graph-ref-badge {
   padding: 0 4px;
   border-radius: 3px;
-  font-size: 9px;
+  font-size: var(--font-2xs);
   font-weight: 600;
   background: var(--badge-color, var(--accent));
   color: var(--bg);

@@ -34,11 +34,13 @@
   --scrollbar-thumb-hover: #565f89;
 
   /* Typography scale */
+  --font-2xs: 9px;
   --font-xs: 10px;
   --font-sm: 11px;
   --font-base: 13px;
   --font-md: 14px;
   --font-lg: 16px;
+  --font-xl: 18px;
 
   --leading-tight: 1.2;
   --leading-normal: 1.5;
@@ -331,7 +333,7 @@ select:focus-visible {
 .launch-ws-project-row:hover { background: var(--surface-hover); }
 .launch-ws-project-row.selected { border-color: var(--accent); background: var(--accent-dim); }
 
-.launch-ws-folder-icon { font-size: 18px; flex-shrink: 0; }
+.launch-ws-folder-icon { font-size: var(--font-xl); flex-shrink: 0; }
 .launch-ws-project-info { flex: 1; min-width: 0; }
 .launch-ws-project-name { font-size: var(--font-sm); font-weight: 600; color: var(--fg); }
 .launch-ws-project-path {
@@ -593,7 +595,7 @@ select:focus-visible {
   background: none;
   border: none;
   color: var(--fg-faint);
-  font-size: 16px;
+  font-size: var(--font-lg);
   cursor: pointer;
   padding: 0;
   width: 28px;

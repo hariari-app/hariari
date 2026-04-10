@@ -54,13 +54,17 @@ All colors are CSS custom properties defined in `global.css` and overridden per-
 
 ### Typography Scale
 
-| Token | Value |
-|-------|-------|
-| `--font-xs` | 10px |
-| `--font-sm` | 11px |
-| `--font-base` | 13px |
-| `--font-md` | 14px |
-| `--font-lg` | 16px |
+| Token | Value | Use |
+|-------|-------|-----|
+| `--font-2xs` | 9px | Tiny overlay captions, badge counts |
+| `--font-xs` | 10px | Labels, hints, keyboard shortcut chips |
+| `--font-sm` | 11px | Tab labels, compact buttons, secondary body |
+| `--font-base` | 13px | Default body text |
+| `--font-md` | 14px | Emphasized body, primary content |
+| `--font-lg` | 16px | Section headings, modal titles |
+| `--font-xl` | 18px | Page headings, launch dialog icons |
+
+One-off display sizes (20/24/48px in onboarding and empty states) are intentional outliers and not tokenized — tokenizing single-use values is noise.
 
 ## Spacing Scale
 

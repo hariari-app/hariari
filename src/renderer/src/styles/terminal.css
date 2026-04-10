@@ -306,7 +306,7 @@
 }
 
 .rail-overflow {
-  font-size: 9px;
+  font-size: var(--font-2xs);
   color: var(--fg-faint);
   font-weight: 600;
 }
@@ -363,7 +363,7 @@
 .sidebar-logo-text {
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 700;
-  font-size: 18px;
+  font-size: var(--font-xl);
   color: var(--fg);
   letter-spacing: -0.02em;
   line-height: 1;
@@ -451,7 +451,7 @@
   border-radius: 8px;
   background: var(--warning);
   color: var(--bg-deep);
-  font-size: 10px;
+  font-size: var(--font-xs);
   font-weight: 700;
   line-height: 16px;
   text-align: center;
@@ -551,7 +551,7 @@
   background: none;
   border: none;
   color: var(--fg-faint);
-  font-size: 14px;
+  font-size: var(--font-md);
   cursor: pointer;
   padding: 0;
   width: 20px;
@@ -595,7 +595,7 @@
 }
 
 .status-symbol {
-  font-size: 9px;
+  font-size: var(--font-2xs);
   font-weight: 700;
   font-family: 'JetBrains Mono', monospace;
   line-height: 1;
@@ -621,7 +621,7 @@
 .status-symbol-needs-input {
   color: var(--warning);
   animation: pulse-input 1s ease-in-out infinite;
-  font-size: 11px;
+  font-size: var(--font-sm);
 }
 
 @keyframes pulse-input {
@@ -1022,7 +1022,7 @@
   background: none;
   border: none;
   color: var(--fg-faint);
-  font-size: 16px;
+  font-size: var(--font-lg);
   cursor: pointer;
   padding: 0;
   width: 20px;
@@ -1624,7 +1624,7 @@
   border-radius: 6px;
   background: transparent;
   color: var(--fg-dim);
-  font-size: 14px;
+  font-size: var(--font-md);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1646,7 +1646,7 @@
   border-radius: 6px;
   background: transparent;
   color: var(--fg-dim);
-  font-size: 18px;
+  font-size: var(--font-xl);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1915,7 +1915,7 @@
   background: var(--surface-hover);
   border-radius: 3px;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
+  font-size: var(--font-2xs);
   color: var(--fg-dim);
 }
 
@@ -2286,7 +2286,7 @@
 }
 
 .keybinding-hold-badge {
-  font-size: 9px;
+  font-size: var(--font-2xs);
   padding: 1px 5px;
   border-radius: 4px;
   background: var(--surface-hover);

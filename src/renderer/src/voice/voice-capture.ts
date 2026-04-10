@@ -479,7 +479,7 @@ export class VoiceCapture {
 
     const desc = document.createElement('p');
     desc.textContent = 'Enter your OpenAI or Deepgram API key for speech-to-text:';
-    desc.style.cssText = 'margin: 0 0 12px; color: var(--fg-dim); font-size: 13px;';
+    desc.style.cssText = 'margin: 0 0 12px; color: var(--fg-dim); font-size: var(--font-base);';
 
     const providerSelect = document.createElement('select');
     providerSelect.className = 'voice-api-key-select';
@@ -504,7 +504,7 @@ export class VoiceCapture {
 
     const modeLabel = document.createElement('p');
     modeLabel.textContent = 'Voice mode:';
-    modeLabel.style.cssText = 'margin: 12px 0 4px; color: var(--fg-dim); font-size: 13px;';
+    modeLabel.style.cssText = 'margin: 12px 0 4px; color: var(--fg-dim); font-size: var(--font-base);';
 
     const modeSelect = document.createElement('select');
     modeSelect.className = 'voice-api-key-select';
@@ -523,7 +523,7 @@ export class VoiceCapture {
 
     const deviceLabel = document.createElement('p');
     deviceLabel.textContent = 'Microphone:';
-    deviceLabel.style.cssText = 'margin: 12px 0 4px; color: var(--fg-dim); font-size: 13px;';
+    deviceLabel.style.cssText = 'margin: 12px 0 4px; color: var(--fg-dim); font-size: var(--font-base);';
 
     const deviceSelect = document.createElement('select');
     deviceSelect.className = 'voice-api-key-select';
