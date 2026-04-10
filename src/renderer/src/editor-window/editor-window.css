@@ -133,7 +133,7 @@
   padding: var(--space-1) var(--space-2);
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg-dim);
   font-size: var(--font-xs);
   cursor: pointer;
@@ -211,7 +211,7 @@
   padding: var(--space-1) var(--space-3);
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg);
   font-size: var(--font-sm);
   cursor: pointer;

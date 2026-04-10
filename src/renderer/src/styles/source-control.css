@@ -49,7 +49,7 @@
   justify-content: center;
   background: none;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg-dim);
   cursor: pointer;
   font-size: var(--font-md);
@@ -74,7 +74,7 @@
   padding: var(--space-1) var(--space-2);
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg);
   font-family: inherit;
   font-size: var(--font-base);
@@ -113,7 +113,7 @@
   width: 12px;
   height: 12px;
   border: 1px solid var(--fg-faint);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
 }
 
@@ -130,7 +130,7 @@
   justify-content: center;
   background: var(--accent);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--bg);
   font-size: var(--font-base);
   font-weight: 600;
@@ -168,7 +168,7 @@
   padding: var(--space-1) var(--space-2);
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg-dim);
   font-size: var(--font-xs);
   cursor: pointer;
@@ -193,7 +193,7 @@
 }
 
 .scm-commit-group .scm-commit-btn {
-  border-radius: 4px 0 0 4px;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
 }
 
 .scm-commit-dropdown-btn {
@@ -202,7 +202,7 @@
   background: var(--accent);
   border: none;
   border-left: 1px solid rgba(0, 0, 0, 0.2);
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   color: var(--bg);
   font-size: var(--font-xs);
   cursor: pointer;
@@ -223,7 +223,7 @@
   margin-top: 2px;
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   box-shadow: var(--shadow-md);
   z-index: 50;
@@ -282,7 +282,7 @@
   height: 18px;
   padding: 0 5px;
   background: var(--surface-hover);
-  border-radius: 9px;
+  border-radius: var(--radius-pill);
   font-size: var(--font-xs);
   font-weight: 600;
   color: var(--fg-dim);
@@ -444,7 +444,7 @@
 
 .scm-graph-ref-badge {
   padding: 0 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-size: var(--font-2xs);
   font-weight: 600;
   background: var(--badge-color, var(--accent));

@@ -66,6 +66,21 @@ All colors are CSS custom properties defined in `global.css` and overridden per-
 
 One-off display sizes (20/24/48px in onboarding and empty states) are intentional outliers and not tokenized — tokenizing single-use values is noise.
 
+## Border Radius Scale
+
+| Token | Value | Use |
+|-------|-------|-----|
+| `--radius-xs` | 2px | Kbd hints, tiny checkboxes, pinpoint details |
+| `--radius-sm` | 4px | Small inputs, badges, chips, menu items |
+| `--radius-md` | 6px | Buttons, medium surfaces, dropdowns |
+| `--radius-lg` | 8px | Cards, toast notifications, overlay menus |
+| `--radius-xl` | 10px | Modal cards, major overlays |
+| `--radius-pill` | 9999px | Fully rounded pills (agent count badges) |
+
+Use `50%` directly for circular elements (avatars, status dots) — not tokenized because the meaning is geometric, not design-scale.
+
+Two deliberate one-off radii exist in the codebase with inline comments explaining why: `onboarding.css:26` uses 12px for the onboarding card (single-use, between xl and display sizes), `terminal.css:2120` uses 24px for the voice indicator capsule (geometric pill shape for that specific capsule layout).
+
 ## Spacing Scale
 
 Based on a 4px base unit.

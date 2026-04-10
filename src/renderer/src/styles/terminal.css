@@ -88,7 +88,7 @@
   z-index: 10000;
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: var(--space-1) 0;
   min-width: 180px;
   box-shadow: var(--shadow-md);
@@ -215,7 +215,7 @@
   border: none;
   color: var(--accent);
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   transition: background var(--transition-fast);
 }
 
@@ -238,7 +238,7 @@
   justify-content: center;
   background: none;
   border: 2px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
   position: relative;
   transition: all var(--transition-fast);
@@ -256,7 +256,7 @@
 .rail-avatar {
   width: 28px;
   height: 28px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -284,7 +284,7 @@
   justify-content: center;
   background: none;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   position: relative;
   transition: background var(--transition-fast);
@@ -388,7 +388,7 @@
   width: 28px;
   height: 28px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--fg-dim);
   cursor: pointer;
@@ -448,7 +448,7 @@
   right: -4px;
   min-width: 16px;
   height: 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--warning);
   color: var(--bg-deep);
   font-size: var(--font-xs);
@@ -485,7 +485,7 @@
 .new-agent-dropdown {
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   margin: var(--space-1) var(--space-2);
   overflow: hidden;
   box-shadow: var(--shadow-overlay);
@@ -540,7 +540,7 @@
 .agent-type-badge {
   font-size: var(--font-xs);
   padding: var(--space-1) var(--space-2);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--surface-hover);
   color: var(--fg-dim);
   text-transform: uppercase;
@@ -559,7 +559,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   margin-left: auto;
   opacity: 0;
   transition: all var(--transition-fast);
@@ -702,7 +702,7 @@
   font-size: var(--font-sm);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   padding: 1px 6px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 .status-bar-project::after {
@@ -732,7 +732,7 @@
 .status-bar-merge {
   background: color-mix(in srgb, var(--success) 20%, transparent);
   border: 1px solid var(--success);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--success);
   cursor: pointer;
   padding: 0 var(--space-2);
@@ -759,7 +759,7 @@
 .status-bar-review {
   background: color-mix(in srgb, var(--accent) 20%, transparent);
   border: 1px solid var(--accent);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--accent);
   cursor: pointer;
   padding: 0 var(--space-2);
@@ -778,7 +778,7 @@
 .status-bar-discard {
   background: none;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg-dim);
   cursor: pointer;
   padding: 0 var(--space-2);
@@ -809,7 +809,7 @@
 .wt-diff-card {
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
   width: 90%;
   max-width: 700px;
   max-height: 80vh;
@@ -841,7 +841,7 @@
   color: var(--accent);
   background: var(--accent-dim);
   padding: 2px var(--space-2);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .wt-diff-header .file-viewer-close {
@@ -960,7 +960,7 @@
 .status-bar-split {
   background: none;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg-dim);
   cursor: pointer;
   padding: 0 var(--space-1);
@@ -992,7 +992,7 @@
 .status-bar-files {
   background: none;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg-dim);
   cursor: pointer;
   padding: 0 var(--space-1);
@@ -1031,7 +1031,7 @@
   align-items: center;
   justify-content: center;
   line-height: 1;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   transition: all var(--transition-fast);
 }
 
@@ -1064,7 +1064,7 @@
   max-height: 380px;
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
   overflow: hidden;
   box-shadow: var(--shadow-overlay);
   animation: panel-in var(--transition-smooth);
@@ -1149,7 +1149,7 @@
   border: 1px solid var(--border);
   border-top: none;
   border-right: none;
-  border-radius: 0 0 0 8px;
+  border-radius: 0 0 0 var(--radius-lg);
   animation: panel-in var(--transition-smooth);
 }
 
@@ -1158,7 +1158,7 @@
   padding: var(--space-1) var(--space-2);
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg);
   font-size: var(--font-base);
   font-family: inherit;
@@ -1180,7 +1180,7 @@
   height: 24px;
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg);
   font-size: var(--font-md);
   cursor: pointer;
@@ -1257,7 +1257,7 @@
 .agent-count-badge {
   font-size: var(--font-xs);
   padding: 1px 5px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--surface-hover);
   color: var(--fg-dim);
   min-width: 16px;
@@ -1270,7 +1270,7 @@
 .git-change-badge {
   font-size: var(--font-xs);
   padding: 1px 5px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--warning) 20%, transparent);
   color: var(--warning);
   min-width: 16px;
@@ -1297,7 +1297,7 @@
   width: 20px;
   height: 20px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--fg-faint);
   cursor: pointer;
@@ -1321,7 +1321,7 @@
   width: 20px;
   height: 20px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--fg-faint);
   font-size: var(--font-md);
@@ -1433,7 +1433,7 @@
   padding: var(--space-2) var(--space-4);
   background: var(--accent);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--bg);
   font-size: var(--font-base);
   font-weight: 500;
@@ -1461,7 +1461,7 @@
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--accent);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   padding: 1px var(--space-1);
   outline: none;
   min-width: 0;
@@ -1482,7 +1482,7 @@
 .project-notification-badge {
   font-size: var(--font-xs);
   padding: 1px 5px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--accent);
   color: var(--bg);
   min-width: 16px;
@@ -1506,7 +1506,7 @@
   z-index: 1100;
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   box-shadow: var(--shadow-overlay);
   min-width: 160px;
@@ -1579,7 +1579,7 @@
   border-radius: 0;
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1621,7 +1621,7 @@
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--fg-dim);
   font-size: var(--font-md);
@@ -1643,7 +1643,7 @@
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--fg-dim);
   font-size: var(--font-xl);
@@ -1757,7 +1757,7 @@
   padding: 4px 12px;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg-dim);
   font-size: var(--font-sm);
   cursor: pointer;
@@ -1862,7 +1862,7 @@
 .diff-action-btn {
   padding: 5px 14px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: var(--font-sm);
   font-weight: 500;
   cursor: pointer;
@@ -1913,7 +1913,7 @@
 .file-viewer-shortcut kbd {
   padding: 1px 5px;
   background: var(--surface-hover);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-family: 'JetBrains Mono', monospace;
   font-size: var(--font-2xs);
   color: var(--fg-dim);
@@ -1924,7 +1924,7 @@
   padding: 3px 10px;
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg-dim);
   font-size: var(--font-sm);
   cursor: pointer;
@@ -1964,7 +1964,7 @@
 .fsearch-panel {
   width: 620px; max-height: 460px;
   background: var(--surface-raised);
-  border: 1px solid var(--border); border-radius: 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-xl);
   overflow: hidden; display: flex; flex-direction: column;
   box-shadow: var(--shadow-overlay);
   animation: panel-in var(--transition-smooth);
@@ -1997,7 +1997,7 @@
 
 .fsearch-file-count {
   font-size: var(--font-xs); padding: 0 4px;
-  background: var(--surface-hover); border-radius: 4px;
+  background: var(--surface-hover); border-radius: var(--radius-sm);
   color: var(--fg-dim); font-weight: 500;
 }
 
@@ -2044,7 +2044,7 @@
   max-height: 420px;
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
   overflow: hidden;
   box-shadow: var(--shadow-overlay);
   animation: panel-in var(--transition-smooth);
@@ -2117,6 +2117,9 @@
   z-index: 1200;
   background: var(--bg-deep);
   border: 1px solid var(--border);
+  /* Intentional pill-ish radius for the voice indicator capsule —
+     the component is a horizontal capsule, so 24px gives it the
+     rounded-pill shape specific to this one element. */
   border-radius: 24px;
   padding: var(--space-2) var(--space-5);
   display: flex;
@@ -2207,7 +2210,7 @@
   color: var(--accent);
   background: var(--accent-dim);
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-weight: 600;
   flex-shrink: 0;
 }
@@ -2242,7 +2245,7 @@
   max-height: 80vh;
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -2288,7 +2291,7 @@
 .keybinding-hold-badge {
   font-size: var(--font-2xs);
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--surface-hover);
   color: var(--fg-dim);
   text-transform: uppercase;
@@ -2300,7 +2303,7 @@
   padding: 5px var(--space-3);
   background: var(--bg-deep);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--fg);
   font-size: var(--font-sm);
   font-family: 'JetBrains Mono', monospace;
@@ -2333,7 +2336,7 @@
   height: 28px;
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--fg-dim);
   font-size: var(--font-md);
   cursor: pointer;
@@ -2359,7 +2362,7 @@
   padding: 6px 14px;
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--fg-dim);
   font-size: var(--font-sm);
   cursor: pointer;
@@ -2388,7 +2391,7 @@
 .voice-api-key-card {
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
   padding: var(--space-6);
   min-width: 420px;
   box-shadow: var(--shadow-overlay);
@@ -2401,7 +2404,7 @@
   background: var(--bg-deep);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: var(--font-base);
   font-family: inherit;
   margin-bottom: var(--space-2);
@@ -2414,7 +2417,7 @@
   background: var(--bg-deep);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: var(--font-base);
   font-family: 'JetBrains Mono', monospace;
   outline: none;
@@ -2426,7 +2429,7 @@
   padding: var(--space-2) var(--space-4);
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--fg-dim);
   font-size: var(--font-base);
   cursor: pointer;
@@ -2439,7 +2442,7 @@
   padding: var(--space-2) var(--space-4);
   background: var(--accent);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--bg);
   font-size: var(--font-base);
   font-weight: 600;
@@ -2467,7 +2470,7 @@
 .agent-install-card {
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
   padding: var(--space-6);
   min-width: 420px;
   max-width: 500px;
@@ -2501,7 +2504,7 @@
   gap: var(--space-2);
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);
   margin-bottom: var(--space-4);
 }
@@ -2518,7 +2521,7 @@
   padding: 3px 10px;
   background: var(--surface-hover);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg-dim);
   font-size: var(--font-sm);
   cursor: pointer;
@@ -2538,7 +2541,7 @@
   padding: var(--space-2) var(--space-4);
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--fg-dim);
   font-size: var(--font-base);
   text-decoration: none;
@@ -2552,7 +2555,7 @@
   padding: var(--space-2) var(--space-4);
   background: var(--accent);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--bg);
   font-size: var(--font-base);
   font-weight: 600;
@@ -2566,7 +2569,7 @@
   padding: var(--space-2) var(--space-5);
   background: var(--success);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--bg);
   font-size: var(--font-base);
   font-weight: 600;
@@ -2593,7 +2596,7 @@
 .restart-card {
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
   padding: var(--space-6) var(--space-8);
   text-align: center;
   box-shadow: var(--shadow-modal);
@@ -2610,7 +2613,7 @@
   padding: var(--space-2) var(--space-6);
   background: var(--accent);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--bg);
   font-size: var(--font-base);
   font-weight: 600;
@@ -2635,7 +2638,7 @@
 .preview-grid-btn {
   background: var(--bg-deep);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--fg-dim);
   font-size: var(--font-sm);
   font-family: 'JetBrains Mono', monospace;
@@ -2657,7 +2660,7 @@
   margin-top: var(--space-1);
   background: var(--bg-deep);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: var(--space-1);
   display: flex;
   flex-direction: column;
@@ -2669,7 +2672,7 @@
 .preview-grid-option {
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg-dim);
   font-size: var(--font-sm);
   font-family: 'JetBrains Mono', monospace;
