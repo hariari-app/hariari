@@ -774,12 +774,38 @@ function isLightTheme(chrome: Readonly<Record<string, string>>): boolean {
 function enrichChrome(chrome: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
   const light = isLightTheme(chrome);
   const adjust = light ? darken : lighten;
+
+  // Shadow alphas are lighter on light themes (heavy black shadows look
+  // bruised on pale backgrounds) and heavier on dark themes (subtle
+  // shadows disappear against dark surfaces). These values replace ~20
+  // raw rgba(0,0,0,X) uses scattered across the stylesheets.
+  // Alphas calibrated from the drift already in the codebase:
+  //   - standalone md dropdown shadows were at 0.30 (keep)
+  //   - compound overlay first layer was at 0.20 (different — keep inside overlay def)
+  //   - modal emphasis shadows were at 0.40 (keep)
+  //   - small inline shadows were at 0.15 (keep)
+  const aSm = light ? 0.08 : 0.15;
+  const aMd = light ? 0.12 : 0.30;
+  const aLg = light ? 0.14 : 0.30;
+  const aXl = light ? 0.18 : 0.40;
+  const aOverlayFirst = light ? 0.08 : 0.20;
+  const aOverlaySecond = light ? 0.14 : 0.30;
+  const aBackdrop = light ? 0.30 : 0.50;
+
   return {
     ...chrome,
     '--surface-raised': chrome['--surface-raised'] ?? adjust(chrome['--bg'] ?? '#1a1b26', 6),
     '--accent-dim': chrome['--accent-dim'] ?? withAlpha(chrome['--accent'] ?? '#7aa2f7', 0.15),
     '--accent-hover': chrome['--accent-hover'] ?? adjust(chrome['--accent'] ?? '#7aa2f7', 15),
     '--border-subtle': chrome['--border-subtle'] ?? withAlpha(chrome['--border'] ?? '#2a2b3d', 0.5),
+    // Elevation shadow tokens — composed box-shadow values
+    '--shadow-sm': `0 1px 3px rgba(0, 0, 0, ${aSm})`,
+    '--shadow-md': `0 4px 12px rgba(0, 0, 0, ${aMd})`,
+    '--shadow-lg': `0 4px 16px rgba(0, 0, 0, ${aLg})`,
+    '--shadow-overlay': `0 4px 12px rgba(0, 0, 0, ${aOverlayFirst}), 0 16px 48px rgba(0, 0, 0, ${aOverlaySecond})`,
+    '--shadow-modal': `0 8px 32px rgba(0, 0, 0, ${aXl})`,
+    // Backdrop for modal overlays (not a box-shadow — used as background)
+    '--backdrop-overlay': `rgba(0, 0, 0, ${aBackdrop})`,
   };
 }
 

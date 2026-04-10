@@ -59,6 +59,16 @@
   --transition-fast: 0.1s ease;
   --transition-normal: 0.15s ease;
   --transition-smooth: 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Shadow tokens — fallback defaults for dark themes. enrichChrome()
+     in terminal-theme.ts overrides these per-theme with softer alphas
+     on light themes (see FINDING-B3-001). */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.15);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.30);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.30);
+  --shadow-overlay: 0 4px 12px rgba(0, 0, 0, 0.20), 0 16px 48px rgba(0, 0, 0, 0.30);
+  --shadow-modal: 0 8px 32px rgba(0, 0, 0, 0.40);
+  --backdrop-overlay: rgba(0, 0, 0, 0.50);
 }
 
 html, body {
@@ -257,7 +267,7 @@ select:focus-visible {
 .launch-ws-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--backdrop-overlay);
   z-index: 9998;
   display: flex;
   align-items: center;
@@ -272,7 +282,7 @@ select:focus-visible {
   max-width: 560px;
   max-height: 85vh;
   overflow-y: auto;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2), 0 16px 48px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-overlay);
 }
 
 .launch-ws-header {
@@ -510,7 +520,7 @@ select:focus-visible {
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-lg);
   pointer-events: auto;
   opacity: 0;
   transform: translateX(100%);
@@ -638,7 +648,7 @@ select:focus-visible {
 .notif-prefs-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--backdrop-overlay);
   z-index: 9998;
   display: flex;
   align-items: center;
@@ -652,7 +662,7 @@ select:focus-visible {
   padding: var(--space-5) var(--space-6);
   max-width: 560px;
   width: 90%;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-modal);
 }
 
 .notif-prefs-header {
