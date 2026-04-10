@@ -6,9 +6,17 @@ import { MergeView } from '@codemirror/merge';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { search } from '@codemirror/search';
 import { getLanguageExtension, cmTheme } from '../editor-window/lang-extensions';
+import { isCurrentThemeLight } from '../terminal/terminal-theme';
 import { SourceControlPanel } from '../scm/source-control-panel';
 import type { FileEntry, FileContent } from '../../../shared/ipc-types';
 import type { GitStageGroup } from '../../../shared/git-types';
+
+// oneDark only applies on dark app themes. See editor-pane.ts for the
+// same pattern — evaluated at editor-create time; a theme switch requires
+// reopening the file to take effect.
+function syntaxThemeExtensions(): readonly [] | readonly [typeof oneDark] {
+  return isCurrentThemeLight() ? [] : [oneDark];
+}
 
 type ViewMode = 'files' | 'changes';
 
@@ -371,7 +379,7 @@ export class FileViewer {
         autocompletion({ activateOnTyping: true }),
         closeBrackets(),
         keymap.of(closeBracketsKeymap),
-        oneDark,
+        ...syntaxThemeExtensions(),
         search(),
         keymap.of([{ key: 'Mod-s', run: () => { this.saveFile(); return true; } }]),
         EditorView.updateListener.of((update) => {
@@ -401,14 +409,15 @@ export class FileViewer {
 
     const langExt = getLanguageExtension(filePath);
 
+    const syntaxExt = syntaxThemeExtensions();
     this.mergeView = new MergeView({
       a: {
         doc: original,
-        extensions: [basicSetup, langExt, oneDark, cmTheme, EditorState.readOnly.of(true)],
+        extensions: [basicSetup, langExt, ...syntaxExt, cmTheme, EditorState.readOnly.of(true)],
       },
       b: {
         doc: modified,
-        extensions: [basicSetup, langExt, oneDark, cmTheme, EditorState.readOnly.of(true)],
+        extensions: [basicSetup, langExt, ...syntaxExt, cmTheme, EditorState.readOnly.of(true)],
       },
       parent: this.editorContainer,
       highlightChanges: true,

@@ -816,3 +816,12 @@ export function loadSavedTheme(): string {
     return 'brutalist';
   }
 }
+
+/**
+ * Returns true if the currently saved theme is a light theme.
+ * Used by non-CSS consumers (e.g. CodeMirror editor extensions) that need
+ * to make a discrete dark/light decision before rendering.
+ */
+export function isCurrentThemeLight(): boolean {
+  return isLightTheme(getTheme(loadSavedTheme()).chrome);
+}

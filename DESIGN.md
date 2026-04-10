@@ -141,6 +141,15 @@ Dot (8px circle) + symbol (monospace). Seven states: running, needs-input, error
 **Dark:** Tokyo Night (default), Solarized Dark, Dracula, Nord, Gruvbox Dark, One Dark, Catppuccin Mocha, Monokai, Brutalist, Caffeine Dark
 **Light:** Tokyo Night Light, Solarized Light, GitHub Light, Catppuccin Latte, Brutalist Light, Caffeine Light
 
+### Editor (CodeMirror) theming
+
+The CodeMirror editor used in the editor pop-out window and the inline file viewer is NOT a pure CSS-variable consumer — it composes two layers:
+
+1. **Chrome layer (`cmTheme` in `lang-extensions.ts`):** Uses `var(--bg)`, `var(--fg)`, `var(--bg-deep)`, `var(--surface-raised)`, `var(--surface-hover)`, `var(--accent)`, `var(--accent-dim)` for the editor background, gutter, active line, selection, and caret. Always applied. Follows the app theme automatically.
+2. **Syntax layer:** On dark app themes, `@codemirror/theme-one-dark` (`oneDark`) is applied for syntax token colors. On light app themes, `oneDark` is skipped entirely and CodeMirror's default syntax rendering is used. The choice is driven by `isCurrentThemeLight()` in `terminal-theme.ts` evaluated at editor-create time.
+
+**Known gap:** The syntax layer is resolved at editor-create time, so switching the app theme while an editor is open will update the chrome (CSS variables reflow) but NOT the syntax highlighting until the file is reopened. Full live-switch would require IPC wiring across BrowserWindow boundaries.
+
 Each theme provides terminal colors (16 ANSI + selection) and chrome CSS variables. Derived tokens (`--surface-raised`, `--accent-dim`, `--accent-hover`, `--border-subtle`) are computed automatically by `enrichChrome()`.
 
 ## Accessibility

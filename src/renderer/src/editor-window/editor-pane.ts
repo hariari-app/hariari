@@ -6,8 +6,17 @@ import { MergeView } from '@codemirror/merge';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { search } from '@codemirror/search';
 import { getLanguageExtension, cmTheme } from './lang-extensions';
+import { isCurrentThemeLight } from '../terminal/terminal-theme';
 import type { FileContent } from '../../../shared/ipc-types';
 import type { GitStageGroup } from '../../../shared/git-types';
+
+// oneDark only applies on dark app themes; on light themes we skip it and
+// let cmTheme's CSS-variable-driven chrome + CodeMirror's default syntax
+// highlighting carry the editor. Evaluated at editor-create time — an
+// already-open editor needs a reopen to pick up a theme switch.
+function syntaxThemeExtensions(): readonly [] | readonly [typeof oneDark] {
+  return isCurrentThemeLight() ? [] : [oneDark];
+}
 
 export interface EditorPaneCallbacks {
   readonly onDiffStage: (filePath: string) => void;
@@ -172,7 +181,7 @@ export class EditorPane {
         autocompletion({ activateOnTyping: true }),
         closeBrackets(),
         keymap.of(closeBracketsKeymap),
-        oneDark,
+        ...syntaxThemeExtensions(),
         search(),
         keymap.of([{ key: 'Mod-s', run: () => { this.saveFile(); return true; } }]),
         EditorView.updateListener.of((update) => {
@@ -203,14 +212,15 @@ export class EditorPane {
 
     const langExt = getLanguageExtension(filePath);
 
+    const syntaxExt = syntaxThemeExtensions();
     this.mergeView = new MergeView({
       a: {
         doc: original,
-        extensions: [basicSetup, langExt, oneDark, cmTheme, EditorState.readOnly.of(true)],
+        extensions: [basicSetup, langExt, ...syntaxExt, cmTheme, EditorState.readOnly.of(true)],
       },
       b: {
         doc: modified,
-        extensions: [basicSetup, langExt, oneDark, cmTheme, EditorState.readOnly.of(true)],
+        extensions: [basicSetup, langExt, ...syntaxExt, cmTheme, EditorState.readOnly.of(true)],
       },
       parent: this.editorContainer,
       highlightChanges: true,

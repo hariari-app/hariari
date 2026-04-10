@@ -34,8 +34,49 @@ export function getLanguageExtension(filePath: string): Extension {
   }
 }
 
+/**
+ * CodeMirror chrome theme — uses the app's CSS custom properties so the
+ * editor surface follows whichever app theme is active. Syntax highlighting
+ * is supplied separately (oneDark for dark app themes, CM defaults for
+ * light ones) and layered on top of this chrome in editor-pane.ts /
+ * file-viewer.ts.
+ *
+ * Values reference CSS variables set by terminal-theme.applyTheme(), so
+ * a theme switch that re-runs applyTheme() will update these automatically
+ * the next time the editor is reopened. Live switching of an already-open
+ * editor is a known gap (see DESIGN.md Editor section).
+ */
 export const cmTheme = EditorView.theme({
-  '&': { height: '100%', fontSize: '13px' },
-  '.cm-scroller': { overflow: 'auto', fontFamily: "'JetBrains Mono', 'Fira Code', monospace" },
-  '.cm-gutters': { minWidth: '48px' },
+  '&': {
+    height: '100%',
+    fontSize: '13px',
+    backgroundColor: 'var(--bg)',
+    color: 'var(--fg)',
+  },
+  '.cm-scroller': {
+    overflow: 'auto',
+    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+  },
+  '.cm-content': {
+    caretColor: 'var(--accent)',
+  },
+  '.cm-gutters': {
+    minWidth: '48px',
+    backgroundColor: 'var(--bg-deep)',
+    color: 'var(--fg-dim)',
+    border: 'none',
+  },
+  '.cm-activeLineGutter': {
+    backgroundColor: 'var(--surface-hover)',
+    color: 'var(--fg)',
+  },
+  '.cm-activeLine': {
+    backgroundColor: 'var(--surface-raised)',
+  },
+  '.cm-selectionBackground, &.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
+    backgroundColor: 'var(--accent-dim)',
+  },
+  '&.cm-focused > .cm-scroller > .cm-cursorLayer > .cm-cursor': {
+    borderLeftColor: 'var(--accent)',
+  },
 });
