@@ -182,12 +182,12 @@ body.platform-win32 .app-titlebar-btn.close:hover {
 }
 
 /* Linux (GNOME Adwaita-style): circular buttons with a neutral fill,
-   glyphs always visible. 28px hit target — slightly above GNOME's
-   stock 24px for comfortable clicking without feeling oversized.
-   Close button gets red hover. */
+   glyphs always visible. 26px hit target — close to GNOME's stock
+   24px, with a little extra room for comfortable clicking without
+   feeling oversized. Close button gets red hover. */
 body.platform-linux .app-titlebar-btn {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   background: var(--surface-hover);
   font-size: var(--font-sm);
