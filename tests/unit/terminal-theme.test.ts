@@ -180,9 +180,20 @@ describe('Terminal Theme', () => {
     it('all color values are valid hex or rgba strings', () => {
       const colorRegex = /^(#[0-9a-f]{6}|rgba\(\d+,\s*\d+,\s*\d+,\s*[\d.]+\))$/i;
       const names = getThemeNames();
+      // Non-color tokens (box-shadow composites) added in FINDING-B3-001
+      // live in the same chrome object but aren't colors, so they must
+      // be excluded from the color-shape assertion.
+      const nonColorKeys = new Set([
+        '--shadow-sm',
+        '--shadow-md',
+        '--shadow-lg',
+        '--shadow-overlay',
+        '--shadow-modal',
+      ]);
       for (const name of names) {
         const theme = getTheme(name);
-        for (const value of Object.values(theme.chrome)) {
+        for (const [key, value] of Object.entries(theme.chrome)) {
+          if (nonColorKeys.has(key)) continue;
           expect(value).toMatch(colorRegex);
         }
       }
