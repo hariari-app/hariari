@@ -217,6 +217,16 @@ earlyIpcMain.handle('window:popout-editor', async (_event: unknown, raw: unknown
       minWidth: 600,
       minHeight: 400,
       title: `${projectName} — Hariari`,
+      // Match the main window's frameless chrome so both windows share
+      // the same title-bar design language. The editor window's
+      // .ew-titlebar element (see editor-window-app.ts) takes over
+      // title/drag/controls, and on macOS the native traffic lights
+      // render on the left via trafficLightPosition below.
+      frame: false,
+      titleBarStyle: 'hidden',
+      ...(process.platform === 'darwin' ? {
+        trafficLightPosition: { x: 13, y: 10 },
+      } : {}),
       webPreferences: {
         preload: nodePath.join(__dirname, '../preload/index.js'),
         sandbox: false,

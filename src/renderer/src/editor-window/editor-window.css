@@ -2,15 +2,64 @@
    Editor Window — Dedicated File Viewer
    ============================================ */
 
-/* Root layout — #app.ew-root needed to override #app's column direction (ID > class specificity) */
+/* Root layout — #app.ew-root holds a column: title bar on top, then a
+   horizontal body (sidebar | editor). The ID selector overrides #app's
+   base flex-direction (ID > class specificity). */
 #app.ew-root {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   height: 100vh;
   background: var(--bg-deep);
   color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: var(--font-base);
+}
+
+/* Title bar — frameless window chrome, 42px to match the main window's
+   project tab bar height. Draggable by default; window controls carry
+   -webkit-app-region: no-drag via .app-titlebar-controls. On macOS the
+   native traffic lights sit on the left via trafficLightPosition, so
+   we add a left pad to clear them. */
+.ew-titlebar {
+  height: 42px;
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-3);
+  gap: var(--space-3);
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+body.platform-darwin .ew-titlebar {
+  padding-left: 78px;
+}
+
+.ew-titlebar-title {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ew-titlebar-drag {
+  flex: 1;
+  height: 100%;
+}
+
+/* Body — horizontal flex container that holds the sidebar and editor
+   area. This wrapper replaces the old .ew-root as the row container
+   now that the root is a column with a title bar on top. */
+.ew-body {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* Sidebar */

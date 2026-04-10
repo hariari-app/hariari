@@ -30,6 +30,63 @@ export class EditorWindowApp {
   async init(): Promise<void> {
     this.container.classList.add('ew-root');
 
+    // Title bar — frameless window chrome. Contains the project name
+    // (left), a draggable spacer (middle), and platform-native window
+    // controls on the right for non-macOS. On macOS the native traffic
+    // lights render on the left via trafficLightPosition in main/index.ts,
+    // and .ew-titlebar gets a left padding to clear them.
+    const titleBar = document.createElement('div');
+    titleBar.className = 'ew-titlebar';
+    titleBar.setAttribute('role', 'banner');
+
+    const titleLabel = document.createElement('span');
+    titleLabel.className = 'ew-titlebar-title';
+    const projectName = this.projectPath.split('/').filter(Boolean).pop() ?? 'Hariari';
+    titleLabel.textContent = `${projectName} — Hariari`;
+    titleBar.appendChild(titleLabel);
+
+    const dragSpacer = document.createElement('div');
+    dragSpacer.className = 'ew-titlebar-drag';
+    titleBar.appendChild(dragSpacer);
+
+    if (window.api.platform !== 'darwin') {
+      const controls = document.createElement('div');
+      controls.className = 'app-titlebar-controls';
+      controls.setAttribute('role', 'toolbar');
+      controls.setAttribute('aria-label', 'Window controls');
+
+      const minimizeBtn = document.createElement('button');
+      minimizeBtn.className = 'app-titlebar-btn minimize';
+      minimizeBtn.setAttribute('aria-label', 'Minimize window');
+      minimizeBtn.textContent = '\u2212'; // − MINUS SIGN
+      minimizeBtn.addEventListener('click', () => window.api.window.minimize());
+
+      const maximizeBtn = document.createElement('button');
+      maximizeBtn.className = 'app-titlebar-btn maximize';
+      maximizeBtn.setAttribute('aria-label', 'Maximize window');
+      maximizeBtn.textContent = '\u25A1'; // □ WHITE SQUARE
+      maximizeBtn.addEventListener('click', () => window.api.window.maximize());
+
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'app-titlebar-btn close';
+      closeBtn.setAttribute('aria-label', 'Close window');
+      closeBtn.textContent = '\u2715'; // ✕ MULTIPLICATION X
+      closeBtn.addEventListener('click', () => window.api.window.close());
+
+      controls.appendChild(minimizeBtn);
+      controls.appendChild(maximizeBtn);
+      controls.appendChild(closeBtn);
+      titleBar.appendChild(controls);
+    }
+
+    this.container.appendChild(titleBar);
+
+    // Body wrapper — horizontal split holding the sidebar and editor area.
+    // Wrapping the existing horizontal layout lets the title bar sit
+    // on top in a column while the sidebar|editor layout stays row.
+    const body = document.createElement('div');
+    body.className = 'ew-body';
+
     // Sidebar
     this.sidebar = document.createElement('div');
     this.sidebar.className = 'ew-sidebar';
@@ -87,9 +144,10 @@ export class EditorWindowApp {
     const editorContainer = document.createElement('div');
     editorContainer.className = 'ew-editor-area';
 
-    this.container.appendChild(this.sidebar);
-    this.container.appendChild(resizeHandle);
-    this.container.appendChild(editorContainer);
+    body.appendChild(this.sidebar);
+    body.appendChild(resizeHandle);
+    body.appendChild(editorContainer);
+    this.container.appendChild(body);
 
     // Initialize components
     this.fileTree = new FileTreePanel(this.fileTreeContainer, {
