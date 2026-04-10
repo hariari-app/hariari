@@ -136,10 +136,10 @@ Dot (8px circle) + symbol (monospace). Seven states: running, needs-input, error
 
 ## Themes
 
-12 themes available in `terminal-theme.ts`:
+16 themes available in `terminal-theme.ts`:
 
-**Dark:** Tokyo Night (default), Solarized Dark, Dracula, Nord, Gruvbox Dark, One Dark, Catppuccin Mocha, Monokai
-**Light:** Tokyo Night Light, Solarized Light, GitHub Light, Catppuccin Latte
+**Dark:** Tokyo Night (default), Solarized Dark, Dracula, Nord, Gruvbox Dark, One Dark, Catppuccin Mocha, Monokai, Brutalist, Caffeine Dark
+**Light:** Tokyo Night Light, Solarized Light, GitHub Light, Catppuccin Latte, Brutalist Light, Caffeine Light
 
 Each theme provides terminal colors (16 ANSI + selection) and chrome CSS variables. Derived tokens (`--surface-raised`, `--accent-dim`, `--accent-hover`, `--border-subtle`) are computed automatically by `enrichChrome()`.
 
