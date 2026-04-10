@@ -98,28 +98,11 @@ html, body {
   position: relative;
 }
 
-/* Custom title bar */
-.app-titlebar {
-  height: 36px;
-  background: var(--bg-deep);
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  padding: 0 var(--space-4);
-  -webkit-app-region: drag;
-  user-select: none;
-  flex-shrink: 0;
-}
-
-.app-titlebar-title {
-  font-size: var(--font-base);
-  font-weight: 600;
-  color: var(--fg-dim);
-  letter-spacing: 0.02em;
-  flex: 1;
-  text-align: center;
-}
-
+/* Custom title bar window controls (minimize/maximize/close).
+   Used by ProjectTabBar.appendWindowControls — the project tab bar
+   replaces the title bar but reuses these control buttons. The
+   .app-titlebar container class was removed after the tab bar took
+   over; only the controls remain. */
 .app-titlebar-controls {
   display: flex;
   gap: var(--space-2);
@@ -142,11 +125,6 @@ html, body {
 .app-titlebar-btn.close { background: var(--error); }
 .app-titlebar-btn.minimize { background: var(--warning); }
 .app-titlebar-btn.maximize { background: var(--success); }
-
-/* macOS: pad titlebar to clear native traffic light buttons (top-left) */
-body.platform-darwin .app-titlebar {
-  padding-left: 78px;
-}
 
 /* Screen reader only — visually hidden but accessible */
 .sr-only {
