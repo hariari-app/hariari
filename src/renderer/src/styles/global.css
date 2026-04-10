@@ -488,8 +488,10 @@ select:focus-visible {
    Toast notifications
    ============================================ */
 .toast-container {
+  /* Offset below the 42px project tab bar with a small inset gap.
+     Update this if the tab bar height changes. */
   position: fixed;
-  top: 40px;
+  top: 46px;
   right: 16px;
   z-index: 10000;
   display: flex;
