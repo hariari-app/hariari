@@ -129,6 +129,9 @@ html, body {
   display: flex;
   gap: var(--space-2);
   margin-left: auto;
+  /* Right inset so the close button doesn't sit flush against the
+     window frame edge. Matches macOS traffic-light inset convention. */
+  margin-right: var(--space-3);
   -webkit-app-region: no-drag;
 }
 
