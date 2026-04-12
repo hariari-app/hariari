@@ -13,8 +13,42 @@ const GITHUB_OWNER = 'hariari-app';
 const GITHUB_REPO = 'hariari';
 const APP_DIR = path.join(os.homedir(), '.hariari', 'bin');
 
-// Detect Linux package manager family
+// Known distro families from /etc/os-release ID and ID_LIKE fields
+const DEB_DISTROS = new Set([
+  'debian', 'ubuntu', 'linuxmint', 'pop', 'elementary', 'zorin',
+  'kali', 'parrot', 'mx', 'antix', 'devuan', 'deepin', 'bodhi',
+  'peppermint', 'lmde', 'tails', 'pureos', 'raspbian', 'armbian',
+  'neon', 'kubuntu', 'xubuntu', 'lubuntu', 'ubuntumate',
+  'ubuntubudgie', 'ubuntustudio', 'ubuntukylin', 'ubuntucinnamon',
+  'bunsenlabs', 'sparky', 'siduction', 'neptune', 'kaos',
+]);
+
+const RPM_DISTROS = new Set([
+  'fedora', 'rhel', 'centos', 'rocky', 'alma', 'almalinux',
+  'oracle', 'oraclelinux', 'ol', 'scientific', 'amzn', 'amazon',
+  'opensuse', 'opensuse-leap', 'opensuse-tumbleweed', 'suse', 'sles',
+  'mageia', 'openmandriva', 'rosa', 'pclinuxos', 'clearos',
+  'eurolinux', 'springdale', 'nobara', 'ultramarine', 'qubes',
+]);
+
+// Detect Linux package format from /etc/os-release, then fall back to binary check
 function detectLinuxPackageManager() {
+  // Phase 1: parse /etc/os-release for ID and ID_LIKE
+  try {
+    const release = fs.readFileSync('/etc/os-release', 'utf8');
+    const id = (release.match(/^ID=(.*)$/m) || [])[1]?.replace(/"/g, '').toLowerCase();
+    const idLike = (release.match(/^ID_LIKE=(.*)$/m) || [])[1]?.replace(/"/g, '').toLowerCase() || '';
+    const ids = [id, ...idLike.split(/\s+/)].filter(Boolean);
+
+    for (const distroId of ids) {
+      if (DEB_DISTROS.has(distroId)) return 'deb';
+      if (RPM_DISTROS.has(distroId)) return 'rpm';
+    }
+  } catch {
+    // /etc/os-release not available
+  }
+
+  // Phase 2: fall back to binary detection for unlisted distros
   try {
     execSync('which dpkg', { stdio: 'ignore' });
     return 'deb';
@@ -27,6 +61,7 @@ function detectLinuxPackageManager() {
   } catch {
     // not RPM-based
   }
+
   return 'appimage';
 }
 

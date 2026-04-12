@@ -57,7 +57,15 @@ Skills are installed to each agent's config directory (`~/.claude/skills/`, `~/.
 npx hariari@latest
 ```
 
-This auto-detects your platform, downloads the latest release, verifies the checksum, and launches Hariari. Subsequent runs use the cached binary and auto-update when a new version is available.
+This auto-detects your platform and package manager, downloads the latest release, verifies the checksum, and installs Hariari:
+
+- **Debian/Ubuntu/Mint/Pop!_OS** — downloads `.deb`, runs `sudo dpkg -i`
+- **Fedora/RHEL/CentOS/openSUSE** — downloads `.rpm`, runs `sudo rpm -U`
+- **Arch/NixOS/other Linux** — downloads AppImage with desktop entry and icon
+- **macOS** — downloads and mounts `.dmg`
+- **Windows** — downloads and runs `.exe` installer
+
+Subsequent runs use the cached binary and auto-update when a new version is available.
 
 Or install globally:
 
@@ -73,10 +81,13 @@ Download from the [Releases](https://github.com/hariari-app/hariari/releases) pa
 #### Linux
 
 ```bash
-# Debian/Ubuntu
+# Debian/Ubuntu/Mint
 gh release download --repo hariari-app/hariari --pattern "*.deb" && sudo dpkg -i hariari_*_amd64.deb
 
-# AppImage (any distro, no install needed)
+# Fedora/RHEL/CentOS/openSUSE
+gh release download --repo hariari-app/hariari --pattern "*.rpm" && sudo rpm -U hariari-*.x86_64.rpm
+
+# AppImage (Arch, NixOS, other distros)
 gh release download --repo hariari-app/hariari --pattern "*.AppImage" && chmod +x Hariari-*.AppImage
 ```
 
