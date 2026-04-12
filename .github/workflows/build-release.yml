@@ -41,6 +41,7 @@ jobs:
           name: linux-builds
           path: |
             dist/*.deb
+            dist/*.rpm
             dist/*.AppImage
             dist/latest-linux.yml
           retention-days: 5
@@ -165,7 +166,7 @@ jobs:
       - name: Generate SHA256 checksums
         run: |
           cd artifacts
-          find . -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.dmg" -o -name "*.zip" -o -name "*.exe" \) | while read f; do
+          find . -type f \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" -o -name "*.dmg" -o -name "*.zip" -o -name "*.exe" \) | while read f; do
             sha256sum "$f" | sed "s|  .*/|  |" >> SHA256SUMS.txt
           done
           cat SHA256SUMS.txt
@@ -177,6 +178,7 @@ jobs:
           generate_release_notes: true
           files: |
             artifacts/linux/*.deb
+            artifacts/linux/*.rpm
             artifacts/linux/*.AppImage
             artifacts/linux/latest-linux.yml
             artifacts/macos/*.dmg

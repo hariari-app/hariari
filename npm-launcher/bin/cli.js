@@ -6,21 +6,50 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { execSync, spawn } = require('child_process');
+const { execSync, spawn, spawnSync } = require('child_process');
 const crypto = require('crypto');
 
 const GITHUB_OWNER = 'hariari-app';
 const GITHUB_REPO = 'hariari';
 const APP_DIR = path.join(os.homedir(), '.hariari', 'bin');
 
+// Detect Linux package manager family
+function detectLinuxPackageManager() {
+  try {
+    execSync('which dpkg', { stdio: 'ignore' });
+    return 'deb';
+  } catch {
+    // not Debian-based
+  }
+  try {
+    execSync('which rpm', { stdio: 'ignore' });
+    return 'rpm';
+  } catch {
+    // not RPM-based
+  }
+  return 'appimage';
+}
+
 // Map platform + arch to electron-builder artifact names
 function getArtifact(version) {
   const platform = process.platform;
   const arch = process.arch;
 
+  if (platform === 'linux') {
+    const pkgType = detectLinuxPackageManager();
+    const debArch = arch === 'x64' ? 'amd64' : 'arm64';
+    const appimageArch = arch === 'x64' ? 'x86_64' : 'arm64';
+
+    const linuxMap = {
+      deb: { file: `hariari_${version}_${debArch}.deb`, launch: 'deb' },
+      rpm: { file: `hariari-${version}.${debArch === 'amd64' ? 'x86_64' : 'aarch64'}.rpm`, launch: 'rpm' },
+      appimage: { file: `Hariari-${version}-${appimageArch}.AppImage`, launch: 'appimage' },
+    };
+
+    return linuxMap[pkgType];
+  }
+
   const map = {
-    'linux-x64': { file: `Hariari-${version}-x86_64.AppImage`, launch: 'appimage' },
-    'linux-arm64': { file: `Hariari-${version}-arm64.AppImage`, launch: 'appimage' },
     'darwin-x64': { file: `Hariari-${version}-x64.dmg`, launch: 'dmg' },
     'darwin-arm64': { file: `Hariari-${version}-arm64.dmg`, launch: 'dmg' },
     'win32-x64': { file: `Hariari-${version}-x64.exe`, launch: 'exe' },
@@ -31,7 +60,7 @@ function getArtifact(version) {
 
   if (!artifact) {
     console.error(`Unsupported platform: ${platform}-${arch}`);
-    console.error(`Supported: ${Object.keys(map).join(', ')}`);
+    console.error(`Supported: linux-x64, linux-arm64, darwin-x64, darwin-arm64, win32-x64`);
     process.exit(1);
   }
 
@@ -133,10 +162,67 @@ function sha256(filePath) {
   });
 }
 
-// Launch the downloaded binary
+// Install desktop entry and icon for AppImage
+function installDesktopEntry(appImagePath) {
+  const appsDir = path.join(os.homedir(), '.local', 'share', 'applications');
+  const iconDir = path.join(os.homedir(), '.local', 'share', 'icons', 'hicolor', '256x256', 'apps');
+  const iconSource = path.join(__dirname, '..', 'assets', 'hariari.png');
+  const iconDest = path.join(iconDir, 'hariari.png');
+  const desktopFile = path.join(appsDir, 'hariari.desktop');
+
+  const desktopEntry = `[Desktop Entry]
+Name=Hariari
+Comment=AI agent terminal orchestrator for vibe coders
+Exec="${appImagePath}"
+Icon=hariari
+Type=Application
+Categories=Development;IDE;
+StartupWMClass=hariari
+Terminal=false
+`;
+
+  try {
+    fs.mkdirSync(appsDir, { recursive: true });
+    fs.mkdirSync(iconDir, { recursive: true });
+
+    if (fs.existsSync(iconSource)) {
+      fs.copyFileSync(iconSource, iconDest);
+    }
+
+    fs.writeFileSync(desktopFile, desktopEntry);
+    console.log('  Desktop entry installed — Hariari is now in your app launcher.');
+  } catch (err) {
+    console.log(`  Could not create desktop entry: ${err.message}`);
+  }
+}
+
+// Launch or install the downloaded binary
 function launchApp(filePath, type) {
-  if (type === 'appimage') {
+  if (type === 'deb') {
+    console.log('  Installing .deb package (requires sudo)...\n');
+    const result = spawnSync('sudo', ['dpkg', '-i', filePath], { stdio: 'inherit' });
+    if (result.status !== 0) {
+      console.error('\n  Installation failed. You can install manually:');
+      console.error(`  sudo dpkg -i "${filePath}"`);
+      process.exit(1);
+    }
+    console.log('\n  Launching Hariari...\n');
+    spawn('hariari', { detached: true, stdio: 'ignore' }).unref();
+  } else if (type === 'rpm') {
+    console.log('  Installing .rpm package (requires sudo)...\n');
+    // Use rpm -U (upgrade) so it works for both install and update
+    const result = spawnSync('sudo', ['rpm', '-U', '--force', filePath], { stdio: 'inherit' });
+    if (result.status !== 0) {
+      console.error('\n  Installation failed. You can install manually:');
+      console.error(`  sudo rpm -U "${filePath}"`);
+      process.exit(1);
+    }
+    console.log('\n  Launching Hariari...\n');
+    spawn('hariari', { detached: true, stdio: 'ignore' }).unref();
+  } else if (type === 'appimage') {
     fs.chmodSync(filePath, 0o755);
+    installDesktopEntry(filePath);
+    console.log('');
     const child = spawn(filePath, { detached: true, stdio: 'ignore' });
     child.unref();
   } else if (type === 'dmg') {
@@ -197,7 +283,7 @@ async function main() {
 
     // Clean old binaries
     fs.mkdirSync(APP_DIR, { recursive: true, mode: 0o700 });
-    const existing = fs.readdirSync(APP_DIR).filter((f) => f.startsWith('Hariari-'));
+    const existing = fs.readdirSync(APP_DIR).filter((f) => f.startsWith('Hariari-') || f.startsWith('hariari_') || f.startsWith('hariari-'));
     for (const old of existing) {
       fs.unlinkSync(path.join(APP_DIR, old));
     }
@@ -251,7 +337,7 @@ async function main() {
     console.log('  Installed successfully.');
   }
 
-  // Launch
+  // Launch / install
   console.log('  Launching Hariari...\n');
   launchApp(destPath, artifact.launch);
 }
