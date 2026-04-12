@@ -19,7 +19,7 @@ function getArtifact(version) {
   const arch = process.arch;
 
   const map = {
-    'linux-x64': { file: `Hariari-${version}-amd64.AppImage`, launch: 'appimage' },
+    'linux-x64': { file: `Hariari-${version}-x86_64.AppImage`, launch: 'appimage' },
     'linux-arm64': { file: `Hariari-${version}-arm64.AppImage`, launch: 'appimage' },
     'darwin-x64': { file: `Hariari-${version}-x64.dmg`, launch: 'dmg' },
     'darwin-arm64': { file: `Hariari-${version}-arm64.dmg`, launch: 'dmg' },
