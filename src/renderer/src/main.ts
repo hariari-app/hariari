@@ -48,11 +48,12 @@ function main(): void {
 
   if (popoutType === 'editor-window') {
     const projectPath = urlParams.get('project') ?? '';
+    const branchName = urlParams.get('branch') ?? undefined;
     if (projectPath) {
       import('./editor-window/editor-window-app')
         .then(({ EditorWindowApp }) => {
           document.body.classList.add('popout-mode');
-          const editorApp = new EditorWindowApp(appEl, projectPath);
+          const editorApp = new EditorWindowApp(appEl, projectPath, branchName);
           return editorApp.init();
         })
         .catch((error) => {

@@ -191,32 +191,36 @@ earlyIpcMain.handle('window:popout-file', async (_event: unknown, args: { projec
   popout.setMenuBarVisibility(false);
 });
 
-// Singleton editor window — tracked for focus-on-reopen
-let editorWindow: InstanceType<typeof import('electron').BrowserWindow> | null = null;
+// Editor windows — keyed by root path so each worktree gets its own window
+const editorWindows = new Map<string, InstanceType<typeof import('electron').BrowserWindow>>();
 
 earlyIpcMain.handle('window:popout-editor', async (_event: unknown, raw: unknown) => {
   try {
     if (typeof raw !== 'object' || raw === null) return { error: 'popout_editor_invalid_request' };
-    const args = raw as { projectPath?: string };
+    const args = raw as { projectPath?: string; branchName?: string };
     if (typeof args.projectPath !== 'string' || !args.projectPath) return { error: 'popout_editor_missing_path' };
 
     const { BrowserWindow: BW } = require('electron');
     const nodePath = require('node:path');
 
-    // Singleton: focus existing window if still open
-    if (editorWindow && !editorWindow.isDestroyed()) {
-      editorWindow.focus();
+    const rootPath = args.projectPath;
+
+    // Focus existing window for this path if still open
+    const existing = editorWindows.get(rootPath);
+    if (existing && !existing.isDestroyed()) {
+      existing.focus();
       return { ok: true };
     }
 
-    const projectName = nodePath.basename(args.projectPath);
+    const projectName = nodePath.basename(rootPath);
+    const branchLabel = args.branchName ? ` [${args.branchName}]` : '';
 
-    editorWindow = new BW({
+    const win = new BW({
       width: 1200,
       height: 800,
       minWidth: 600,
       minHeight: 400,
-      title: `${projectName} — Hariari`,
+      title: `${projectName}${branchLabel} — Hariari`,
       // Match the main window's frameless chrome so both windows share
       // the same title-bar design language. The editor window's
       // .ew-titlebar element (see editor-window-app.ts) takes over
@@ -233,12 +237,12 @@ earlyIpcMain.handle('window:popout-editor', async (_event: unknown, raw: unknown
       },
     });
 
-    // Non-null: just assigned on the line above
-    const win = editorWindow!;
+    editorWindows.set(rootPath, win);
+
     const mainWindow = BW.getAllWindows().find((w: { id: number }) => w.id !== win.id);
     if (!mainWindow) {
       win.close();
-      editorWindow = null;
+      editorWindows.delete(rootPath);
       return { error: 'popout_editor_no_main_window' };
     }
 
@@ -246,11 +250,14 @@ earlyIpcMain.handle('window:popout-editor', async (_event: unknown, raw: unknown
     const baseUrl = url.split('?')[0].split('#')[0];
     const params = new URLSearchParams({
       popout: 'editor-window',
-      project: args.projectPath,
+      project: rootPath,
     });
+    if (args.branchName) {
+      params.set('branch', args.branchName);
+    }
     win.loadURL(`${baseUrl}?${params.toString()}`);
     win.setMenuBarVisibility(false);
-    win.on('closed', () => { editorWindow = null; });
+    win.on('closed', () => { editorWindows.delete(rootPath); });
   } catch (error) {
     console.error('[IPC][window:popout-editor]', error);
     return { error: 'popout_editor_failed' };

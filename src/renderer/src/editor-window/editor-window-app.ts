@@ -22,9 +22,12 @@ export class EditorWindowApp {
 
   private activeTab: SidebarTab = 'files';
 
-  constructor(container: HTMLElement, projectPath: string) {
+  private readonly branchName: string | undefined;
+
+  constructor(container: HTMLElement, projectPath: string, branchName?: string) {
     this.container = container;
     this.projectPath = projectPath;
+    this.branchName = branchName;
   }
 
   async init(): Promise<void> {
@@ -42,7 +45,8 @@ export class EditorWindowApp {
     const titleLabel = document.createElement('span');
     titleLabel.className = 'ew-titlebar-title';
     const projectName = this.projectPath.split('/').filter(Boolean).pop() ?? 'Hariari';
-    titleLabel.textContent = `${projectName} — Hariari`;
+    const branchSuffix = this.branchName ? ` \u2387 ${this.branchName.replace('hariari/', '')}` : '';
+    titleLabel.textContent = `${projectName}${branchSuffix} — Hariari`;
     titleBar.appendChild(titleLabel);
 
     const dragSpacer = document.createElement('div');

@@ -102,8 +102,12 @@ export class ProjectWorkspace {
     this.containerEl.style.display = 'none';
   }
 
-  private openEditorWindow(): void {
-    window.api.window.popoutEditor(this.projectPath).catch((error) => {
+  private openEditorForAgent(agentId: string): void {
+    const tracked = this.tracked.get(agentId);
+    const worktree = tracked?.info.worktree;
+    const editorPath = worktree?.worktreePath ?? this.projectPath;
+    const branchName = worktree?.branchName;
+    window.api.window.popoutEditor(editorPath, branchName).catch((error) => {
       console.error('[ProjectWorkspace] Failed to open editor window:', error);
     });
   }
@@ -115,7 +119,7 @@ export class ProjectWorkspace {
         onKill: () => this.killAgent(info.id),
         onSplitH: () => this.spawnAgent('shell', 'horizontal'),
         onSplitV: () => this.spawnAgent('shell', 'vertical'),
-        onOpenFiles: () => this.openEditorWindow(),
+        onOpenFiles: () => this.openEditorForAgent(info.id),
       });
       this.tracked.set(info.id, { info, statusBar });
 
@@ -176,7 +180,7 @@ export class ProjectWorkspace {
         onKill: () => this.killAgent(info.id),
         onSplitH: () => this.spawnAgent('shell', 'horizontal'),
         onSplitV: () => this.spawnAgent('shell', 'vertical'),
-        onOpenFiles: () => this.openEditorWindow(),
+        onOpenFiles: () => this.openEditorForAgent(info.id),
         onReview: () => this.reviewAgentWorktree(info.id, info.worktree?.branchName ?? ''),
         onMerge: () => this.mergeAgentWorktree(info.id),
         onDiscard: () => this.discardAgentWorktree(info.id),
@@ -246,7 +250,7 @@ export class ProjectWorkspace {
           onKill: () => this.killAgent(info.id),
           onSplitH: () => this.spawnAgent('shell', 'horizontal'),
           onSplitV: () => this.spawnAgent('shell', 'vertical'),
-          onOpenFiles: () => this.openEditorWindow(),
+          onOpenFiles: () => this.openEditorForAgent(info.id),
         });
         this.tracked.set(info.id, { info, statusBar });
         sessionIds.push(info.sessionId);
@@ -459,7 +463,7 @@ export class ProjectWorkspace {
           onKill: () => this.killAgent(info.id),
           onSplitH: () => this.spawnAgent('shell', 'horizontal'),
           onSplitV: () => this.spawnAgent('shell', 'vertical'),
-          onOpenFiles: () => this.openEditorWindow(),
+          onOpenFiles: () => this.openEditorForAgent(info.id),
         });
         this.tracked.set(info.id, { info, statusBar });
 
