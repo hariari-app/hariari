@@ -7,7 +7,7 @@ Run 12 AI coding agents side by side — Claude Code, Gemini CLI, Codex, Copilot
 ## Quick Start
 
 ```bash
-npx hariari
+npx hariari@latest
 ```
 
 This downloads and launches the latest Hariari release for your platform (Linux, macOS, or Windows).
@@ -31,8 +31,9 @@ hariari
 
 | Platform | Architecture | Artifact |
 |----------|-------------|----------|
-| Linux | x64 | AppImage |
-| Linux | arm64 | AppImage |
+| Linux (Debian/Ubuntu) | x64, arm64 | .deb via `sudo dpkg -i` |
+| Linux (Fedora/RHEL) | x64, arm64 | .rpm via `sudo rpm -U` |
+| Linux (other) | x64, arm64 | AppImage + desktop entry |
 | macOS | x64 (Intel) | DMG |
 | macOS | arm64 (Apple Silicon) | DMG |
 | Windows | x64 | EXE installer |

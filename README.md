@@ -10,7 +10,7 @@
 Run 12 AI coding agents side by side — Claude Code, Gemini CLI, Codex, and 9 more — with voice input, git worktree isolation, and split-pane terminals.
 
 ```bash
-npx hariari
+npx hariari@latest
 ```
 
 Or install globally: `npm install -g hariari`
@@ -54,7 +54,7 @@ Skills are installed to each agent's config directory (`~/.claude/skills/`, `~/.
 ### Quick Install (all platforms)
 
 ```bash
-npx hariari
+npx hariari@latest
 ```
 
 This auto-detects your platform, downloads the latest release, verifies the checksum, and launches Hariari. Subsequent runs use the cached binary and auto-update when a new version is available.
