@@ -301,6 +301,15 @@ body.platform-darwin .ew-titlebar {
    ============================================ */
 
 .ew-file-tree {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ew-file-tree-content {
+  flex: 1;
+  overflow-y: auto;
   padding: var(--space-1) 0;
 }
 

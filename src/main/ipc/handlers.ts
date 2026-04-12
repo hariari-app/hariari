@@ -293,6 +293,49 @@ export function registerIpcHandlers(
     }
   });
 
+  ipcMain.handle(IPC_CHANNELS.FILE_MKDIR, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'string') return { error: 'invalid_request' };
+      const resolved = path.resolve(raw);
+      fs.mkdirSync(resolved, { recursive: true });
+      return { success: true };
+    } catch (error) {
+      console.error('[IPC][file:mkdir]', error);
+      return { error: 'mkdir_failed' };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.FILE_RENAME, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'object' || raw === null) return { error: 'invalid_request' };
+      const req = raw as Record<string, unknown>;
+      if (typeof req.oldPath !== 'string' || typeof req.newPath !== 'string') {
+        return { error: 'invalid_request' };
+      }
+      const resolvedOld = path.resolve(req.oldPath);
+      const resolvedNew = path.resolve(req.newPath);
+      // Ensure destination directory exists
+      fs.mkdirSync(path.dirname(resolvedNew), { recursive: true });
+      fs.renameSync(resolvedOld, resolvedNew);
+      return { success: true };
+    } catch (error) {
+      console.error('[IPC][file:rename]', error);
+      return { error: 'rename_failed' };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.FILE_DELETE, async (_event, raw: unknown) => {
+    try {
+      if (typeof raw !== 'string') return { error: 'invalid_request' };
+      const resolved = path.resolve(raw);
+      fs.rmSync(resolved, { recursive: true, force: true });
+      return { success: true };
+    } catch (error) {
+      console.error('[IPC][file:delete]', error);
+      return { error: 'delete_failed' };
+    }
+  });
+
   // NOTE: keybindings and settings handlers are registered early in index.ts
   // to avoid race conditions with the renderer.
 

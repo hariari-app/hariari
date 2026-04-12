@@ -200,6 +200,9 @@ export interface HariariApi {
     listAll(rootPath: string): Promise<string[]>;
     read(filePath: string): Promise<FileContent>;
     write(filePath: string, content: string): Promise<{ success?: boolean; error?: string }>;
+    mkdir(dirPath: string): Promise<{ success?: boolean; error?: string }>;
+    rename(oldPath: string, newPath: string): Promise<{ success?: boolean; error?: string }>;
+    delete(filePath: string): Promise<{ success?: boolean; error?: string }>;
     search(request: { projectPath: string; query: string; maxResults?: number }): Promise<FileSearchResult[]>;
   };
   notify: {

@@ -1677,6 +1677,126 @@
   flex-direction: column;
 }
 
+/* File tree toolbar */
+.file-tree-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.file-tree-toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.file-tree-toolbar-btn:hover {
+  background: var(--surface-hover);
+  color: var(--fg);
+}
+
+.file-tree-toolbar-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Inline input for new file/folder */
+.file-tree-input-row {
+  background: var(--surface-hover);
+}
+
+.file-tree-inline-input {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 4px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-deep);
+  color: var(--fg);
+  font-size: var(--font-base);
+  font-family: inherit;
+  outline: none;
+}
+
+.file-tree-inline-input::placeholder {
+  color: var(--fg-dim);
+  opacity: 0.6;
+}
+
+/* Delete / danger toolbar button */
+.file-tree-toolbar-btn--danger:hover {
+  color: var(--error, #e55);
+}
+
+/* Selected tree row */
+.file-tree-row.selected {
+  background: var(--accent-dim);
+}
+
+/* Context menu */
+.file-tree-context-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 140px;
+  background: var(--bg-elevated, var(--bg-deep));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.file-tree-context-item {
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+  font-size: var(--font-base);
+  color: var(--fg);
+  white-space: nowrap;
+  transition: background var(--transition-fast);
+}
+
+.file-tree-context-item:hover {
+  background: var(--surface-hover);
+}
+
+.file-tree-context-item--danger {
+  color: var(--error, #e55);
+}
+
+.file-tree-context-item--danger:hover {
+  background: rgba(220, 50, 50, 0.15);
+}
+
+.file-tree-context-separator {
+  height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--border);
+}
+
+/* Drag-and-drop styles */
+.file-tree-row.dragging,
+.ew-tree-row.dragging {
+  opacity: 0.4;
+}
+
+.file-tree-row.drop-target,
+.ew-tree-row.drop-target {
+  background: var(--accent-dim);
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+}
+
 .file-tree-row {
   display: flex;
   align-items: center;

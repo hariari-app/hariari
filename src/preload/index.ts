@@ -126,6 +126,9 @@ contextBridge.exposeInMainWorld('api', {
     listAll: (rootPath: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_LIST_ALL, rootPath),
     read: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_READ, filePath),
     write: (filePath: string, content: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_WRITE, { path: filePath, content }),
+    mkdir: (dirPath: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_MKDIR, dirPath),
+    rename: (oldPath: string, newPath: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_RENAME, { oldPath, newPath }),
+    delete: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_DELETE, filePath),
     search: (request: { projectPath: string; query: string; maxResults?: number }) =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_SEARCH, request),
   },
