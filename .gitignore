@@ -7,10 +7,10 @@ dist/
 .DS_Store
 .env
 .env.*
-.hariari-worktrees/
+.vibeide-worktrees/
 docs/
+marketing/
 agent-os/
 .gstack/
 todo.md
 .hariari-worktrees/
-marketing/public/producthunt/
