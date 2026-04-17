@@ -38,8 +38,10 @@ appImage:
   artifactName: Hariari-${version}-${arch}.AppImage
 mac:
   target:
-    - dmg
-    - zip
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
   category: public.app-category.developer-tools
   icon: resources/icons/512x512.png
   artifactName: Hariari-${version}-${arch}.${ext}
