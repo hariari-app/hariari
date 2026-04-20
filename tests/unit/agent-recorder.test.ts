@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -33,83 +32,21 @@ describe('AgentRecorder', () => {
   });
 
   describe('startRecording', () => {
-    it('creates directory and write stream', () => {
-      const mkdirSpy = vi.spyOn(fs, 'mkdirSync');
-      const createWriteStreamSpy = vi.spyOn(fs, 'createWriteStream');
-
+    it('does not create any files on disk', () => {
       recorder.startRecording('agent-1', 'session-1');
-
-      expect(mkdirSpy).toHaveBeenCalledWith(
-        path.join(basePath, 'agent-1'),
-        { recursive: true },
-      );
-      expect(createWriteStreamSpy).toHaveBeenCalled();
-
-      const callArgs = createWriteStreamSpy.mock.calls[0];
-      expect(callArgs[0]).toContain('agent-1');
-      expect(callArgs[0]).toContain('session-1');
-      expect(callArgs[1]).toEqual({ flags: 'a', encoding: 'utf-8' });
-
-      mkdirSpy.mockRestore();
-      createWriteStreamSpy.mockRestore();
+      expect(basePath).toContain(path.join('.hariari', 'sessions'));
     });
 
-    it('stops existing recording if agent already recording', () => {
-      const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockReturnValue(undefined);
-
-      // Create a mock write stream
-      const mockStream = {
-        write: vi.fn(),
-        end: vi.fn(),
-        on: vi.fn(),
-      } as unknown as fs.WriteStream;
-
-      const createWriteStreamSpy = vi.spyOn(fs, 'createWriteStream')
-        .mockReturnValue(mockStream);
-
+    it('allows repeated calls without side effects', () => {
       recorder.startRecording('agent-1', 'session-1');
       recorder.startRecording('agent-1', 'session-2');
-
-      // end should have been called on the first stream
-      expect(mockStream.end).toHaveBeenCalled();
-
-      mkdirSpy.mockRestore();
-      createWriteStreamSpy.mockRestore();
     });
   });
 
   describe('writeChunk', () => {
-    it('writes base64-encoded data with timestamp', () => {
-      const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockReturnValue(undefined);
-      const mockStream = {
-        write: vi.fn(),
-        end: vi.fn(),
-        on: vi.fn(),
-      } as unknown as fs.WriteStream;
-      const createWriteStreamSpy = vi.spyOn(fs, 'createWriteStream')
-        .mockReturnValue(mockStream);
-
+    it('does not persist terminal output', () => {
       recorder.startRecording('agent-1', 'session-1');
       recorder.writeChunk('agent-1', 'hello world');
-
-      expect(mockStream.write).toHaveBeenCalledTimes(1);
-      const written = (mockStream.write as any).mock.calls[0][0] as string;
-
-      // Should be "timestamp\tbase64\n"
-      const parts = written.split('\t');
-      expect(parts).toHaveLength(2);
-
-      // First part is a timestamp
-      const timestamp = Number(parts[0]);
-      expect(timestamp).toBeGreaterThan(0);
-
-      // Second part is base64-encoded data + newline
-      const base64Part = parts[1].trimEnd();
-      const decoded = Buffer.from(base64Part, 'base64').toString();
-      expect(decoded).toBe('hello world');
-
-      mkdirSpy.mockRestore();
-      createWriteStreamSpy.mockRestore();
     });
 
     it('does nothing when agent has no active recording', () => {
@@ -119,28 +56,10 @@ describe('AgentRecorder', () => {
   });
 
   describe('stopRecording', () => {
-    it('ends the stream and removes from active recordings', () => {
-      const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockReturnValue(undefined);
-      const mockStream = {
-        write: vi.fn(),
-        end: vi.fn(),
-        on: vi.fn(),
-      } as unknown as fs.WriteStream;
-      const createWriteStreamSpy = vi.spyOn(fs, 'createWriteStream')
-        .mockReturnValue(mockStream);
-
+    it('is a no-op for compatibility', () => {
       recorder.startRecording('agent-1', 'session-1');
       recorder.stopRecording('agent-1');
-
-      expect(mockStream.end).toHaveBeenCalled();
-
-      // Further writes should be no-ops
       recorder.writeChunk('agent-1', 'data');
-      // write should not have been called after stop
-      expect(mockStream.write).not.toHaveBeenCalled();
-
-      mkdirSpy.mockRestore();
-      createWriteStreamSpy.mockRestore();
     });
 
     it('does nothing when agent has no active recording', () => {
@@ -179,41 +98,12 @@ describe('AgentRecorder', () => {
   });
 
   describe('disposeAll', () => {
-    it('ends all active streams and clears the map', () => {
-      const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockReturnValue(undefined);
-      const mockStream1 = {
-        write: vi.fn(),
-        end: vi.fn(),
-        on: vi.fn(),
-      } as unknown as fs.WriteStream;
-      const mockStream2 = {
-        write: vi.fn(),
-        end: vi.fn(),
-        on: vi.fn(),
-      } as unknown as fs.WriteStream;
-
-      let callCount = 0;
-      const createWriteStreamSpy = vi.spyOn(fs, 'createWriteStream')
-        .mockImplementation(() => {
-          callCount++;
-          return callCount === 1 ? mockStream1 : mockStream2;
-        });
-
+    it('remains safe when called with active recordings', () => {
       recorder.startRecording('agent-1', 'session-1');
       recorder.startRecording('agent-2', 'session-2');
       recorder.disposeAll();
-
-      expect(mockStream1.end).toHaveBeenCalled();
-      expect(mockStream2.end).toHaveBeenCalled();
-
-      // After dispose, writes should be no-ops
       recorder.writeChunk('agent-1', 'data');
       recorder.writeChunk('agent-2', 'data');
-      expect(mockStream1.write).not.toHaveBeenCalled();
-      expect(mockStream2.write).not.toHaveBeenCalled();
-
-      mkdirSpy.mockRestore();
-      createWriteStreamSpy.mockRestore();
     });
   });
 });

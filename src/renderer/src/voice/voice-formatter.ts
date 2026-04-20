@@ -108,7 +108,6 @@ function buildMessages(rawText: string): Array<{ role: string; content: string }
 
 export async function formatWithLLM(
   rawText: string,
-  apiKey: string,
   provider: string,
 ): Promise<string> {
   if (!rawText.trim()) return rawText;

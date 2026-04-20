@@ -37,8 +37,13 @@ declare global {
   }
 }
 
-// Voice settings are cached in memory, loaded from ~/.hariari/settings.json via IPC
-let voiceSettings: { apiKey: string; provider: string; postProcessMode: string; deviceId: string } = { apiKey: '', provider: 'openai', postProcessMode: 'command', deviceId: '' };
+// Voice settings are cached in memory, but the API key remains in the main process.
+let voiceSettings: { hasApiKey: boolean; provider: string; postProcessMode: string; deviceId: string } = {
+  hasApiKey: false,
+  provider: 'openai',
+  postProcessMode: 'command',
+  deviceId: '',
+};
 let settingsLoaded = false;
 
 async function loadVoiceSettings(): Promise<void> {
@@ -46,13 +51,13 @@ async function loadVoiceSettings(): Promise<void> {
 
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
-      const all = await window.api.settings.load();
+      const all = await window.api.voice.loadConfig();
       if (all && typeof all === 'object' && !('error' in all)) {
         voiceSettings = {
-          apiKey: (all.voiceApiKey as string) ?? '',
-          provider: (all.voiceProvider as string) ?? 'openai',
-          postProcessMode: (all.voicePostProcessMode as string) ?? 'command',
-          deviceId: (all.voiceDeviceId as string) ?? '',
+          hasApiKey: Boolean(all.hasApiKey),
+          provider: all.provider ?? 'openai',
+          postProcessMode: all.postProcessMode ?? 'command',
+          deviceId: all.deviceId ?? '',
         };
         console.log(`[VoiceCapture] Settings loaded: provider=${voiceSettings.provider}`);
         settingsLoaded = true;
@@ -66,14 +71,10 @@ async function loadVoiceSettings(): Promise<void> {
 }
 
 function saveVoiceSettings(): void {
-  window.api.settings.load().then((all) => {
-    window.api.settings.save({
-      ...all,
-      voiceApiKey: voiceSettings.apiKey,
-      voiceProvider: voiceSettings.provider,
-      voicePostProcessMode: voiceSettings.postProcessMode,
-      voiceDeviceId: voiceSettings.deviceId,
-    });
+  window.api.voice.saveConfig({
+    provider: voiceSettings.provider,
+    postProcessMode: voiceSettings.postProcessMode,
+    deviceId: voiceSettings.deviceId,
   }).catch(() => {});
 }
 
@@ -104,13 +105,8 @@ export class VoiceCapture {
     return this.state;
   }
 
-  getApiKey(): string {
-    return voiceSettings.apiKey;
-  }
-
-  setApiKey(key: string): void {
-    voiceSettings.apiKey = key;
-    saveVoiceSettings();
+  hasApiKey(): boolean {
+    return voiceSettings.hasApiKey;
   }
 
   getProvider(): string {
@@ -137,7 +133,7 @@ export class VoiceCapture {
 
   setPostProcessMode(mode: PostProcessMode): void {
     this.postProcessMode = mode;
-    voiceSettings.provider = this.getProvider(); // trigger save with all settings
+    voiceSettings.postProcessMode = mode;
     saveVoiceSettings();
   }
 
@@ -299,8 +295,7 @@ export class VoiceCapture {
   private async startMediaRecorder(): Promise<void> {
     // Ensure settings are loaded before checking API key
     await loadVoiceSettings();
-    const apiKey = this.getApiKey();
-    if (!apiKey) {
+    if (!this.hasApiKey()) {
       this.showApiKeyPrompt();
       return;
     }
@@ -350,15 +345,14 @@ export class VoiceCapture {
   }
 
   private async transcribeWithCloud(audioBlob: Blob): Promise<void> {
-    const apiKey = this.getApiKey();
     const provider = this.getProvider();
 
     try {
       if (provider === 'groq' || provider === 'openai' || provider === 'deepgram') {
         // Route through main process IPC to bypass CSP and get better logging
-        await this.transcribeViaIPC(audioBlob, apiKey, provider);
+        await this.transcribeViaIPC(audioBlob, provider);
       } else {
-        await this.transcribeViaIPC(audioBlob, apiKey, provider);
+        await this.transcribeViaIPC(audioBlob, provider);
       }
     } catch (error) {
       console.error('[VoiceCapture] Transcription failed:', error);
@@ -367,7 +361,7 @@ export class VoiceCapture {
     }
   }
 
-  private async transcribeViaIPC(audioBlob: Blob, _apiKey: string, provider: string): Promise<void> {
+  private async transcribeViaIPC(audioBlob: Blob, provider: string): Promise<void> {
     const arrayBuffer = await audioBlob.arrayBuffer();
     const uint8 = new Uint8Array(arrayBuffer);
     // Convert to base64 in chunks to avoid call stack overflow
@@ -395,11 +389,10 @@ export class VoiceCapture {
 
   private async applyFormatting(rawText: string): Promise<string> {
     if (this.postProcessMode === 'command' || this.postProcessMode === 'code') {
-      const apiKey = this.getApiKey();
       const provider = this.getProvider();
-      if (apiKey && (provider === 'groq' || provider === 'openai')) {
+      if (this.hasApiKey() && (provider === 'groq' || provider === 'openai')) {
         try {
-          const llmResult = await formatWithLLM(rawText, apiKey, provider);
+          const llmResult = await formatWithLLM(rawText, provider);
           if (llmResult && llmResult !== rawText) return llmResult;
         } catch { /* fall through */ }
       }
@@ -499,8 +492,9 @@ export class VoiceCapture {
     const input = document.createElement('input');
     input.className = 'voice-api-key-input';
     input.type = 'password';
-    input.placeholder = 'sk-... or gsk_...';
-    input.value = this.getApiKey();
+    input.placeholder = voiceSettings.hasApiKey
+      ? 'Leave blank to keep the saved key'
+      : 'sk-... or gsk_...';
 
     const modeLabel = document.createElement('p');
     modeLabel.textContent = 'Voice mode:';
@@ -567,10 +561,21 @@ export class VoiceCapture {
     const saveBtn = document.createElement('button');
     saveBtn.className = 'voice-api-key-save';
     saveBtn.textContent = 'Save';
-    saveBtn.addEventListener('click', () => {
+    saveBtn.addEventListener('click', async () => {
       const key = input.value.trim();
-      if (!key) return;
-      this.setApiKey(key);
+      if (key) {
+        const result = await window.api.voice.setApiKey(key);
+        if (!result.success) {
+          this.lastErrorReason = result.error === 'secure_storage_unavailable'
+            ? 'Secure storage unavailable on this system'
+            : 'Could not save API key';
+          this.setState('error');
+          return;
+        }
+        voiceSettings.hasApiKey = true;
+      } else if (!voiceSettings.hasApiKey) {
+        return;
+      }
       this.setProvider(providerSelect.value);
       this.setDeviceId(deviceSelect.value);
       this.postProcessMode = modeSelect.value as PostProcessMode;

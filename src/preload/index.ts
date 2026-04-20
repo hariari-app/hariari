@@ -92,6 +92,11 @@ contextBridge.exposeInMainWorld('api', {
     save: (overrides: unknown) => ipcRenderer.invoke(IPC_CHANNELS.KEYBINDINGS_SAVE, overrides),
   },
   voice: {
+    loadConfig: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_CONFIG_LOAD),
+    saveConfig: (config: { provider: string; postProcessMode: string; deviceId: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.VOICE_CONFIG_SAVE, config),
+    setApiKey: (apiKey: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_API_KEY_SET, apiKey),
+    clearApiKey: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_API_KEY_CLEAR),
     transcribe: (request: { provider: string; audioBase64: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.VOICE_TRANSCRIBE, request),
     formatLLM: (request: { provider: string; messages: Array<{ role: string; content: string }> }) =>

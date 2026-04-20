@@ -7,6 +7,7 @@ import { NotificationManager } from './notification/notification-manager';
 import { registerIpcHandlers } from './ipc/handlers';
 import { StateManager } from './state/state-manager';
 import { AutoUpdateManager } from './updater/auto-updater';
+import { migrateLegacyVoiceApiKey } from './voice/voice-secrets';
 
 let ptyManager: PtyManager;
 let agentManager: AgentManager;
@@ -20,6 +21,13 @@ const { ipcMain: earlyIpcMain } = require('electron');
 const earlyFs = require('node:fs');
 const earlyPath = require('node:path');
 const earlyOs = require('node:os');
+
+function sanitizeSettings(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object') return {};
+  const sanitized = { ...(raw as Record<string, unknown>) };
+  delete sanitized.voiceApiKey;
+  return sanitized;
+}
 
 // Register settings/keybinding handlers IMMEDIATELY at module load —
 // before app.whenReady() — because the renderer may request them on first paint.
@@ -53,16 +61,16 @@ earlyIpcMain.handle('settings:load', () => {
     if (!earlyFs.existsSync(filePath)) return {};
     const raw = earlyFs.readFileSync(filePath, 'utf-8');
     const parsed = JSON.parse(raw);
-    return typeof parsed === 'object' && parsed !== null ? parsed : {};
+    return sanitizeSettings(parsed);
   } catch { return {}; }
 });
 
 earlyIpcMain.handle('settings:save', (_event: unknown, raw: unknown) => {
   try {
-    if (typeof raw !== 'object' || raw === null) return;
+    const sanitized = sanitizeSettings(raw);
     const dir = earlyPath.join(earlyOs.homedir(), '.hariari');
     earlyFs.mkdirSync(dir, { recursive: true });
-    earlyFs.writeFileSync(earlyPath.join(dir, 'settings.json'), JSON.stringify(raw, null, 2), 'utf-8');
+    earlyFs.writeFileSync(earlyPath.join(dir, 'settings.json'), JSON.stringify(sanitized, null, 2), 'utf-8');
   } catch { /* */ }
 });
 
@@ -271,6 +279,8 @@ app.commandLine.appendSwitch('enable-features', 'WebSpeechAPI');
 app.commandLine.appendSwitch('no-sandbox');
 
 app.whenReady().then(() => {
+  migrateLegacyVoiceApiKey();
+
   // Set CSP via response headers (more authoritative than <meta> tag)
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({

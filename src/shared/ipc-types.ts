@@ -176,6 +176,10 @@ export interface HariariApi {
     save(overrides: Record<string, string>): Promise<void>;
   };
   voice: {
+    loadConfig(): Promise<{ provider: string; postProcessMode: string; deviceId: string; hasApiKey: boolean }>;
+    saveConfig(config: { provider: string; postProcessMode: string; deviceId: string }): Promise<void>;
+    setApiKey(apiKey: string): Promise<{ success: boolean; error?: string }>;
+    clearApiKey(): Promise<void>;
     transcribe(request: { provider: string; audioBase64: string }): Promise<{ text?: string; error?: string }>;
     formatLLM(request: { provider: string; messages: Array<{ role: string; content: string }> }): Promise<{ text?: string; error?: string }>;
   };

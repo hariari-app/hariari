@@ -13,6 +13,7 @@ import { saveScrollback, loadScrollback, deleteScrollback } from '../scrollback-
 import { getSkillsManifest } from '../skills/skills-manifest';
 import { installSkills, loadInstalled, uninstallSkill } from '../skills/skills-installer';
 import { detectProjectLanguages } from '../skills/language-detector';
+import { clearVoiceApiKey, hasVoiceApiKey, readVoiceApiKey, saveVoiceApiKey } from '../voice/voice-secrets';
 import {
   validateSessionId,
   validateWriteRequest,
@@ -29,17 +30,42 @@ import {
 
 const MAX_AGENTS = 20;
 
-/** Read voice API key directly from settings file in main process */
-function readVoiceApiKey(): string {
+function loadVoiceConfig(): { provider: string; postProcessMode: string; deviceId: string; hasApiKey: boolean } {
   try {
     const filePath = path.join(os.homedir(), '.hariari', 'settings.json');
-    if (!fs.existsSync(filePath)) return '';
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    return (parsed && typeof parsed === 'object' && typeof parsed.voiceApiKey === 'string')
-      ? parsed.voiceApiKey
-      : '';
-  } catch { return ''; }
+    const parsed = fs.existsSync(filePath)
+      ? JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+      : {};
+    const settings = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+    return {
+      provider: typeof settings.voiceProvider === 'string' ? settings.voiceProvider : 'openai',
+      postProcessMode: typeof settings.voicePostProcessMode === 'string' ? settings.voicePostProcessMode : 'command',
+      deviceId: typeof settings.voiceDeviceId === 'string' ? settings.voiceDeviceId : '',
+      hasApiKey: hasVoiceApiKey(),
+    };
+  } catch {
+    return { provider: 'openai', postProcessMode: 'command', deviceId: '', hasApiKey: hasVoiceApiKey() };
+  }
+}
+
+function saveVoiceConfig(config: { provider: string; postProcessMode: string; deviceId: string }): void {
+  const filePath = path.join(os.homedir(), '.hariari', 'settings.json');
+  let settings: Record<string, unknown> = {};
+  try {
+    if (fs.existsSync(filePath)) {
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      settings = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+    }
+  } catch {
+    settings = {};
+  }
+
+  delete settings.voiceApiKey;
+  settings.voiceProvider = config.provider;
+  settings.voicePostProcessMode = config.postProcessMode;
+  settings.voiceDeviceId = config.deviceId;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(settings, null, 2), 'utf-8');
 }
 
 function parseSearchResults(output: string, projectPath: string, isRipgrep: boolean): unknown[] {
@@ -195,6 +221,37 @@ export function registerIpcHandlers(
       console.error('[IPC][state:save]', error);
       return { error: 'state_save_failed' };
     }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.VOICE_CONFIG_LOAD, () => {
+    try {
+      return loadVoiceConfig();
+    } catch {
+      return { provider: 'openai', postProcessMode: 'command', deviceId: '', hasApiKey: false };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.VOICE_CONFIG_SAVE, (_event, raw: unknown) => {
+    try {
+      if (!raw || typeof raw !== 'object') return { error: 'invalid_voice_config' };
+      const req = raw as Record<string, unknown>;
+      saveVoiceConfig({
+        provider: typeof req.provider === 'string' ? req.provider : 'openai',
+        postProcessMode: typeof req.postProcessMode === 'string' ? req.postProcessMode : 'command',
+        deviceId: typeof req.deviceId === 'string' ? req.deviceId : '',
+      });
+    } catch {
+      return { error: 'voice_config_save_failed' };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.VOICE_API_KEY_SET, (_event, raw: unknown) => {
+    if (typeof raw !== 'string') return { success: false, error: 'invalid_api_key' };
+    return saveVoiceApiKey(raw);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.VOICE_API_KEY_CLEAR, () => {
+    clearVoiceApiKey();
   });
 
   // Project handlers

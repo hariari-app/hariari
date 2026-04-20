@@ -3,7 +3,7 @@
 // Apple's service can take hours for new app IDs. The signed .dmg is
 // still produced; notarization ticket can be stapled later.
 
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const path = require('path');
 
 exports.default = async function notarizing(context) {
@@ -28,16 +28,14 @@ exports.default = async function notarizing(context) {
   // Zip the app for submission
   const zipPath = path.join(appOutDir, `${appName}.zip`);
   console.log(`  • zipping app for notarization: ${appPath}`);
-  execSync(`ditto -c -k --keepParent "${appPath}" "${zipPath}"`, { stdio: 'inherit' });
+  execFileSync('ditto', ['-c', '-k', '--keepParent', appPath, zipPath], { stdio: 'inherit' });
 
   // Submit without --wait so we don't block. Just fire and continue.
   console.log('  • submitting to Apple notarization service (non-blocking)...');
   try {
-    const output = execSync(
-      `xcrun notarytool submit "${zipPath}" ` +
-      `--apple-id "${appleId}" ` +
-      `--password "${appleIdPassword}" ` +
-      `--team-id "${teamId}"`,
+    const output = execFileSync(
+      'xcrun',
+      ['notarytool', 'submit', zipPath, '--apple-id', appleId, '--password', appleIdPassword, '--team-id', teamId],
       { encoding: 'utf8', timeout: 120000 }
     );
     console.log(output);
@@ -53,18 +51,15 @@ exports.default = async function notarizing(context) {
     // Try a quick poll (2 minutes) — Apple sometimes finishes fast on retries
     console.log('  • waiting up to 2 minutes for Apple to finish...');
     try {
-      execSync(
-        `xcrun notarytool wait "${idMatch ? idMatch[1] : ''}" ` +
-        `--apple-id "${appleId}" ` +
-        `--password "${appleIdPassword}" ` +
-        `--team-id "${teamId}" ` +
-        `--timeout 2m`,
+      execFileSync(
+        'xcrun',
+        ['notarytool', 'wait', idMatch ? idMatch[1] : '', '--apple-id', appleId, '--password', appleIdPassword, '--team-id', teamId, '--timeout', '2m'],
         { stdio: 'inherit', timeout: 150000 }
       );
 
       // If we get here, notarization completed — staple the ticket
       console.log('  • stapling notarization ticket...');
-      execSync(`xcrun stapler staple "${appPath}"`, { stdio: 'inherit' });
+      execFileSync('xcrun', ['stapler', 'staple', appPath], { stdio: 'inherit' });
       console.log('  • notarization complete and stapled');
     } catch {
       console.log('  • notarization still in progress at Apple — build will continue');
@@ -72,10 +67,10 @@ exports.default = async function notarizing(context) {
       console.log('  • staple manually later: xcrun stapler staple Hariari.app');
     }
   } catch (error) {
-    console.error('  • notarization submission failed:', error.message);
+    console.error('  • notarization submission failed');
     console.log('  • continuing with signed-only build');
   }
 
   // Clean up zip
-  try { execSync(`rm -f "${zipPath}"`); } catch { /* ignore */ }
+  try { execFileSync('rm', ['-f', zipPath]); } catch { /* ignore */ }
 };
