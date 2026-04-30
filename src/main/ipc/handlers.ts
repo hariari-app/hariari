@@ -564,7 +564,6 @@ export function registerIpcHandlers(
       const fsp = await import('node:fs/promises');
       const entries = await fsp.readdir(resolved, { withFileTypes: true });
       const result = entries
-        .filter((e) => !e.name.startsWith('.'))
         .sort((a, b) => {
           // Directories first, then alphabetical
           if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
