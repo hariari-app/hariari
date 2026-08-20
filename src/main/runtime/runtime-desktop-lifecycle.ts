@@ -1,18 +1,17 @@
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { RuntimeRendererStatus } from '../../shared/ipc-types';
-import type { RuntimeInterface } from '../../shared/runtime/runtime-interface';
-import {
-  registerRuntimeIpc,
-  type RuntimeIpcRegistry,
-} from '../ipc/runtime-ipc';
+import type {
+  RuntimeInterface,
+  RuntimeShutdownResult,
+} from '../../shared/runtime/runtime-interface';
+import { registerRuntimeIpc, type RuntimeIpcRegistry } from '../ipc/runtime-ipc';
 import { createDesktopRuntimeInterface } from './desktop-runtime';
-import {
-  RUNTIME_PACKAGE_SMOKE_OK,
-  verifyRuntimePackageSmoke,
-} from './runtime-package-smoke';
+import { RUNTIME_PACKAGE_SMOKE_OK, verifyRuntimePackageSmoke } from './runtime-package-smoke';
 
 export interface DesktopRuntimeLifecycle {
   publishLatest(): void;
+  prepareForDesktopUpdate(): Promise<void>;
   dispose(): void;
 }
 
@@ -30,11 +29,42 @@ export function startDesktopRuntimeLifecycle(
   void runtime.connectOrStart().catch(() => undefined);
   return {
     publishLatest: () => registration.publishLatest(),
+    prepareForDesktopUpdate: () => prepareRuntimeForDesktopUpdate(runtime),
     dispose: () => {
       registration.dispose();
       void runtime.disconnect().catch(() => undefined);
     },
   };
+}
+
+async function prepareRuntimeForDesktopUpdate(runtime: RuntimeInterface): Promise<void> {
+  const current = await runtime.queryHealth();
+  const connected = current.state === 'connected' ? current : await runtime.connectOrStart();
+  if (connected.state !== 'connected') throw new Error('Runtime is not connected');
+  const expectedInstanceId = connected.health.instanceId;
+  let result: RuntimeShutdownResult;
+  try {
+    result = await runtime.shutdown({
+      idempotencyKey: randomUUID(),
+      expectedInstanceId,
+      reason: 'desktop-update',
+    });
+  } catch (error) {
+    await restoreRuntimeConnection(runtime);
+    throw error;
+  }
+  if (
+    result.state === 'not-running' ||
+    (result.state === 'stopped' && result.instanceId === expectedInstanceId)
+  ) {
+    return;
+  }
+  await restoreRuntimeConnection(runtime);
+  throw new Error('Runtime shutdown was not confirmed');
+}
+
+async function restoreRuntimeConnection(runtime: RuntimeInterface): Promise<void> {
+  await runtime.connectOrStart().catch(() => undefined);
 }
 
 export async function smokePackagedDesktopRuntime(runtimeDirectory: string): Promise<void> {

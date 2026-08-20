@@ -338,7 +338,9 @@ if (!runtimeDesktop.startRuntimePackageSmokeIfRequested(app)) app.whenReady().th
   mainWindow.webContents.on('did-finish-load', () => runtimeLifecycle.publishLatest());
 
   // Auto-updater — checks GitHub Releases for new versions
-  autoUpdateManager = new AutoUpdateManager();
+  autoUpdateManager = new AutoUpdateManager(() =>
+    runtimeLifecycle.prepareForDesktopUpdate(),
+  );
   autoUpdateManager.start(mainWindow);
 
   // Ctrl+Shift+V: intercept before Chromium's native "paste as plain text"
