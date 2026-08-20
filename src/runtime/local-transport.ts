@@ -47,6 +47,11 @@ export interface RuntimeLocalTransport {
   ): Promise<RuntimeTransportListener>;
 }
 
+export interface NodeLocalRuntimeTransportOptions {
+  readonly chmod?: (filePath: string, mode: number) => Promise<void>;
+  readonly lstat?: (filePath: string) => Promise<fs.Stats>;
+}
+
 interface PendingRead {
   readonly resolve: (frame: Record<string, unknown>) => void;
   readonly reject: (error: RuntimeTransportError) => void;
@@ -175,6 +180,8 @@ class NodeRuntimeFrameConnection implements RuntimeFrameConnection {
 }
 
 export class NodeLocalRuntimeTransport implements RuntimeLocalTransport {
+  constructor(private readonly options: NodeLocalRuntimeTransportOptions = {}) {}
+
   connect(endpoint: RuntimeLocalEndpoint, deadlineMs: number): Promise<RuntimeFrameConnection> {
     return new Promise((resolve, reject) => {
       const socket = net.createConnection({ path: endpoint.address });
@@ -221,12 +228,25 @@ export class NodeLocalRuntimeTransport implements RuntimeLocalTransport {
 
     await listen(server, endpoint);
     let identity: SocketIdentity | null = null;
-    if (endpoint.kind === 'unix') {
-      await fs.promises.chmod(endpoint.address, 0o600);
-      identity = socketIdentity(await fs.promises.lstat(endpoint.address));
+    if (endpoint.kind !== 'unix') {
+      return new NodeRuntimeTransportListener(server, endpoint, identity);
+    }
+    try {
+      const lstat = this.options.lstat ?? fs.promises.lstat;
+      const chmod = this.options.chmod ?? fs.promises.chmod;
+      identity = socketIdentity(await lstat(endpoint.address));
+      await chmod(endpoint.address, 0o600);
+    } catch {
+      await closeBoundServer(server);
+      if (identity) await unlinkIfOwned(endpoint.address, identity);
+      throw new RuntimeTransportError('connect-failed');
     }
     return new NodeRuntimeTransportListener(server, endpoint, identity);
   }
+}
+
+function closeBoundServer(server: net.Server): Promise<void> {
+  return new Promise((resolve) => server.close(() => resolve()));
 }
 
 class NodeRuntimeTransportListener implements RuntimeTransportListener {
@@ -316,9 +336,9 @@ function socketIsReachable(socketPath: string): Promise<boolean> {
     const complete = createTimeoutSettlement(100, () => finish(true));
     const finish = (result: boolean, error?: RuntimeTransportError): void =>
       complete(() => {
-      socket.destroy();
-      if (error) reject(error);
-      else resolve(result);
+        socket.destroy();
+        if (error) reject(error);
+        else resolve(result);
       });
     socket.once('connect', () => finish(true));
     socket.once('error', (error: NodeJS.ErrnoException) => {

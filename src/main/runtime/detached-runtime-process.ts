@@ -31,6 +31,8 @@ export class DetachedRuntimeProcessAdapter implements RuntimeProcessPort {
   private readonly platform: NodeJS.Platform;
   private readonly environment: NodeJS.ProcessEnv;
   private readonly spawn: RuntimeSpawn;
+  private retainedChild: ChildProcess | null = null;
+  private startInFlight: Promise<void> | null = null;
 
   constructor(private readonly options: DetachedRuntimeProcessOptions) {
     this.platform = options.platform ?? process.platform;
@@ -38,9 +40,20 @@ export class DetachedRuntimeProcessAdapter implements RuntimeProcessPort {
     this.spawn = options.spawn ?? nodeSpawn;
   }
 
-  async start(request: RuntimeProcessStartRequest): Promise<void> {
+  start(request: RuntimeProcessStartRequest): Promise<void> {
+    if (this.retainedChild) return Promise.resolve();
+    if (this.startInFlight) return this.startInFlight;
+    const attempt = this.spawnRuntime(request).finally(() => {
+      if (this.startInFlight === attempt) this.startInFlight = null;
+    });
+    this.startInFlight = attempt;
+    return attempt;
+  }
+
+  private async spawnRuntime(request: RuntimeProcessStartRequest): Promise<void> {
     try {
       await validateLaunchRequest(request, this.options.runtimeVersion, this.platform);
+      if (this.retainedChild) return;
       const args = [
         '--runtime-dir',
         request.endpoint.runtimeDirectory,
@@ -57,15 +70,37 @@ export class DetachedRuntimeProcessAdapter implements RuntimeProcessPort {
         stdio: 'ignore',
         windowsHide: true,
       });
-      await new Promise<void>((resolve, reject) => {
-        child.once('spawn', resolve);
-        child.once('error', reject);
+      let exited = false;
+      const recordExit = (): void => {
+        exited = true;
+        if (this.retainedChild === child) this.retainedChild = null;
+      };
+      child.once('exit', recordExit);
+      await waitForSpawn(child).catch((error) => {
+        child.removeListener('exit', recordExit);
+        throw error;
       });
+      if (!exited) this.retainedChild = child;
       child.unref();
     } catch {
       throw new RuntimePortError('start-failed');
     }
   }
+}
+
+function waitForSpawn(child: ChildProcess): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const spawned = (): void => {
+      child.removeListener('error', failed);
+      resolve();
+    };
+    const failed = (error: Error): void => {
+      child.removeListener('spawn', spawned);
+      reject(error);
+    };
+    child.once('spawn', spawned);
+    child.once('error', failed);
+  });
 }
 
 async function validateLaunchRequest(

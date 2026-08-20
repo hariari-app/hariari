@@ -22,7 +22,7 @@ const PORT_ERROR_STATES: Record<
   timeout: ['health-timeout', true],
   'protocol-error': ['protocol-error', false],
   'endpoint-unavailable': ['connection-failed', true],
-  'transport-lost': ['connection-failed', true],
+  'transport-lost': ['transport-lost', true],
   'connection-failed': ['connection-failed', true],
 };
 

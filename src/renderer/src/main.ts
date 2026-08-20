@@ -1,5 +1,6 @@
 import '@xterm/xterm/css/xterm.css';
 import './styles/global.css';
+import './styles/runtime-health.css';
 import { mountRuntimeHealth } from './runtime-health';
 import './styles/terminal.css';
 import './styles/tab-bar.css';

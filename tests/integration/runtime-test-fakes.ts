@@ -60,9 +60,11 @@ export class FakeRuntimeEnvironment {
   readonly processes: RuntimeProcessPort = {
     start: async (request) => {
       this.launchRequests.push(request);
+      if (this.launchedProcessAlive) return;
       if (this.startFailure) throw new RuntimePortError('start-failed');
       this.launchCount += 1;
-      this.running = true;
+      this.launchedProcessAlive = true;
+      if (this.launchMakesReady) this.running = true;
     },
   };
   readonly leases: RuntimeStartupLeasePort = {
@@ -94,7 +96,9 @@ export class FakeRuntimeEnvironment {
   protocolFailure = false;
   artifactFailure = false;
   startFailure = false;
+  launchMakesReady = true;
   healthFailure = false;
+  healthFailureCode: RuntimePortError['code'] = 'timeout';
   healthQueryCount = 0;
   availabilityFailures = 0;
   launchCount = 0;
@@ -103,6 +107,7 @@ export class FakeRuntimeEnvironment {
   shutdownLeavesRunning = false;
   nowMs = Date.parse('2026-08-20T10:00:01.000Z');
   private leaseHeld = false;
+  private launchedProcessAlive = false;
   private readonly sessions = new Set<FakeRuntimeSession>();
 
   readonly now = (): number => this.nowMs;
@@ -116,6 +121,11 @@ export class FakeRuntimeEnvironment {
 
   dropConnections(): void {
     for (const session of [...this.sessions]) session.forceDisconnect();
+  }
+
+  exitLaunchedProcess(): void {
+    this.launchedProcessAlive = false;
+    this.running = false;
   }
 
   private async connect(token: Uint8Array | null, options: RuntimeClientConnectOptions) {
@@ -162,7 +172,9 @@ class FakeRuntimeSession implements RuntimeClientSession {
 
   async queryHealth(): Promise<RuntimeHealth> {
     if (this.disconnected) throw new RuntimePortError('transport-lost');
-    if (this.environment.healthFailure) throw new RuntimePortError('timeout');
+    if (this.environment.healthFailure) {
+      throw new RuntimePortError(this.environment.healthFailureCode);
+    }
     this.environment.healthQueryCount += 1;
     return { ...this.environment.health, protocolVersion: this.protocolVersion };
   }
@@ -180,7 +192,7 @@ class FakeRuntimeSession implements RuntimeClientSession {
     };
     this.environment.shutdownResults.set(request.idempotencyKey, result);
     this.environment.shutdownCount += 1;
-    if (!this.environment.shutdownLeavesRunning) this.environment.running = false;
+    if (!this.environment.shutdownLeavesRunning) this.environment.exitLaunchedProcess();
     return result;
   }
 

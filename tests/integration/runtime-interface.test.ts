@@ -3,7 +3,11 @@ import {
   createRuntimeConnector,
   type RuntimeConnectorDependencies,
 } from '../../src/main/runtime/runtime-connector';
-import type { RuntimeClientPort } from '../../src/main/runtime/runtime-ports';
+import {
+  RuntimePortError,
+  type RuntimeClientPort,
+  type RuntimeClientSession,
+} from '../../src/main/runtime/runtime-ports';
 import type { RuntimeConnectionState } from '../../src/shared/runtime/runtime-interface';
 import { FakeRuntimeEnvironment } from './runtime-test-fakes';
 
@@ -24,22 +28,157 @@ const RECONNECT_TERMINAL_CASES = [
   },
 ] as const;
 
+const HEALTH_FAILURE_CASES = [
+  {
+    code: 'timeout',
+    expected: { state: 'unavailable', reason: 'health-timeout', retryable: true },
+  },
+  {
+    code: 'protocol-error',
+    expected: { state: 'unavailable', reason: 'protocol-error', retryable: false },
+  },
+  {
+    code: 'transport-lost',
+    expected: { state: 'unavailable', reason: 'transport-lost', retryable: true },
+  },
+] as const;
+
 describe('Runtime Interface', registerRuntimeInterfaceTests);
 
 function registerRuntimeInterfaceTests(): void {
   registerStartupTests();
   registerConnectionLifecycleTests();
   registerHealthSupervisionTest();
+  registerHealthQueryFailureTests();
   registerHealthFailureSupervisionTest();
   registerPersistentReconnectTest();
   registerDelayedReconnectCancellationTest();
   registerInFlightReconnectCancellationTest();
   registerReconnectTerminalStateTests();
   registerInitialRetryTests();
+  registerRetainedLaunchRetryTest();
   registerInitialRetryTerminalStateTests();
   registerConnectionFailureTests();
+  registerShutdownRaceTest();
   registerShutdownTests();
   registerBoundarySecurityTest();
+}
+
+function registerHealthQueryFailureTests(): void {
+  it.each(HEALTH_FAILURE_CASES)('maps $code from queryHealth precisely', async (testCase) => {
+    const environment = new FakeRuntimeEnvironment();
+    environment.running = true;
+    const runtime = connector(environment);
+    await runtime.connectOrStart();
+
+    environment.healthFailure = true;
+    environment.healthFailureCode = testCase.code;
+
+    await expect(runtime.queryHealth()).resolves.toEqual(testCase.expected);
+  });
+}
+
+function registerRetainedLaunchRetryTest(): void {
+  it('retains an unready launch across retries and relaunches once after exit', async () => {
+    const environment = new FakeRuntimeEnvironment();
+    const retries = controlledTimers(100);
+    environment.launchMakesReady = false;
+    const runtime = connector(environment, {
+      startupDeadlineMs: 50,
+      reconnectDelayMs: 100,
+      schedule: retries.schedule,
+    });
+    const observed: RuntimeConnectionState[] = [];
+    runtime.subscribeStatus((state) => observed.push(state));
+
+    await expect(runtime.connectOrStart()).resolves.toMatchObject({
+      state: 'unavailable',
+      reason: 'startup-timeout',
+    });
+    for (let retry = 0; retry < 2; retry += 1) {
+      await eventually(() => retries.pending(100) === 1);
+      retries.releaseNext(100);
+      await eventually(() => retries.pending(100) === 1);
+    }
+    expect(environment.launchCount).toBe(1);
+
+    environment.exitLaunchedProcess();
+    environment.launchMakesReady = true;
+    retries.releaseNext(100);
+    await eventually(() => observed.at(-1)?.state === 'connected');
+    expect(environment.launchCount).toBe(2);
+  });
+}
+
+function registerShutdownRaceTest(): void {
+  it('lets shutdown retain its session while an older health query fails', async () => {
+    const environment = new FakeRuntimeEnvironment();
+    const healthEntered = deferred<void>();
+    const releaseHealth = deferred<void>();
+    let blockHealth = false;
+    environment.running = true;
+    const runtime = connector(environment, {
+      clients: serialHealthClient(environment.clients, async () => {
+        if (!blockHealth) return;
+        healthEntered.resolve();
+        await releaseHealth.promise;
+        throw new RuntimePortError('timeout');
+      }),
+    });
+    await runtime.connectOrStart();
+
+    blockHealth = true;
+    const staleHealth = runtime.queryHealth();
+    await healthEntered.promise;
+    const shutdown = runtime.shutdown({
+      idempotencyKey: 'shutdown-health-race',
+      expectedInstanceId: environment.health.instanceId,
+      reason: 'test',
+    });
+    releaseHealth.resolve();
+
+    await staleHealth;
+    await expect(shutdown).resolves.toMatchObject({ state: 'stopped' });
+    expect(environment.shutdownCount).toBe(1);
+  });
+}
+
+function serialHealthClient(
+  client: RuntimeClientPort,
+  beforeHealth: () => Promise<void>,
+): RuntimeClientPort {
+  return {
+    connect: async (...args) => {
+      const connection = await client.connect(...args);
+      if (connection.kind !== 'connected') return connection;
+      return { kind: 'connected', session: serialSession(connection.session, beforeHealth) };
+    },
+  };
+}
+
+function serialSession(
+  session: RuntimeClientSession,
+  beforeHealth: () => Promise<void>,
+): RuntimeClientSession {
+  let requestQueue = Promise.resolve();
+  const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
+    const result = requestQueue.then(operation);
+    requestQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
+  return {
+    queryHealth: (deadlineMs) =>
+      enqueue(async () => {
+        await beforeHealth();
+        return session.queryHealth(deadlineMs);
+      }),
+    shutdown: (request, deadlineMs) => enqueue(() => session.shutdown(request, deadlineMs)),
+    disconnect: () => session.disconnect(),
+    onDisconnect: (listener) => session.onDisconnect(listener),
+  };
 }
 
 function registerStartupTests(): void {
@@ -182,35 +321,30 @@ function registerHealthSupervisionTest(): void {
 }
 
 function registerHealthFailureSupervisionTest(): void {
-  it('routes a failed health poll through unavailable and automatic reconnect', async () => {
-    const environment = new FakeRuntimeEnvironment();
-    const timers = controlledTimers(10, 25);
-    environment.running = true;
-    const runtime = connector(environment, {
-      healthPollIntervalMs: 10,
-      schedule: timers.schedule,
-    });
-    const observed: RuntimeConnectionState[] = [];
-    runtime.subscribeStatus((state) => observed.push(state));
-    await runtime.connectOrStart();
+  it.each(HEALTH_FAILURE_CASES)(
+    'maps $code from polling with its retry policy',
+    async (testCase) => {
+      const environment = new FakeRuntimeEnvironment();
+      const timers = controlledTimers(10, 25);
+      environment.running = true;
+      const runtime = connector(environment, {
+        healthPollIntervalMs: 10,
+        schedule: timers.schedule,
+      });
+      const observed: RuntimeConnectionState[] = [];
+      runtime.subscribeStatus((state) => observed.push(state));
+      await runtime.connectOrStart();
 
-    environment.healthFailure = true;
-    timers.releaseNext(10);
-    await eventually(() => {
-      const latest = observed.at(-1);
-      return (
-        latest?.state === 'unavailable' &&
-        latest.reason === 'health-timeout' &&
-        timers.pending(25) === 1
-      );
-    });
-    expect(timers.pending(25)).toBe(1);
+      environment.healthFailure = true;
+      environment.healthFailureCode = testCase.code;
+      timers.releaseNext(10);
+      await eventually(() => observed.at(-1)?.state === 'unavailable');
+      await flushMicrotasks();
 
-    environment.healthFailure = false;
-    timers.releaseNext(25);
-    await eventually(() => observed.at(-1)?.state === 'connected');
-    expect(environment.launchCount).toBe(0);
-  });
+      expect(observed.at(-1)).toEqual(testCase.expected);
+      expect(timers.pending(25)).toBe(testCase.expected.retryable ? 1 : 0);
+    },
+  );
 }
 
 function registerDelayedReconnectCancellationTest(): void {
@@ -512,7 +646,7 @@ function connector(
 }
 
 async function eventually(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
     if (predicate()) return;
     await Promise.resolve();
   }

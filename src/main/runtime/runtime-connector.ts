@@ -186,21 +186,30 @@ class RuntimeConnector implements RuntimeInterface {
       }
       if (!this.supervisor.isActive(generation)) return this.supervisor.currentState();
 
-      try {
-        const artifact = await this.dependencies.artifacts.resolve();
-        if (!this.supervisor.isActive(generation)) return this.supervisor.currentState();
-        await this.dependencies.processes.start({ artifact, endpoint });
-      } catch (error) {
-        if (!this.supervisor.isActive(generation)) return this.supervisor.currentState();
-        const code = error instanceof RuntimePortError ? error.code : 'start-failed';
-        return code === 'artifact-unavailable'
-          ? this.supervisor.publishUnavailable('artifact-unavailable', false)
-          : this.supervisor.publishUnavailable('start-failed', true);
-      }
+      const launchFailure = await this.launchRuntime(endpoint, generation);
+      if (launchFailure) return launchFailure;
 
       return this.waitForRuntime(endpoint, token, deadlineAt, generation);
     } finally {
       await lease.release().catch(() => undefined);
+    }
+  }
+
+  private async launchRuntime(
+    endpoint: RuntimeEndpoint,
+    generation: number,
+  ): Promise<RuntimeConnectionState | null> {
+    try {
+      const artifact = await this.dependencies.artifacts.resolve();
+      if (!this.supervisor.isActive(generation)) return this.supervisor.currentState();
+      await this.dependencies.processes.start({ artifact, endpoint });
+      return null;
+    } catch (error) {
+      if (!this.supervisor.isActive(generation)) return this.supervisor.currentState();
+      const code = error instanceof RuntimePortError ? error.code : 'start-failed';
+      return code === 'artifact-unavailable'
+        ? this.supervisor.publishUnavailable('artifact-unavailable', false)
+        : this.supervisor.publishUnavailable('start-failed', true);
     }
   }
 
@@ -317,7 +326,7 @@ class RuntimeConnector implements RuntimeInterface {
       }
       return this.supervisor.publish({ state: 'connected', health });
     } catch (error) {
-      return this.handleSessionFailure(session, generation, error, 'health-timeout');
+      return this.handleSessionFailure(session, generation, error);
     }
   }
 
@@ -325,13 +334,15 @@ class RuntimeConnector implements RuntimeInterface {
     session: RuntimeClientSession,
     generation: number,
     error: unknown,
-    fallback: 'health-timeout' | 'transport-lost',
   ): Promise<RuntimeConnectionState> {
+    if (!this.supervisor.isActive(generation) || this.session !== session) {
+      return this.supervisor.currentState();
+    }
     await this.releaseSession(session);
     if (!this.supervisor.isActive(generation)) return this.supervisor.currentState();
-    const reason =
-      error instanceof RuntimePortError && error.code === 'timeout' ? 'health-timeout' : fallback;
-    return this.supervisor.publishUnavailable(reason, true);
+    return this.supervisor.publishPortError(
+      error instanceof RuntimePortError ? error : new RuntimePortError('connection-failed'),
+    );
   }
 
   private async shutdownExisting(

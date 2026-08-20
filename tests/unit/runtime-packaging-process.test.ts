@@ -17,9 +17,49 @@ const roots: string[] = [];
 describe('detached Runtime process adapter', () => {
   afterEach(cleanRoots);
   it('launches a validated SEA with only non-secret runtime arguments', launchesSecurely);
+  it.each<NodeJS.Platform>(['linux', 'darwin', 'win32'])(
+    'retains an unresolved launch until its child exits on %s',
+    retainsLaunchUntilExit,
+  );
   it('rejects a symlink or non-executable path before spawn', rejectsInvalidArtifact);
-  it('preserves case-insensitive Windows system variables without inheriting PATH', filtersWindowsEnvironment);
+  it(
+    'preserves case-insensitive Windows system variables without inheriting PATH',
+    filtersWindowsEnvironment,
+  );
 });
+
+async function retainsLaunchUntilExit(platform: NodeJS.Platform): Promise<void> {
+  const root = temporaryRoot(`hariari-runtime-retained-${platform}-`);
+  const executablePath = path.join(root, platform === 'win32' ? 'runtime.exe' : 'runtime');
+  const runtimeDirectory = path.join(root, 'state');
+  createExecutable(executablePath, runtimeDirectory);
+  const children: ChildProcess[] = [];
+  const spawn = vi.fn(() => {
+    const child = spawnedChild(vi.fn());
+    children.push(child);
+    return child;
+  });
+  const adapter = new DetachedRuntimeProcessAdapter({
+    runtimeVersion: '0.6.8',
+    platform,
+    spawn,
+  });
+  const request = {
+    artifact: { executablePath, buildId: 'build-19' },
+    endpoint: {
+      kind: platform === 'win32' ? ('windows-pipe' as const) : ('unix' as const),
+      address: platform === 'win32' ? '\\\\.\\pipe\\hariari-test' : path.join(root, 'runtime.sock'),
+      runtimeDirectory,
+    },
+  };
+
+  await adapter.start(request);
+  await adapter.start(request);
+  expect(spawn).toHaveBeenCalledOnce();
+  children[0]?.emit('exit', 1, null);
+  await adapter.start(request);
+  expect(spawn).toHaveBeenCalledTimes(2);
+}
 
 async function launchesSecurely(): Promise<void> {
   const root = temporaryRoot('hariari-runtime process-ö-');

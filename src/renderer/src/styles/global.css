@@ -336,54 +336,6 @@ select:focus-visible {
   opacity: 0.6;
 }
 
-.runtime-health-host {
-  margin-left: auto;
-  min-width: 0;
-}
-
-.runtime-health {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-  white-space: nowrap;
-  color: var(--fg-dim);
-}
-
-.runtime-health::before {
-  content: '●';
-  font-size: 8px;
-}
-
-.runtime-health[data-state='connected'] {
-  color: var(--success);
-}
-
-.runtime-health[data-state='unavailable'] {
-  color: var(--error);
-}
-
-.runtime-health[data-state='incompatible'] {
-  color: var(--warning);
-}
-
-.runtime-health-text {
-  color: currentColor;
-  font-weight: 600;
-}
-
-.runtime-health-detail {
-  color: var(--fg-faint);
-  font-size: var(--font-xs);
-}
-
-@media (forced-colors: active) {
-  .runtime-health::before {
-    forced-color-adjust: none;
-    color: CanvasText;
-  }
-}
-
 /* ============================================
    Launch Workspace dialog
    ============================================ */
