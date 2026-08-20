@@ -112,7 +112,7 @@ export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
     const binRoot = path.join(runtimeRoot, 'bin');
     const destinationDirectory = path.join(
       binRoot,
-      `${manifest.runtimeVersion}-${manifest.platform}-${manifest.arch}`,
+      `${manifest.runtimeVersion}-${manifest.buildId}-${manifest.platform}-${manifest.arch}`,
     );
     const destinationPath = path.join(destinationDirectory, manifest.executable);
     assertConfined(binRoot, destinationPath);
