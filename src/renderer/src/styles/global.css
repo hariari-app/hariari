@@ -331,10 +331,82 @@ select:focus-visible {
 }
 
 .hint-version {
-  margin-left: auto;
   color: var(--fg-faint);
   font-size: var(--font-xs);
   opacity: 0.6;
+}
+
+.runtime-health-host {
+  margin-left: auto;
+  min-width: 0;
+}
+
+.runtime-health {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  white-space: nowrap;
+  color: var(--fg-dim);
+}
+
+.runtime-health::before {
+  content: '●';
+  font-size: 8px;
+}
+
+.runtime-health[data-state='connected'] {
+  color: var(--success);
+}
+
+.runtime-health[data-state='unavailable'] {
+  color: var(--error);
+}
+
+.runtime-health[data-state='incompatible'] {
+  color: var(--warning);
+}
+
+.runtime-health-text {
+  color: currentColor;
+  font-weight: 600;
+}
+
+.runtime-health-detail {
+  color: var(--fg-faint);
+  font-size: var(--font-xs);
+}
+
+.runtime-health-retry {
+  border: 1px solid currentColor;
+  border-radius: var(--radius-xs);
+  padding: 0 var(--space-1);
+  background: transparent;
+  color: currentColor;
+  font: inherit;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.runtime-health-retry:hover {
+  background: var(--surface-hover);
+}
+
+.runtime-health-retry:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.runtime-health-retry:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+@media (forced-colors: active) {
+  .runtime-health::before {
+    forced-color-adjust: none;
+    color: CanvasText;
+  }
 }
 
 /* ============================================

@@ -1,5 +1,6 @@
 import '@xterm/xterm/css/xterm.css';
 import './styles/global.css';
+import { mountRuntimeHealth } from './runtime-health';
 import './styles/terminal.css';
 import './styles/tab-bar.css';
 import './styles/source-control.css';
@@ -306,8 +307,8 @@ function main(): void {
   // Hint bar at bottom
   const hintBar = document.createElement('div');
   hintBar.className = 'workspace-hint-bar';
-  hintBar.setAttribute('role', 'status');
-  hintBar.setAttribute('aria-label', 'Keyboard shortcuts');
+  hintBar.setAttribute('role', 'contentinfo');
+  hintBar.setAttribute('aria-label', 'Workspace status and keyboard shortcuts');
   const isMac = navigator.platform.toUpperCase().includes('MAC');
   const mod = isMac ? '\u2318' : 'Ctrl';
   const shift = isMac ? '\u21E7' : 'Shift';
@@ -323,6 +324,11 @@ function main(): void {
     <span class="hint-item"><kbd>F4</kbd> Voice Cmd</span>
     <span class="hint-version">${versionLabel}</span>
   `;
+  const runtimeHealthHost = document.createElement('div');
+  runtimeHealthHost.className = 'runtime-health-host';
+  const versionElement = hintBar.querySelector('.hint-version');
+  hintBar.insertBefore(runtimeHealthHost, versionElement);
+  const disposeRuntimeHealth = mountRuntimeHealth(runtimeHealthHost, window.api.runtime);
   appEl.appendChild(hintBar);
 
   // Aria-live region for screen reader announcements of agent status changes
@@ -1663,6 +1669,7 @@ function main(): void {
   // Save state on window unload
   window.addEventListener('beforeunload', () => {
     clearInterval(autoSaveTimer);
+    disposeRuntimeHealth();
     saveGlobalState();
   });
 }
