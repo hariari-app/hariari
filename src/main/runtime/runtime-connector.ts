@@ -1,63 +1,30 @@
 import type {
   RuntimeConnectionState,
   RuntimeInterface,
-  RuntimeProtocolRange,
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
 } from '../../shared/runtime/runtime-interface';
 import {
   RuntimePortError,
-  type RuntimeArtifactPort,
-  type RuntimeClientIdentity,
-  type RuntimeClientPort,
   type RuntimeClientSession,
   type RuntimeEndpoint,
-  type RuntimeEndpointPort,
-  type RuntimeProcessPort,
   type RuntimeStartupLease,
-  type RuntimeStartupLeasePort,
-  type RuntimeTokenPort,
 } from './runtime-ports';
+import { RuntimeConnectionSupervisor } from './runtime-connection-supervisor';
 import {
-  RuntimeConnectionSupervisor,
-  type RuntimeSupervisionSchedule,
-} from './runtime-connection-supervisor';
+  RuntimeConnectorLifecycle,
+  type RuntimeConnectOwnership,
+} from './runtime-connector-lifecycle';
 import { waitForRuntimeTermination } from './runtime-termination-probe';
+import type { RuntimeConnectorDependencies, RuntimeConnectResult } from './runtime-connector-types';
 
-export interface RuntimeConnectorDependencies {
-  readonly clients: RuntimeClientPort;
-  readonly endpoints: RuntimeEndpointPort;
-  readonly tokens: RuntimeTokenPort;
-  readonly processes: RuntimeProcessPort;
-  readonly leases: RuntimeStartupLeasePort;
-  readonly artifacts: RuntimeArtifactPort;
-  readonly clientIdentity: RuntimeClientIdentity;
-  readonly supportedProtocolRange: RuntimeProtocolRange;
-  readonly connectDeadlineMs: number;
-  readonly startupDeadlineMs: number;
-  readonly now: () => number;
-  readonly delay: (milliseconds: number) => Promise<void>;
-  readonly reconnectDelayMs: number;
-  readonly healthPollIntervalMs: number;
-  readonly schedule: RuntimeSupervisionSchedule;
-}
-
-type ConnectedState = Extract<RuntimeConnectionState, { state: 'connected' }>;
-type IncompatibleState = Extract<RuntimeConnectionState, { state: 'incompatible' }>;
-type ConnectResult =
-  | { readonly kind: 'connected'; readonly state: ConnectedState }
-  | { readonly kind: 'incompatible'; readonly state: IncompatibleState }
-  | { readonly kind: 'failed'; readonly error: RuntimePortError }
-  | { readonly kind: 'cancelled' };
+export type { RuntimeConnectorDependencies } from './runtime-connector-types';
 
 class RuntimeConnector implements RuntimeInterface {
   private session: RuntimeClientSession | null = null;
   private removeDisconnectListener: (() => void) | null = null;
-  private connectInFlight: {
-    readonly generation: number;
-    readonly promise: Promise<RuntimeConnectionState>;
-  } | null = null;
   private readonly supervisor: RuntimeConnectionSupervisor;
+  private readonly lifecycle = new RuntimeConnectorLifecycle();
 
   constructor(private readonly dependencies: RuntimeConnectorDependencies) {
     this.supervisor = new RuntimeConnectionSupervisor({
@@ -68,28 +35,25 @@ class RuntimeConnector implements RuntimeInterface {
   }
 
   connectOrStart(): Promise<RuntimeConnectionState> {
+    const shutdown = this.lifecycle.shutdownInFlight();
+    if (shutdown) return shutdown.then(() => this.connectOrStart());
     return this.startConnectAttempt(this.supervisor.start());
   }
   private startConnectAttempt(generation: number): Promise<RuntimeConnectionState> {
     if (!this.supervisor.isActive(generation)) {
       return Promise.resolve(this.supervisor.currentState());
     }
-    if (this.connectInFlight?.generation === generation) return this.connectInFlight.promise;
-    const attempt = this.performConnectOrStart(generation)
-      .catch(() =>
+    const active = this.lifecycle.connectInFlight(generation);
+    if (active) return active;
+    return this.lifecycle.beginConnect(generation, async () => {
+      const state = await this.performConnectOrStart(generation).catch(() =>
         this.supervisor.isActive(generation)
           ? this.supervisor.publishUnavailable('connection-failed', true)
           : this.supervisor.currentState(),
-      )
-      .then((state) => {
-        this.supervise(state, generation);
-        return state;
-      })
-      .finally(() => {
-        if (this.connectInFlight?.promise === attempt) this.connectInFlight = null;
-      });
-    this.connectInFlight = { generation, promise: attempt };
-    return attempt;
+      );
+      this.supervise(state, generation);
+      return state;
+    });
   }
   async queryHealth(): Promise<RuntimeConnectionState> {
     const generation = this.supervisor.currentGeneration();
@@ -112,10 +76,28 @@ class RuntimeConnector implements RuntimeInterface {
     });
   }
 
-  async shutdown(request: RuntimeShutdownRequest): Promise<RuntimeShutdownResult> {
+  shutdown(request: RuntimeShutdownRequest): Promise<RuntimeShutdownResult> {
+    const active = this.lifecycle.shutdownInFlight();
+    if (active) return active;
+    const session = this.session;
     const generation = this.supervisor.suspend();
-    if (!this.session) return this.shutdownExisting(request, generation);
-    return this.shutdownSession(this.session, request);
+    return this.lifecycle.beginShutdown((owner) =>
+      this.performShutdown(request, generation, session, owner),
+    );
+  }
+
+  private async performShutdown(
+    request: RuntimeShutdownRequest,
+    generation: number,
+    session: RuntimeClientSession | null,
+    owner: RuntimeConnectOwnership | null,
+  ): Promise<RuntimeShutdownResult> {
+    await owner?.promise.catch(() => undefined);
+    await owner?.launch?.terminate();
+    await owner?.launch?.settled();
+    return session
+      ? this.shutdownSession(session, request)
+      : this.shutdownExisting(request, generation);
   }
 
   private async performConnectOrStart(generation: number): Promise<RuntimeConnectionState> {
@@ -178,7 +160,7 @@ class RuntimeConnector implements RuntimeInterface {
       }
       if (!this.supervisor.isActive(generation)) return this.supervisor.currentState();
 
-      const launchFailure = await this.launchRuntime(endpoint, generation);
+      const launchFailure = await this.launchRuntime(endpoint, generation, lease);
       if (launchFailure) return launchFailure;
 
       return this.waitForRuntime(endpoint, token, deadlineAt, generation);
@@ -190,11 +172,15 @@ class RuntimeConnector implements RuntimeInterface {
   private async launchRuntime(
     endpoint: RuntimeEndpoint,
     generation: number,
+    lease: RuntimeStartupLease,
   ): Promise<RuntimeConnectionState | null> {
     try {
       const artifact = await this.dependencies.artifacts.resolve();
       if (!this.supervisor.isActive(generation)) return this.supervisor.currentState();
-      await this.dependencies.processes.start({ artifact, endpoint });
+      if (!(await lease.renew())) return null;
+      const launch = await this.dependencies.processes.start({ artifact, endpoint });
+      this.lifecycle.ownLaunch(generation, launch);
+      if (!this.supervisor.isActive(generation)) return this.supervisor.currentState();
       return null;
     } catch (error) {
       if (!this.supervisor.isActive(generation)) return this.supervisor.currentState();
@@ -237,7 +223,7 @@ class RuntimeConnector implements RuntimeInterface {
     endpoint: RuntimeEndpoint,
     token: Uint8Array | null,
     generation: number,
-  ): Promise<ConnectResult> {
+  ): Promise<RuntimeConnectResult> {
     try {
       const connection = await this.dependencies.clients.connect(endpoint, token, {
         clientIdentity: this.dependencies.clientIdentity,
@@ -260,10 +246,9 @@ class RuntimeConnector implements RuntimeInterface {
       }
       this.adoptSession(connection.session, generation);
       const state = await this.querySessionHealth(connection.session, generation);
-      if (state.state !== 'connected') {
-        return { kind: 'failed', error: new RuntimePortError('timeout') };
-      }
-      return { kind: 'connected', state };
+      if (state.state === 'connected') return { kind: 'connected', state };
+      if (state.state === 'incompatible') return { kind: 'incompatible', state };
+      return { kind: 'unavailable', state };
     } catch (error) {
       if (!this.supervisor.isActive(generation)) return { kind: 'cancelled' };
       const portError =
@@ -353,6 +338,7 @@ class RuntimeConnector implements RuntimeInterface {
       return { state: 'unavailable', reason: 'client-disconnected', retryable: true };
     }
     if (connection.kind === 'incompatible') return connection.state;
+    if (connection.kind === 'unavailable') return connection.state;
     if (connection.kind === 'failed') {
       if (connection.error.code === 'endpoint-unavailable') return { state: 'not-running' };
       return this.supervisor.publishPortError(connection.error);

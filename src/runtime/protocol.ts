@@ -1,5 +1,8 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { RuntimeProtocolRange } from '../shared/runtime/runtime-interface';
+import type {
+  RuntimeOperationFailureCode,
+  RuntimeProtocolRange,
+} from '../shared/runtime/runtime-interface';
 
 export const RUNTIME_HANDSHAKE_VERSION = 1 as const;
 export const RUNTIME_HEALTH_OPERATION = 'runtime.health' as const;
@@ -89,13 +92,7 @@ export interface RuntimeRequestFrame {
 }
 
 export interface RuntimeProtocolErrorFrame {
-  readonly code:
-    | 'invalid-request'
-    | 'unsupported-operation'
-    | 'stale-instance'
-    | 'idempotency-conflict'
-    | 'runtime-stopping'
-    | 'internal';
+  readonly code: RuntimeOperationFailureCode;
   readonly retryable: boolean;
 }
 

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import {
   RuntimePortError,
+  type RuntimeProcessLaunch,
   type RuntimeProcessPort,
   type RuntimeProcessStartRequest,
 } from './runtime-ports';
@@ -27,12 +28,16 @@ export interface DetachedRuntimeProcessOptions {
   readonly spawn?: RuntimeSpawn;
 }
 
+type RuntimeProcessLifecycle =
+  | { readonly phase: 'idle' }
+  | { readonly phase: 'starting'; readonly launch: Promise<RuntimeProcessLaunch> }
+  | { readonly phase: 'running'; readonly launch: RuntimeProcessLaunch };
+
 export class DetachedRuntimeProcessAdapter implements RuntimeProcessPort {
   private readonly platform: NodeJS.Platform;
   private readonly environment: NodeJS.ProcessEnv;
   private readonly spawn: RuntimeSpawn;
-  private retainedChild: ChildProcess | null = null;
-  private startInFlight: Promise<void> | null = null;
+  private lifecycle: RuntimeProcessLifecycle = { phase: 'idle' };
 
   constructor(private readonly options: DetachedRuntimeProcessOptions) {
     this.platform = options.platform ?? process.platform;
@@ -40,20 +45,22 @@ export class DetachedRuntimeProcessAdapter implements RuntimeProcessPort {
     this.spawn = options.spawn ?? nodeSpawn;
   }
 
-  start(request: RuntimeProcessStartRequest): Promise<void> {
-    if (this.retainedChild) return Promise.resolve();
-    if (this.startInFlight) return this.startInFlight;
-    const attempt = this.spawnRuntime(request).finally(() => {
-      if (this.startInFlight === attempt) this.startInFlight = null;
+  start(request: RuntimeProcessStartRequest): Promise<RuntimeProcessLaunch> {
+    if (this.lifecycle.phase === 'running') return Promise.resolve(this.lifecycle.launch);
+    if (this.lifecycle.phase === 'starting') return this.lifecycle.launch;
+    const attempt = this.spawnRuntime(request).catch((error) => {
+      if (this.lifecycle.phase === 'starting' && this.lifecycle.launch === attempt) {
+        this.lifecycle = { phase: 'idle' };
+      }
+      throw error;
     });
-    this.startInFlight = attempt;
+    this.lifecycle = { phase: 'starting', launch: attempt };
     return attempt;
   }
 
-  private async spawnRuntime(request: RuntimeProcessStartRequest): Promise<void> {
+  private async spawnRuntime(request: RuntimeProcessStartRequest): Promise<RuntimeProcessLaunch> {
     try {
       await validateLaunchRequest(request, this.options.runtimeVersion, this.platform);
-      if (this.retainedChild) return;
       const args = [
         '--runtime-dir',
         request.endpoint.runtimeDirectory,
@@ -70,22 +77,47 @@ export class DetachedRuntimeProcessAdapter implements RuntimeProcessPort {
         stdio: 'ignore',
         windowsHide: true,
       });
-      let exited = false;
-      const recordExit = (): void => {
-        exited = true;
-        if (this.retainedChild === child) this.retainedChild = null;
-      };
-      child.once('exit', recordExit);
-      await waitForSpawn(child).catch((error) => {
-        child.removeListener('exit', recordExit);
-        throw error;
+      let launch: RuntimeProcessLaunch | null = null;
+      const settlement = processSettlement(child, () => {
+        if (this.lifecycle.phase === 'running' && this.lifecycle.launch === launch) {
+          this.lifecycle = { phase: 'idle' };
+        }
       });
-      if (!exited) this.retainedChild = child;
+      await waitForSpawn(child);
+      launch = createProcessLaunch(child, settlement.promise);
+      this.lifecycle = settlement.isSettled() ? { phase: 'idle' } : { phase: 'running', launch };
       child.unref();
+      return launch;
     } catch {
       throw new RuntimePortError('start-failed');
     }
   }
+}
+
+function createProcessLaunch(child: ChildProcess, settled: Promise<void>): RuntimeProcessLaunch {
+  return {
+    terminate: async () => {
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+      await settled;
+    },
+    settled: () => settled,
+  };
+}
+
+function processSettlement(child: ChildProcess, onSettled: () => void) {
+  let settled = false;
+  const promise = new Promise<void>((resolve) => {
+    const settle = (): void => {
+      child.removeListener('exit', settle);
+      child.removeListener('error', settle);
+      settled = true;
+      onSettled();
+      resolve();
+    };
+    child.once('exit', settle);
+    child.once('error', settle);
+  });
+  return { promise, isSettled: () => settled };
 }
 
 function waitForSpawn(child: ChildProcess): Promise<void> {

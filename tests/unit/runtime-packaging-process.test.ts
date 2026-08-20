@@ -21,12 +21,42 @@ describe('detached Runtime process adapter', () => {
     'retains an unresolved launch until its child exits on %s',
     retainsLaunchUntilExit,
   );
+  it('terminates and settles an owned launch without exposing a process handle', terminatesLaunch);
   it('rejects a symlink or non-executable path before spawn', rejectsInvalidArtifact);
   it(
     'preserves case-insensitive Windows system variables without inheriting PATH',
     filtersWindowsEnvironment,
   );
 });
+
+async function terminatesLaunch(): Promise<void> {
+  const root = temporaryRoot('hariari-runtime-terminated-launch-');
+  const executablePath = path.join(root, 'runtime');
+  const runtimeDirectory = path.join(root, 'state');
+  createExecutable(executablePath, runtimeDirectory);
+  const children: ChildProcess[] = [];
+  const adapter = new DetachedRuntimeProcessAdapter({
+    runtimeVersion: '0.6.8',
+    platform: 'linux',
+    spawn: () => {
+      const child = spawnedChild(vi.fn());
+      children.push(child);
+      return child;
+    },
+  });
+  const launch = await adapter.start({
+    artifact: { executablePath, buildId: 'build-19' },
+    endpoint: { kind: 'unix', address: path.join(root, 'runtime.sock'), runtimeDirectory },
+  });
+
+  const child = children[0];
+  if (!child) throw new Error('expected child');
+  const termination = launch.terminate();
+  expect(child.kill).toHaveBeenCalledOnce();
+  child.emit('exit', null, 'SIGTERM');
+  await termination;
+  await expect(launch.settled()).resolves.toBeUndefined();
+}
 
 async function retainsLaunchUntilExit(platform: NodeJS.Platform): Promise<void> {
   const root = temporaryRoot(`hariari-runtime-retained-${platform}-`);
@@ -173,7 +203,8 @@ function recordingSpawn(calls: SpawnCall[], unref: () => void) {
 
 function spawnedChild(unref: () => void): ChildProcess {
   const child = new EventEmitter() as ChildProcess;
-  Object.assign(child, { pid: 1234, unref });
+  const kill = vi.fn(() => true);
+  Object.assign(child, { pid: 1234, exitCode: null, signalCode: null, kill, unref });
   queueMicrotask(() => child.emit('spawn'));
   return child;
 }

@@ -34,6 +34,12 @@ const UNAVAILABLE_DETAILS: Record<
   'protocol-error': 'Desktop received an invalid Runtime response.',
   'health-timeout': 'The Runtime health query timed out.',
   'runtime-stopped': 'The Runtime is stopped.',
+  'invalid-request': 'Runtime rejected an invalid request.',
+  'unsupported-operation': 'Runtime does not support this operation.',
+  'stale-instance': 'The Runtime instance changed.',
+  'idempotency-conflict': 'The Runtime request conflicts with an earlier request.',
+  'runtime-stopping': 'The Runtime is stopping.',
+  internal: 'The Runtime reported an internal error.',
 };
 
 export function createRuntimeHealthViewModel(
@@ -113,10 +119,7 @@ function createRuntimeHealthElements(
   return { root, statusText, detail };
 }
 
-function renderRuntimeHealth(
-  elements: RuntimeHealthElements,
-  status: RuntimeRendererStatus,
-): void {
+function renderRuntimeHealth(elements: RuntimeHealthElements, status: RuntimeRendererStatus): void {
   const model = createRuntimeHealthViewModel(status);
   elements.root.dataset.state = model.state;
   elements.root.setAttribute('aria-busy', 'false');

@@ -13,6 +13,14 @@ export interface RuntimeHealth {
   readonly checkedAt: string;
 }
 
+export type RuntimeOperationFailureCode =
+  | 'invalid-request'
+  | 'unsupported-operation'
+  | 'stale-instance'
+  | 'idempotency-conflict'
+  | 'runtime-stopping'
+  | 'internal';
+
 export type RuntimeUnavailableReason =
   | 'not-connected'
   | 'client-disconnected'
@@ -25,7 +33,8 @@ export type RuntimeUnavailableReason =
   | 'transport-lost'
   | 'protocol-error'
   | 'health-timeout'
-  | 'runtime-stopped';
+  | 'runtime-stopped'
+  | RuntimeOperationFailureCode;
 
 export type RuntimeConnectionState =
   | {

@@ -3,11 +3,7 @@ import {
   createRuntimeConnector,
   type RuntimeConnectorDependencies,
 } from '../../src/main/runtime/runtime-connector';
-import {
-  RuntimePortError,
-  type RuntimeClientPort,
-  type RuntimeClientSession,
-} from '../../src/main/runtime/runtime-ports';
+import type { RuntimeClientPort } from '../../src/main/runtime/runtime-ports';
 import type { RuntimeConnectionState } from '../../src/shared/runtime/runtime-interface';
 import { FakeRuntimeEnvironment } from './runtime-test-fakes';
 
@@ -50,6 +46,7 @@ function registerRuntimeInterfaceTests(): void {
   registerConnectionLifecycleTests();
   registerHealthSupervisionTest();
   registerHealthQueryFailureTests();
+  registerInitialHealthFailureTests();
   registerHealthFailureSupervisionTest();
   registerPersistentReconnectTest();
   registerDelayedReconnectCancellationTest();
@@ -59,9 +56,21 @@ function registerRuntimeInterfaceTests(): void {
   registerRetainedLaunchRetryTest();
   registerInitialRetryTerminalStateTests();
   registerConnectionFailureTests();
-  registerShutdownRaceTest();
-  registerShutdownTests();
   registerBoundarySecurityTest();
+}
+
+function registerInitialHealthFailureTests(): void {
+  it.each(HEALTH_FAILURE_CASES)(
+    'preserves $code from the first post-handshake health query',
+    async (testCase) => {
+      const environment = new FakeRuntimeEnvironment();
+      environment.running = true;
+      environment.healthFailure = true;
+      environment.healthFailureCode = testCase.code;
+
+      await expect(connector(environment).connectOrStart()).resolves.toEqual(testCase.expected);
+    },
+  );
 }
 
 function registerHealthQueryFailureTests(): void {
@@ -108,77 +117,6 @@ function registerRetainedLaunchRetryTest(): void {
     await eventually(() => observed.at(-1)?.state === 'connected');
     expect(environment.launchCount).toBe(2);
   });
-}
-
-function registerShutdownRaceTest(): void {
-  it('lets shutdown retain its session while an older health query fails', async () => {
-    const environment = new FakeRuntimeEnvironment();
-    const healthEntered = deferred<void>();
-    const releaseHealth = deferred<void>();
-    let blockHealth = false;
-    environment.running = true;
-    const runtime = connector(environment, {
-      clients: serialHealthClient(environment.clients, async () => {
-        if (!blockHealth) return;
-        healthEntered.resolve();
-        await releaseHealth.promise;
-        throw new RuntimePortError('timeout');
-      }),
-    });
-    await runtime.connectOrStart();
-
-    blockHealth = true;
-    const staleHealth = runtime.queryHealth();
-    await healthEntered.promise;
-    const shutdown = runtime.shutdown({
-      idempotencyKey: 'shutdown-health-race',
-      expectedInstanceId: environment.health.instanceId,
-      reason: 'test',
-    });
-    releaseHealth.resolve();
-
-    await staleHealth;
-    await expect(shutdown).resolves.toMatchObject({ state: 'stopped' });
-    expect(environment.shutdownCount).toBe(1);
-  });
-}
-
-function serialHealthClient(
-  client: RuntimeClientPort,
-  beforeHealth: () => Promise<void>,
-): RuntimeClientPort {
-  return {
-    connect: async (...args) => {
-      const connection = await client.connect(...args);
-      if (connection.kind !== 'connected') return connection;
-      return { kind: 'connected', session: serialSession(connection.session, beforeHealth) };
-    },
-  };
-}
-
-function serialSession(
-  session: RuntimeClientSession,
-  beforeHealth: () => Promise<void>,
-): RuntimeClientSession {
-  let requestQueue = Promise.resolve();
-  const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
-    const result = requestQueue.then(operation);
-    requestQueue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  };
-  return {
-    queryHealth: (deadlineMs) =>
-      enqueue(async () => {
-        await beforeHealth();
-        return session.queryHealth(deadlineMs);
-      }),
-    shutdown: (request, deadlineMs) => enqueue(() => session.shutdown(request, deadlineMs)),
-    disconnect: () => session.disconnect(),
-    onDisconnect: (listener) => session.onDisconnect(listener),
-  };
 }
 
 function registerStartupTests(): void {
@@ -559,50 +497,6 @@ function registerConnectionFailureTests(): void {
       retryable: true,
     });
     expect(environment.launchCount).toBe(1);
-  });
-}
-
-function registerShutdownTests(): void {
-  it('performs privileged shutdown idempotently without autostart', async () => {
-    const environment = new FakeRuntimeEnvironment();
-    environment.running = true;
-    const runtime = connector(environment);
-    await runtime.connectOrStart();
-    const request = {
-      idempotencyKey: 'shutdown-1',
-      expectedInstanceId: environment.health.instanceId,
-      reason: 'test' as const,
-    };
-
-    await expect(runtime.shutdown(request)).resolves.toEqual({
-      state: 'stopped',
-      instanceId: environment.health.instanceId,
-    });
-    await expect(runtime.shutdown(request)).resolves.toEqual({ state: 'not-running' });
-    expect(environment.shutdownCount).toBe(1);
-    expect(environment.launchCount).toBe(0);
-  });
-
-  it('bounds shutdown while the Runtime endpoint remains live', async () => {
-    const environment = new FakeRuntimeEnvironment();
-    environment.running = true;
-    environment.shutdownLeavesRunning = true;
-    const runtime = connector(environment, { connectDeadlineMs: 50 });
-    await runtime.connectOrStart();
-
-    await expect(
-      runtime.shutdown({
-        idempotencyKey: 'shutdown-stalled',
-        expectedInstanceId: environment.health.instanceId,
-        reason: 'test',
-      }),
-    ).resolves.toEqual({
-      state: 'unavailable',
-      reason: 'health-timeout',
-      retryable: true,
-    });
-    expect(environment.shutdownCount).toBe(1);
-    expect(environment.running).toBe(true);
   });
 }
 

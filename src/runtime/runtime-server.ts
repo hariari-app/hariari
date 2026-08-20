@@ -46,13 +46,19 @@ interface ShutdownRecord {
   readonly result: Record<string, unknown>;
 }
 
+type RuntimeServerLifecycle =
+  | { readonly phase: 'idle' }
+  | { readonly phase: 'starting'; readonly listener: Promise<RuntimeTransportListener> }
+  | { readonly phase: 'listening'; readonly listener: RuntimeTransportListener }
+  | { readonly phase: 'stop-requested'; readonly listener: RuntimeTransportListener }
+  | { readonly phase: 'stopping'; readonly settled: Promise<void> }
+  | { readonly phase: 'stopped' };
+
 export class RuntimeServer {
   readonly identity: RuntimeIdentityFrame;
-  private listener: RuntimeTransportListener | null = null;
   private readonly connections = new Set<RuntimeFrameConnection>();
   private readonly shutdownRecords = new Map<string, ShutdownRecord>();
-  private stopping = false;
-  private stopInFlight: Promise<void> | null = null;
+  private lifecycle: RuntimeServerLifecycle = { phase: 'idle' };
 
   constructor(private readonly options: RuntimeServerOptions) {
     this.identity = {
@@ -64,32 +70,46 @@ export class RuntimeServer {
   }
 
   async start(): Promise<void> {
-    if (this.listener) return;
-    this.listener = await this.options.transport.listen(this.options.endpoint, (connection) =>
+    if (this.lifecycle.phase === 'starting') return void (await this.lifecycle.listener);
+    if (this.lifecycle.phase !== 'idle') return;
+    const listener = this.options.transport.listen(this.options.endpoint, (connection) =>
       this.serveConnection(connection),
     );
+    const starting = { phase: 'starting' as const, listener };
+    this.lifecycle = starting;
+    try {
+      const resolved = await listener;
+      if (this.lifecycle === starting) this.lifecycle = { phase: 'listening', listener: resolved };
+    } catch (error) {
+      if (this.lifecycle === starting) this.lifecycle = { phase: 'idle' };
+      throw error;
+    }
   }
 
   stop(): Promise<void> {
-    if (this.stopInFlight) return this.stopInFlight;
-    this.stopping = true;
-    const listener = this.listener;
-    this.listener = null;
-    this.stopInFlight = (async () => {
-      for (const connection of this.connections) connection.close();
-      this.connections.clear();
-      if (listener) await listener.close();
-    })();
-    return this.stopInFlight;
+    if (this.lifecycle.phase === 'stopping') return this.lifecycle.settled;
+    if (this.lifecycle.phase === 'stopped') return Promise.resolve();
+    const owned = this.lifecycle;
+    const settled = Promise.resolve().then(() => this.finishStop(owned));
+    this.lifecycle = { phase: 'stopping', settled };
+    return settled;
+  }
+
+  private async finishStop(owned: RuntimeServerLifecycle): Promise<void> {
+    for (const connection of this.connections) connection.close();
+    this.connections.clear();
+    const listener = await ownedListener(owned);
+    await listener?.close();
+    this.lifecycle = { phase: 'stopped' };
   }
 
   private async serveConnection(connection: RuntimeFrameConnection): Promise<void> {
     this.connections.add(connection);
     try {
-      if (this.stopping) return;
+      if (this.isStopping()) return;
       const selectedProtocol = await this.authenticate(connection);
       if (selectedProtocol === null) return;
-      while (!this.stopping) {
+      while (!this.isStopping()) {
         const frame = await connection.readFrame(this.options.requestDeadlineMs);
         const request = parseRequestFrame(frame);
         const response = this.handleRequest(request, selectedProtocol);
@@ -197,7 +217,7 @@ export class RuntimeServer {
       if (request.idempotencyKey !== null || Object.keys(request.payload).length !== 0) {
         return failure(request, protocolVersion, 'invalid-request', false);
       }
-      if (this.stopping) return failure(request, protocolVersion, 'runtime-stopping', true);
+      if (this.isStopping()) return failure(request, protocolVersion, 'runtime-stopping', true);
       return success(request, protocolVersion, {
         status: 'ready',
         ...this.identity,
@@ -233,8 +253,18 @@ export class RuntimeServer {
     }
     const result = { state: 'stopped', instanceId: this.identity.instanceId };
     this.shutdownRecords.set(shutdownRequest.idempotencyKey, { fingerprint, result });
-    this.stopping = true;
+    this.requestStop();
     return success(request, protocolVersion, result);
+  }
+
+  private requestStop(): void {
+    if (this.lifecycle.phase === 'listening') {
+      this.lifecycle = { phase: 'stop-requested', listener: this.lifecycle.listener };
+    }
+  }
+
+  private isStopping(): boolean {
+    return ['stop-requested', 'stopping', 'stopped'].includes(this.lifecycle.phase);
   }
 
   private async rejectAuthentication(connection: RuntimeFrameConnection): Promise<void> {
@@ -248,6 +278,16 @@ export class RuntimeServer {
       )
       .catch(() => undefined);
   }
+}
+
+async function ownedListener(
+  lifecycle: RuntimeServerLifecycle,
+): Promise<RuntimeTransportListener | null> {
+  if (lifecycle.phase === 'starting') return lifecycle.listener.catch(() => null);
+  if (lifecycle.phase === 'listening' || lifecycle.phase === 'stop-requested') {
+    return lifecycle.listener;
+  }
+  return null;
 }
 
 function success(

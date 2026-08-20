@@ -3,14 +3,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { NodeRuntimeClient } from '../../src/main/runtime/node-runtime-client';
-import {
-  RuntimePortError,
-  type RuntimeEndpoint,
-} from '../../src/main/runtime/runtime-ports';
+import { RuntimePortError, type RuntimeEndpoint } from '../../src/main/runtime/runtime-ports';
 import type { RuntimeProtocolRange } from '../../src/shared/runtime/runtime-interface';
 import {
   NodeLocalRuntimeTransport,
   type RuntimeFrameConnection,
+  type RuntimeLocalEndpoint,
+  type RuntimeLocalTransport,
+  type RuntimeTransportListener,
 } from '../../src/runtime/local-transport';
 import {
   RUNTIME_HANDSHAKE_VERSION,
@@ -27,10 +27,35 @@ const servers: RuntimeServer[] = [];
 
 describe('background Runtime server', () => {
   afterEach(cleanRuntimeFixtures);
-  it('authenticates, negotiates the highest mutual version, and preserves identity', verifiesIdentity);
+  it(
+    'authenticates, negotiates the highest mutual version, and preserves identity',
+    verifiesIdentity,
+  );
   it('reports incompatible only after authenticated disjoint ranges', verifiesIncompatibility);
   it('expires challenges and rejects their replay without version disclosure', rejectsReplay);
+  it('closes exactly one listener when stopped during startup', stopsDuringStartup);
 });
+
+async function stopsDuringStartup(): Promise<void> {
+  const listen = deferred<RuntimeTransportListener>();
+  let closeCount = 0;
+  const transport: RuntimeLocalTransport = {
+    connect: async () => Promise.reject(new Error('not used')),
+    listen: async () => listen.promise,
+  };
+  const server = runtimeServer(transport, {
+    kind: 'unix',
+    address: '/tmp/runtime-server-start-race.sock',
+    runtimeDirectory: '/tmp',
+  });
+  const start = server.start();
+  const stop = server.stop();
+
+  listen.resolve({ close: async () => void (closeCount += 1) });
+  await Promise.all([start, stop, server.stop()]);
+
+  expect(closeCount).toBe(1);
+}
 
 async function verifiesIdentity(): Promise<void> {
   const fixture = await startRuntime({
@@ -197,6 +222,34 @@ async function startRuntime(options: RuntimeFixtureOptions): Promise<ServerFixtu
   await server.start();
   const client = new NodeRuntimeClient({ transport, randomId, randomNonce: randomId });
   return { endpoint, transport, server, client };
+}
+
+function runtimeServer(
+  transport: RuntimeLocalTransport,
+  endpoint: RuntimeLocalEndpoint,
+): RuntimeServer {
+  let id = 0;
+  return new RuntimeServer({
+    transport,
+    endpoint,
+    token: TOKEN,
+    supportedProtocolRange: { min: 1, max: 1 },
+    runtimeVersion: '0.6.8',
+    buildId: 'build-19',
+    now: () => NOW,
+    randomId: () => `race-${++id}`,
+    randomNonce: () => `race-nonce-${++id}`,
+    handshakeDeadlineMs: 500,
+    requestDeadlineMs: 500,
+  });
+}
+
+function deferred<T>() {
+  let resolve = (_value: T | PromiseLike<T>): void => undefined;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
 }
 
 function connect(

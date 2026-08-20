@@ -13,6 +13,7 @@ import {
   type RuntimeEndpoint,
   type RuntimeEndpointPort,
   type RuntimeProcessPort,
+  type RuntimeProcessLaunch,
   type RuntimeStartupLease,
   type RuntimeStartupLeasePort,
   type RuntimeTokenPort,
@@ -60,11 +61,13 @@ export class FakeRuntimeEnvironment {
   readonly processes: RuntimeProcessPort = {
     start: async (request) => {
       this.launchRequests.push(request);
-      if (this.launchedProcessAlive) return;
+      if (this.launchedProcessAlive && this.launchedProcess) return this.launchedProcess;
       if (this.startFailure) throw new RuntimePortError('start-failed');
       this.launchCount += 1;
       this.launchedProcessAlive = true;
       if (this.launchMakesReady) this.running = true;
+      this.launchedProcess = this.createProcessLaunch();
+      return this.launchedProcess;
     },
   };
   readonly leases: RuntimeStartupLeasePort = {
@@ -73,6 +76,7 @@ export class FakeRuntimeEnvironment {
       this.leaseHeld = true;
       let released = false;
       const lease: RuntimeStartupLease = {
+        renew: async () => !released,
         release: async () => {
           if (released) return;
           released = true;
@@ -108,6 +112,8 @@ export class FakeRuntimeEnvironment {
   nowMs = Date.parse('2026-08-20T10:00:01.000Z');
   private leaseHeld = false;
   private launchedProcessAlive = false;
+  private launchedProcess: RuntimeProcessLaunch | null = null;
+  private readonly processExitListeners = new Set<() => void>();
   private readonly sessions = new Set<FakeRuntimeSession>();
 
   readonly now = (): number => this.nowMs;
@@ -125,7 +131,20 @@ export class FakeRuntimeEnvironment {
 
   exitLaunchedProcess(): void {
     this.launchedProcessAlive = false;
+    this.launchedProcess = null;
     this.running = false;
+    for (const listener of this.processExitListeners) listener();
+    this.processExitListeners.clear();
+  }
+
+  private createProcessLaunch(): RuntimeProcessLaunch {
+    return {
+      terminate: async () => this.exitLaunchedProcess(),
+      settled: async () => {
+        if (!this.launchedProcessAlive) return;
+        await new Promise<void>((resolve) => this.processExitListeners.add(resolve));
+      },
+    };
   }
 
   private async connect(token: Uint8Array | null, options: RuntimeClientConnectOptions) {

@@ -1,5 +1,6 @@
 import type {
   RuntimeHealth,
+  RuntimeOperationFailureCode,
   RuntimeProtocolRange,
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
@@ -14,12 +15,16 @@ export type RuntimePortErrorCode =
   | 'start-failed'
   | 'timeout'
   | 'transport-lost'
-  | 'protocol-error';
+  | 'protocol-error'
+  | RuntimeOperationFailureCode;
 
 export class RuntimePortError extends Error {
   readonly code: RuntimePortErrorCode;
 
-  constructor(code: RuntimePortErrorCode) {
+  constructor(
+    code: RuntimePortErrorCode,
+    readonly retryable?: boolean,
+  ) {
     super(`Runtime operation failed: ${code}`);
     this.name = 'RuntimePortError';
     this.code = code;
@@ -90,11 +95,17 @@ export interface RuntimeProcessStartRequest {
   readonly endpoint: RuntimeEndpoint;
 }
 
+export interface RuntimeProcessLaunch {
+  terminate(): Promise<void>;
+  settled(): Promise<void>;
+}
+
 export interface RuntimeProcessPort {
-  start(request: RuntimeProcessStartRequest): Promise<void>;
+  start(request: RuntimeProcessStartRequest): Promise<RuntimeProcessLaunch>;
 }
 
 export interface RuntimeStartupLease {
+  renew(): Promise<boolean>;
   release(): Promise<void>;
 }
 

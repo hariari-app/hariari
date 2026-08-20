@@ -133,18 +133,19 @@ export class FileRuntimeStartupLeasePort implements RuntimeStartupLeasePort {
       this.cancelHeartbeat(timer);
       timer = null;
     };
-    const refresh = (): void => {
-      if (released || refreshInFlight) return;
-      refreshInFlight = this.refreshHeartbeat(owner).finally(() => {
-        refreshInFlight = null;
-      });
-      void refreshInFlight.then((owned) => {
-        if (!owned) stopHeartbeat();
-      });
+    const renew = async (): Promise<boolean> => {
+      if (released) return false;
+      const refresh = refreshInFlight ?? this.refreshHeartbeat(owner);
+      refreshInFlight = refresh;
+      const owned = await refresh.catch(() => false);
+      if (refreshInFlight === refresh) refreshInFlight = null;
+      if (!owned) stopHeartbeat();
+      return !released && owned;
     };
-    timer = this.scheduleHeartbeat(refresh, this.heartbeatIntervalMs);
+    timer = this.scheduleHeartbeat(() => void renew(), this.heartbeatIntervalMs);
     timer.unref();
     return {
+      renew,
       release: async () => {
         if (released) return;
         released = true;
@@ -252,7 +253,8 @@ async function touchOwnedHeartbeat(
     if (!isStartupLeaseHeartbeat(heartbeat, leaseId)) return false;
     const heartbeatAt = new Date(now);
     await handle.utimes(heartbeatAt, heartbeatAt);
-    return true;
+    const currentStats = await fs.promises.lstat(heartbeatPath);
+    return sameFile(handleStats, currentStats);
   } catch {
     return false;
   } finally {

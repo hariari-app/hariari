@@ -222,6 +222,10 @@ function createProcessPort(options: ProcessFixtureOptions): RuntimeProcessPort {
       });
       servers.push(server);
       await server.start();
+      return {
+        terminate: () => server.stop(),
+        settled: async () => undefined,
+      };
     },
   };
 }

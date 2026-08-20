@@ -124,7 +124,7 @@ function createProcessPort(
   return {
     start: async (request) => {
       launches.value += 1;
-      await detached.start(request);
+      return detached.start(request);
     },
   };
 }

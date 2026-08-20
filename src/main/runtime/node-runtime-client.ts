@@ -66,7 +66,7 @@ export class NodeRuntimeClient implements RuntimeClientPort {
     } catch (error) {
       connection.close();
       if (error instanceof RuntimePortError) throw error;
-      throw new RuntimePortError('protocol-error');
+      throw handshakePortError(error);
     }
   }
 
@@ -110,10 +110,7 @@ export class NodeRuntimeClient implements RuntimeClientPort {
     reply: RuntimeWelcomeFrame | RuntimeIncompatibleFrame,
     options: RuntimeClientConnectOptions,
   ): RuntimeClientConnection {
-    const selected = selectHighestMutualVersion(
-      options.supportedProtocolRange,
-      reply.runtimeRange,
-    );
+    const selected = selectHighestMutualVersion(options.supportedProtocolRange, reply.runtimeRange);
     if (reply.kind === 'runtime.incompatible') {
       if (selected !== null) throw new RuntimePortError('protocol-error');
       connection.close();
@@ -154,6 +151,13 @@ export class NodeRuntimeClient implements RuntimeClientPort {
       throw new RuntimePortError('connection-failed');
     }
   }
+}
+
+function handshakePortError(error: unknown): RuntimePortError {
+  const code = (error as RuntimeTransportError | undefined)?.code;
+  if (code === 'deadline') return new RuntimePortError('timeout');
+  if (code === 'closed') return new RuntimePortError('transport-lost');
+  return new RuntimePortError('protocol-error');
 }
 
 function authenticatedReplyMatches(
@@ -248,9 +252,7 @@ class NodeRuntimeClientSession implements RuntimeClientSession {
         throw new RuntimePortError('protocol-error');
       }
       if (!response.ok) {
-        throw new RuntimePortError(
-          response.error.code === 'runtime-stopping' ? 'transport-lost' : 'protocol-error',
-        );
+        throw new RuntimePortError(response.error.code, response.error.retryable);
       }
       return response.result;
     } catch (error) {

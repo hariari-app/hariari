@@ -24,6 +24,12 @@ const PORT_ERROR_STATES: Record<
   'endpoint-unavailable': ['connection-failed', true],
   'transport-lost': ['transport-lost', true],
   'connection-failed': ['connection-failed', true],
+  'invalid-request': ['invalid-request', false],
+  'unsupported-operation': ['unsupported-operation', false],
+  'stale-instance': ['stale-instance', false],
+  'idempotency-conflict': ['idempotency-conflict', false],
+  'runtime-stopping': ['runtime-stopping', true],
+  internal: ['internal', true],
 };
 
 export class RuntimeConnectionSupervisor {
@@ -102,8 +108,8 @@ export class RuntimeConnectionSupervisor {
   }
 
   publishPortError(error: RuntimePortError): RuntimeUnavailableState {
-    const [reason, retryable] = PORT_ERROR_STATES[error.code];
-    return this.publishUnavailable(reason, retryable);
+    const [reason, defaultRetryable] = PORT_ERROR_STATES[error.code];
+    return this.publishUnavailable(reason, error.retryable ?? defaultRetryable);
   }
 
   scheduleRetry(generation: number, task: () => void): void {
