@@ -30,12 +30,24 @@ const AUTHENTICATE: Omit<RuntimeAuthenticateFrame, 'proof'> = {
   protocolRange: { min: 1, max: 4 },
 };
 
-describe('Runtime protocol', () => {
+describe('Runtime protocol', registerRuntimeProtocolTests);
+
+function registerRuntimeProtocolTests(): void {
+  registerVersionSelectionTest();
+  registerClientProofTest();
+  registerServerProofTest();
+  registerAuthenticatedEnvelopeTest();
+  registerRequestMetadataTest();
+}
+
+function registerVersionSelectionTest(): void {
   it('selects the highest mutually supported protocol version', () => {
     expect(selectHighestMutualVersion({ min: 1, max: 4 }, { min: 2, max: 3 })).toBe(3);
     expect(selectHighestMutualVersion({ min: 1, max: 2 }, { min: 3, max: 5 })).toBeNull();
   });
+}
 
+function registerClientProofTest(): void {
   it('binds client authentication to the challenge, identity, and complete range', () => {
     const proof = createClientProof(TOKEN, CHALLENGE, AUTHENTICATE);
     const frame: RuntimeAuthenticateFrame = { ...AUTHENTICATE, proof };
@@ -50,7 +62,9 @@ describe('Runtime protocol', () => {
     expect(verifyClientProof(new Uint8Array(32).fill(20), CHALLENGE, frame)).toBe(false);
     expect(verifyClientProof(TOKEN, CHALLENGE, { ...frame, proof: `${proof}!` })).toBe(false);
   });
+}
 
+function registerServerProofTest(): void {
   it('binds the Runtime proof to the complete authenticated response', () => {
     const replyWithoutProof: Omit<RuntimeWelcomeFrame, 'proof'> = {
       kind: 'runtime.welcome',
@@ -77,11 +91,11 @@ describe('Runtime protocol', () => {
     expect(verifyServerProof(TOKEN, reply)).toBe(true);
     expect(verifyServerProof(TOKEN, { ...reply, selectedProtocolVersion: 2 })).toBe(false);
   });
+}
 
+function registerAuthenticatedEnvelopeTest(): void {
   it('builds one authenticated envelope for every proven Runtime reply', () => {
-    expect(
-      createAuthenticatedReplyEnvelope(CHALLENGE, AUTHENTICATE, { min: 2, max: 3 }),
-    ).toEqual({
+    expect(createAuthenticatedReplyEnvelope(CHALLENGE, AUTHENTICATE, { min: 2, max: 3 })).toEqual({
       handshakeVersion: 1,
       challengeId: 'challenge-1',
       requestId: 'request-1',
@@ -90,7 +104,9 @@ describe('Runtime protocol', () => {
       runtimeRange: { min: 2, max: 3 },
     });
   });
+}
 
+function registerRequestMetadataTest(): void {
   it('reserves correlation, causation, and idempotency without accepting extra operations', () => {
     expect(
       parseRequestFrame({
@@ -122,4 +138,4 @@ describe('Runtime protocol', () => {
       }),
     ).toThrow('Runtime protocol frame is invalid');
   });
-});
+}

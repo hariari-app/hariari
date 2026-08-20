@@ -6,7 +6,37 @@ import {
 import type { RuntimeConnectionState } from '../../src/shared/runtime/runtime-interface';
 import { FakeRuntimeEnvironment } from './runtime-test-fakes';
 
-describe('Runtime Interface', () => {
+const RECONNECT_TERMINAL_CASES = [
+  {
+    name: 'an authenticated incompatible Runtime',
+    configure: (environment: FakeRuntimeEnvironment) => {
+      environment.serverRange = { min: 5, max: 7 };
+    },
+    expected: { state: 'incompatible' },
+  },
+  {
+    name: 'a non-retryable authentication rejection',
+    configure: (environment: FakeRuntimeEnvironment) => {
+      environment.authenticationFailure = true;
+    },
+    expected: { state: 'unavailable', reason: 'authentication-rejected', retryable: false },
+  },
+] as const;
+
+describe('Runtime Interface', registerRuntimeInterfaceTests);
+
+function registerRuntimeInterfaceTests(): void {
+  registerStartupTests();
+  registerConnectionLifecycleTests();
+  registerPersistentReconnectTest();
+  registerReconnectCancellationTest();
+  registerReconnectTerminalStateTests();
+  registerConnectionFailureTests();
+  registerShutdownTests();
+  registerBoundarySecurityTest();
+}
+
+function registerStartupTests(): void {
   it('connects first, starts one missing Runtime, and queries health', async () => {
     const environment = new FakeRuntimeEnvironment();
     const runtime = connector(environment);
@@ -40,7 +70,9 @@ describe('Runtime Interface', () => {
       ),
     ).toBe(true);
   });
+}
 
+function registerConnectionLifecycleTests(): void {
   it('disconnects only the client and a fresh client reconnects to the same Runtime', async () => {
     const environment = new FakeRuntimeEnvironment();
     const first = connector(environment);
@@ -76,7 +108,99 @@ describe('Runtime Interface', () => {
     });
     expect(environment.launchCount).toBe(0);
   });
+}
 
+function registerPersistentReconnectTest(): void {
+  it('keeps retrying automatic reconnects after a transient failed attempt', async () => {
+    const environment = new FakeRuntimeEnvironment();
+    const delays = controlledDelays();
+    environment.running = true;
+    const runtime = connector(environment, { delay: delays.wait });
+    const observed: RuntimeConnectionState[] = [];
+    runtime.subscribeStatus((state) => observed.push(state));
+    await runtime.connectOrStart();
+
+    environment.connectionFailure = true;
+    environment.dropConnections();
+    await eventually(() => delays.pending() === 1);
+    delays.releaseNext();
+    await eventually(() => {
+      const latest = observed.at(-1);
+      return (
+        latest?.state === 'unavailable' &&
+        latest.reason === 'connection-failed' &&
+        delays.pending() === 1
+      );
+    });
+
+    environment.connectionFailure = false;
+    delays.releaseNext();
+    await eventually(() => observed.at(-1)?.state === 'connected');
+
+    expect(observed.at(-1)).toMatchObject({
+      state: 'connected',
+      health: { instanceId: environment.health.instanceId },
+    });
+    expect(environment.launchCount).toBe(0);
+  });
+}
+
+function registerReconnectCancellationTest(): void {
+  it('cancels a pending automatic retry when Desktop explicitly disconnects', async () => {
+    const environment = new FakeRuntimeEnvironment();
+    const delays = controlledDelays();
+    environment.running = true;
+    const runtime = connector(environment, { delay: delays.wait });
+    await runtime.connectOrStart();
+
+    environment.dropConnections();
+    await eventually(() => delays.pending() === 1);
+    const connectCountBeforeDisconnect = environment.connectCount;
+    await runtime.disconnect();
+    delays.releaseNext();
+    await flushMicrotasks();
+
+    expect(environment.connectCount).toBe(connectCountBeforeDisconnect);
+    expect(environment.shutdownCount).toBe(0);
+    expect(environment.running).toBe(true);
+  });
+}
+
+function registerReconnectTerminalStateTests(): void {
+  it.each(RECONNECT_TERMINAL_CASES)('stops automatic retries after $name', async (testCase) => {
+    const environment = new FakeRuntimeEnvironment();
+    const delays = controlledDelays();
+    environment.running = true;
+    const runtime = connector(environment, { delay: delays.wait });
+    const observed: RuntimeConnectionState[] = [];
+    runtime.subscribeStatus((state) => observed.push(state));
+    await runtime.connectOrStart();
+
+    environment.connectionFailure = true;
+    environment.dropConnections();
+    await eventually(() => delays.pending() === 1);
+    delays.releaseNext();
+    await eventually(() => observed.at(-1)?.state === 'unavailable' && delays.pending() === 1);
+
+    environment.connectionFailure = false;
+    testCase.configure(environment);
+    delays.releaseNext();
+    await eventually(() => {
+      const latest = observed.at(-1);
+      return (
+        latest?.state === 'incompatible' ||
+        (latest?.state === 'unavailable' && latest.reason === 'authentication-rejected')
+      );
+    });
+    await flushMicrotasks();
+
+    expect(observed.at(-1)).toMatchObject(testCase.expected);
+    expect(delays.pending()).toBe(0);
+    expect(environment.launchCount).toBe(0);
+  });
+}
+
+function registerConnectionFailureTests(): void {
   it('surfaces incompatible only for authenticated disjoint ranges and never replaces it', async () => {
     const environment = new FakeRuntimeEnvironment();
     environment.running = true;
@@ -124,7 +248,9 @@ describe('Runtime Interface', () => {
     });
     expect(environment.launchCount).toBe(1);
   });
+}
 
+function registerShutdownTests(): void {
   it('performs privileged shutdown idempotently without autostart', async () => {
     const environment = new FakeRuntimeEnvironment();
     environment.running = true;
@@ -145,6 +271,30 @@ describe('Runtime Interface', () => {
     expect(environment.launchCount).toBe(0);
   });
 
+  it('bounds shutdown while the Runtime endpoint remains live', async () => {
+    const environment = new FakeRuntimeEnvironment();
+    environment.running = true;
+    environment.shutdownLeavesRunning = true;
+    const runtime = connector(environment, { connectDeadlineMs: 50 });
+    await runtime.connectOrStart();
+
+    await expect(
+      runtime.shutdown({
+        idempotencyKey: 'shutdown-stalled',
+        expectedInstanceId: environment.health.instanceId,
+        reason: 'test',
+      }),
+    ).resolves.toEqual({
+      state: 'unavailable',
+      reason: 'health-timeout',
+      retryable: true,
+    });
+    expect(environment.shutdownCount).toBe(1);
+    expect(environment.running).toBe(true);
+  });
+}
+
+function registerBoundarySecurityTest(): void {
   it('keeps tokens and launch paths out of statuses, errors, and process requests', async () => {
     const environment = new FakeRuntimeEnvironment();
     environment.running = true;
@@ -157,7 +307,7 @@ describe('Runtime Interface', () => {
     expect(JSON.stringify(state)).not.toContain(environment.endpoint.address);
     expect(JSON.stringify(environment.launchRequests)).not.toContain(secret);
   });
-});
+}
 
 function connector(
   environment: FakeRuntimeEnvironment,
@@ -187,4 +337,17 @@ async function eventually(predicate: () => boolean): Promise<void> {
     await Promise.resolve();
   }
   throw new Error('condition was not met');
+}
+
+function controlledDelays() {
+  const resolvers: Array<() => void> = [];
+  return {
+    wait: () => new Promise<void>((resolve) => resolvers.push(resolve)),
+    pending: () => resolvers.length,
+    releaseNext: () => resolvers.shift()?.(),
+  };
+}
+
+async function flushMicrotasks(): Promise<void> {
+  for (let attempt = 0; attempt < 5; attempt += 1) await Promise.resolve();
 }

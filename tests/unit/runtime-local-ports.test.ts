@@ -15,6 +15,8 @@ describe('local Runtime ports', () => {
   it('derives stable per-user Unix sockets and Windows named pipes', derivesStableEndpoints);
   it('does not steal a live startup lease after its startup deadline', preservesLiveLease);
   it('recovers a startup lease after its owner crashes', recoversCrashedLease);
+  it('recovers a stale startup lease after its PID is reused', recoversReusedPidLease);
+  it('unrefs and clears the lease heartbeat timer on release', cleansHeartbeatTimer);
 });
 
 async function createsProtectedToken(): Promise<void> {
@@ -76,40 +78,101 @@ function derivesStableEndpoints(): void {
 
 async function preservesLiveLease(): Promise<void> {
   const root = temporaryRoot('hariari-runtime-lease-');
-  const liveProcesses = new Set([101, 202]);
-  const owner = leasePort(root, 101, liveProcesses);
-  const contender = leasePort(root, 202, liveProcesses);
-  const first = await owner.acquire(Date.now() - 1);
+  let now = Date.now();
+  let pulseHeartbeat = (): void => undefined;
+  const owner = new FileRuntimeStartupLeasePort(root, {
+    processId: 101,
+    randomId: () => 'lease-live-owner',
+    now: () => now,
+    heartbeatIntervalMs: 1_000,
+    staleAfterMs: 5_000,
+    setHeartbeatInterval: (callback) => {
+      pulseHeartbeat = callback;
+      return setInterval(() => undefined, 2_147_483_647);
+    },
+  });
+  const contender = leasePort(root, 202, 'lease-live-contender', () => now);
+  const first = await owner.acquire(now - 1);
   expect(first).not.toBeNull();
-  await expect(contender.acquire(Date.now() - 1)).resolves.toBeNull();
+
+  now += 5_001;
+  pulseHeartbeat();
+  await waitForHeartbeat(root, now);
+  now += 4_999;
+  await expect(contender.acquire(now - 1)).resolves.toBeNull();
   await first?.release();
 }
 
 async function recoversCrashedLease(): Promise<void> {
   const root = temporaryRoot('hariari-runtime-stale-lease-');
-  const liveProcesses = new Set([101, 202, 303]);
-  const owner = leasePort(root, 101, liveProcesses);
-  const successor = leasePort(root, 202, liveProcesses);
-  const abandonedLease = await owner.acquire(Date.now() + 1_000);
-  liveProcesses.delete(101);
-  const recoveredLease = await successor.acquire(Date.now() + 1_000);
+  let now = Date.now();
+  const owner = leasePort(root, 101, 'lease-crashed', () => now);
+  const successor = leasePort(root, 202, 'lease-successor', () => now);
+  const abandonedLease = await owner.acquire(now + 1_000);
+  now += 5_001;
+  const recoveredLease = await successor.acquire(now + 1_000);
   expect(recoveredLease).not.toBeNull();
   await abandonedLease?.release();
   await expect(
-    leasePort(root, 303, liveProcesses).acquire(Date.now() + 1_000),
+    leasePort(root, 303, 'lease-third-owner', () => now).acquire(now + 1_000),
   ).resolves.toBeNull();
   await recoveredLease?.release();
+}
+
+async function recoversReusedPidLease(): Promise<void> {
+  const root = temporaryRoot('hariari-runtime-reused-pid-');
+  let now = Date.now();
+  const abandonedOwner = leasePort(root, process.pid, 'lease-before-pid-reuse', () => now);
+  const abandonedLease = await abandonedOwner.acquire(now + 1_000);
+
+  now += 5_001;
+  const reusedProcess = leasePort(root, process.pid, 'lease-after-pid-reuse', () => now);
+  const recoveredLease = await reusedProcess.acquire(now + 1_000);
+
+  expect(recoveredLease).not.toBeNull();
+  await abandonedLease?.release();
+  await expect(reusedProcess.acquire(now + 1_000)).resolves.toBeNull();
+  await recoveredLease?.release();
+}
+
+async function cleansHeartbeatTimer(): Promise<void> {
+  const root = temporaryRoot('hariari-runtime-lease-timer-');
+  let timer: NodeJS.Timeout | null = null;
+  let clearCount = 0;
+  const port = new FileRuntimeStartupLeasePort(root, {
+    randomId: () => 'lease-with-clean-timer',
+    setHeartbeatInterval: () => {
+      timer = setInterval(() => undefined, 2_147_483_647);
+      return timer;
+    },
+    clearHeartbeatInterval: (activeTimer) => {
+      clearCount += 1;
+      clearInterval(activeTimer);
+    },
+  });
+
+  const lease = await port.acquire(Date.now() + 1_000);
+  const activeTimer = timer as NodeJS.Timeout | null;
+  expect(activeTimer?.hasRef()).toBe(false);
+  await lease?.release();
+  await lease?.release();
+
+  expect(clearCount).toBe(1);
 }
 
 function leasePort(
   directory: string,
   processId: number,
-  liveProcesses: ReadonlySet<number>,
+  leaseId: string,
+  now: () => number,
 ): FileRuntimeStartupLeasePort {
   return new FileRuntimeStartupLeasePort(directory, {
     processId,
-    randomId: () => `lease-${processId}`,
-    isProcessAlive: (candidate) => liveProcesses.has(candidate),
+    randomId: () => leaseId,
+    now,
+    heartbeatIntervalMs: 1_000,
+    staleAfterMs: 5_000,
+    setHeartbeatInterval: () => setInterval(() => undefined, 2_147_483_647),
   });
 }
 
@@ -117,6 +180,15 @@ function temporaryRoot(prefix: string): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   directories.push(root);
   return root;
+}
+
+async function waitForHeartbeat(directory: string, expectedTime: number): Promise<void> {
+  const heartbeatPath = path.join(directory, 'startup.lock', 'heartbeat.json');
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (fs.statSync(heartbeatPath).mtimeMs >= expectedTime - 1) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error('heartbeat did not advance');
 }
 
 function cleanDirectories(): void {

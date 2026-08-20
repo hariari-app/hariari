@@ -99,6 +99,7 @@ export class FakeRuntimeEnvironment {
   launchCount = 0;
   connectCount = 0;
   shutdownCount = 0;
+  shutdownLeavesRunning = false;
   nowMs = Date.parse('2026-08-20T10:00:01.000Z');
   private leaseHeld = false;
   private readonly sessions = new Set<FakeRuntimeSession>();
@@ -173,7 +174,7 @@ class FakeRuntimeSession implements RuntimeClientSession {
     };
     this.environment.shutdownResults.set(request.idempotencyKey, result);
     this.environment.shutdownCount += 1;
-    this.environment.running = false;
+    if (!this.environment.shutdownLeavesRunning) this.environment.running = false;
     return result;
   }
 

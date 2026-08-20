@@ -8,7 +8,16 @@ import type {
 import { IPC_CHANNELS } from '../../src/shared/constants';
 import { registerRuntimeIpc } from '../../src/main/ipc/runtime-ipc';
 
-describe('Desktop Runtime IPC', () => {
+describe('Desktop Runtime IPC', registerRuntimeIpcTests);
+
+function registerRuntimeIpcTests(): void {
+  registerInitialStatusTest();
+  registerStatusPublicationTest();
+  registerStatusReplayTest();
+  registerRegistrationLifecycleTests();
+}
+
+function registerInitialStatusTest(): void {
   it('returns the initial sanitized Runtime status through the public get-status handler', async () => {
     const runtime = new FakeRuntime({
       state: 'connected',
@@ -38,7 +47,9 @@ describe('Desktop Runtime IPC', () => {
 
     registration.dispose();
   });
+}
 
+function registerStatusPublicationTest(): void {
   it('pushes sanitized status changes to the live window publisher', () => {
     const runtime = new FakeRuntime({
       state: 'unavailable',
@@ -67,7 +78,9 @@ describe('Desktop Runtime IPC', () => {
     expect(JSON.stringify(publishStatus.mock.calls)).not.toContain('/private');
     registration.dispose();
   });
+}
 
+function registerStatusReplayTest(): void {
   it('replays the latest status to a recreated window without reconnecting Runtime', () => {
     const runtime = new FakeRuntime({
       state: 'connected',
@@ -82,11 +95,7 @@ describe('Desktop Runtime IPC', () => {
       },
     });
     const publishStatus = vi.fn();
-    const registration = registerRuntimeIpc(
-      runtime,
-      new FakeIpcRegistry(),
-      publishStatus,
-    );
+    const registration = registerRuntimeIpc(runtime, new FakeIpcRegistry(), publishStatus);
     publishStatus.mockClear();
 
     registration.publishLatest();
@@ -99,7 +108,9 @@ describe('Desktop Runtime IPC', () => {
     expect(runtime.connectCalls).toBe(0);
     registration.dispose();
   });
+}
 
+function registerRegistrationLifecycleTests(): void {
   it('cleans up subscriptions and handlers and makes disposal idempotent', async () => {
     const runtime = new FakeRuntime({
       state: 'unavailable',
@@ -113,9 +124,7 @@ describe('Desktop Runtime IPC', () => {
     registration.dispose();
 
     expect(runtime.unsubscribeCalls).toBe(1);
-    await expect(ipc.invoke(IPC_CHANNELS.RUNTIME_GET_STATUS)).rejects.toThrow(
-      'missing handler',
-    );
+    await expect(ipc.invoke(IPC_CHANNELS.RUNTIME_GET_STATUS)).rejects.toThrow('missing handler');
   });
 
   it('replaces duplicate registration without leaking listeners or adding privileged handlers', () => {
@@ -139,13 +148,14 @@ describe('Desktop Runtime IPC', () => {
     expect(ipc.channels()).toEqual([IPC_CHANNELS.RUNTIME_GET_STATUS]);
     expect(first.connectCalls).toBe(0);
     expect(second.connectCalls).toBe(0);
-    expect(ipc.channels().some((channel) => /shutdown|process|token|endpoint|path/.test(channel)))
-      .toBe(false);
+    expect(
+      ipc.channels().some((channel) => /shutdown|process|token|endpoint|path/.test(channel)),
+    ).toBe(false);
 
     firstRegistration.dispose();
     secondRegistration.dispose();
   });
-});
+}
 
 class FakeIpcRegistry {
   private readonly handlers = new Map<string, () => unknown>();

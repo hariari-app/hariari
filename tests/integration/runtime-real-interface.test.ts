@@ -12,7 +12,12 @@ import type {
   RuntimeProcessPort,
 } from '../../src/main/runtime/runtime-ports';
 import type { RuntimeInterface } from '../../src/shared/runtime/runtime-interface';
-import { NodeLocalRuntimeTransport } from '../../src/runtime/local-transport';
+import {
+  NodeLocalRuntimeTransport,
+  type RuntimeFrameConnection,
+  type RuntimeLocalEndpoint,
+  type RuntimeTransportListener,
+} from '../../src/runtime/local-transport';
 import { RuntimeServer } from '../../src/runtime/runtime-server';
 import { ProtectedRuntimeTokenStore } from '../../src/runtime/token-store';
 
@@ -25,7 +30,38 @@ describe('real local Runtime Interface vertical', () => {
     'starts, reconnects, queries health, disconnects, and shuts down through the public seam',
     verifiesRealRuntimeLifecycle,
   );
+  it('waits for endpoint termination before public shutdown reports stopped', verifiesShutdown);
 });
+
+async function verifiesShutdown(): Promise<void> {
+  const fixture = await createRealRuntimeFixture({ gateShutdown: true });
+  const runtime = fixture.createInterface();
+  const connected = await runtime.connectOrStart();
+  if (connected.state !== 'connected') throw new Error('expected connected Runtime');
+  let settled = false;
+  const shutdown = runtime
+    .shutdown({
+      idempotencyKey: 'termination-shutdown',
+      expectedInstanceId: connected.health.instanceId,
+      reason: 'test',
+    })
+    .then((result) => {
+      settled = true;
+      return result;
+    });
+
+  await fixture.transport.closeRequested;
+  const settledBeforeEndpointRelease = settled;
+  fixture.transport.releaseClose();
+  expect(settledBeforeEndpointRelease).toBe(false);
+  await expect(shutdown).resolves.toEqual({
+    state: 'stopped',
+    instanceId: connected.health.instanceId,
+  });
+  await expect(fixture.transport.connect(fixture.endpoint, 50)).rejects.toMatchObject({
+    code: 'endpoint-unavailable',
+  });
+}
 
 async function verifiesRealRuntimeLifecycle(): Promise<void> {
   const fixture = await createRealRuntimeFixture();
@@ -71,9 +107,17 @@ async function shutdownConnectedRuntime(
 interface RealRuntimeFixture {
   readonly launches: { value: number };
   readonly createInterface: () => RuntimeInterface;
+  readonly endpoint: RuntimeEndpoint;
+  readonly transport: GatedCloseTransport;
 }
 
-async function createRealRuntimeFixture(): Promise<RealRuntimeFixture> {
+interface RealRuntimeFixtureOptions {
+  readonly gateShutdown?: boolean;
+}
+
+async function createRealRuntimeFixture(
+  options: RealRuntimeFixtureOptions = {},
+): Promise<RealRuntimeFixture> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hariari-runtime-vertical-'));
   directories.push(root);
   const runtimeDirectory = path.join(root, 'state');
@@ -85,7 +129,7 @@ async function createRealRuntimeFixture(): Promise<RealRuntimeFixture> {
     userId: 'test-user',
   });
   const endpoint = await endpoints.resolve();
-  const transport = new NodeLocalRuntimeTransport();
+  const transport = new GatedCloseTransport(options.gateShutdown ?? false);
   let id = 0;
   const randomId = (): string => `vertical-${++id}`;
   const launches = { value: 0 };
@@ -109,7 +153,7 @@ async function createRealRuntimeFixture(): Promise<RealRuntimeFixture> {
       now: Date.now,
       delay: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
     });
-  return { launches, createInterface };
+  return { launches, createInterface, endpoint, transport };
 }
 
 interface ProcessFixtureOptions {
@@ -152,5 +196,41 @@ async function cleanRuntimeFixtures(): Promise<void> {
   await Promise.all(servers.splice(0).map((server) => server.stop()));
   for (const directory of directories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+class GatedCloseTransport extends NodeLocalRuntimeTransport {
+  readonly closeRequested: Promise<void>;
+  private resolveCloseRequested: () => void = () => undefined;
+  private allowClose: () => void = () => undefined;
+  private readonly closeAllowed: Promise<void>;
+
+  constructor(private readonly gated: boolean) {
+    super();
+    this.closeRequested = new Promise((resolve) => {
+      this.resolveCloseRequested = resolve;
+    });
+    this.closeAllowed = new Promise((resolve) => {
+      this.allowClose = resolve;
+    });
+  }
+
+  override async listen(
+    endpoint: RuntimeLocalEndpoint,
+    onConnection: (connection: RuntimeFrameConnection) => Promise<void>,
+  ): Promise<RuntimeTransportListener> {
+    const listener = await super.listen(endpoint, onConnection);
+    if (!this.gated) return listener;
+    return {
+      close: async () => {
+        this.resolveCloseRequested();
+        await this.closeAllowed;
+        await listener.close();
+      },
+    };
+  }
+
+  releaseClose(): void {
+    this.allowClose();
   }
 }

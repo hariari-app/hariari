@@ -14,14 +14,21 @@ const { refreshRuntimeManifest } = require('../../scripts/runtime-after-pack.js'
 const PLATFORM = 'linux' as const;
 const ARCH = 'x64';
 const EXECUTABLE_NAME = 'hariari-runtime';
+const roots: string[] = [];
 
-describe('packaged Runtime artifact', () => {
-  const roots: string[] = [];
+describe('packaged Runtime artifact', registerPackagedArtifactTests);
 
-  afterEach(() => {
-    for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
-  });
+function registerPackagedArtifactTests(): void {
+  afterEach(cleanRoots);
+  registerArtifactResolutionTest();
+  registerInvalidArtifactTests();
+  registerTraversalTest();
+  registerSignedArtifactTest();
+  registerMaterializationSymlinkTest();
+  registerConcurrentMaterializationTest();
+}
 
+function registerArtifactResolutionTest(): void {
   it('resolves only the manifest-bound artifact below process.resourcesPath', async () => {
     const fixture = createFixture('resources with spaces-ö');
     const port = createPort(fixture);
@@ -35,57 +42,24 @@ describe('packaged Runtime artifact', () => {
     expect(fs.readFileSync(artifact.executablePath, 'utf8')).toBe('standalone-runtime');
     expect(fs.statSync(artifact.executablePath).mode & 0o111).not.toBe(0);
   });
+}
 
-  it.each([
-    ['missing manifest', (fixture: Fixture) => fs.unlinkSync(fixture.manifestPath)],
-    [
-      'tampered manifest',
-      (fixture: Fixture) => {
-        const manifest = JSON.parse(fs.readFileSync(fixture.manifestPath, 'utf8')) as Record<
-          string,
-          unknown
-        >;
-        manifest.sha256 = '0'.repeat(64);
-        fs.writeFileSync(fixture.manifestPath, `${JSON.stringify(manifest)}\n`);
-      },
-    ],
-    [
-      'manifest without protocol metadata',
-      (fixture: Fixture) => {
-        const manifest = JSON.parse(fs.readFileSync(fixture.manifestPath, 'utf8')) as Record<
-          string,
-          unknown
-        >;
-        delete manifest.protocolRange;
-        fs.writeFileSync(fixture.manifestPath, `${JSON.stringify(manifest)}\n`);
-      },
-    ],
-    [
-      'manifest for another Runtime version',
-      (fixture: Fixture) => {
-        const manifest = JSON.parse(fs.readFileSync(fixture.manifestPath, 'utf8')) as Record<
-          string,
-          unknown
-        >;
-        manifest.runtimeVersion = '0.6.7';
-        fs.writeFileSync(fixture.manifestPath, `${JSON.stringify(manifest)}\n`);
-      },
-    ],
-    ['missing artifact', (fixture: Fixture) => fs.unlinkSync(fixture.artifactPath)],
-    [
-      'tampered artifact',
-      (fixture: Fixture) => fs.appendFileSync(fixture.artifactPath, '-tampered'),
-    ],
-  ])('rejects a %s without falling back to PATH', async (_name, mutate) => {
-    const fixture = createFixture('invalid-package');
-    mutate(fixture);
+function registerInvalidArtifactTests(): void {
+  it.each(INVALID_ARTIFACT_CASES)(
+    'rejects a %s without falling back to PATH',
+    async (_name, mutate) => {
+      const fixture = createFixture('invalid-package');
+      mutate(fixture);
 
-    await expect(createPort(fixture).resolve()).rejects.toMatchObject({
-      code: 'artifact-unavailable',
-    });
-    expect(fs.existsSync(path.join(fixture.runtimeDirectory, 'bin'))).toBe(false);
-  });
+      await expect(createPort(fixture).resolve()).rejects.toMatchObject({
+        code: 'artifact-unavailable',
+      });
+      expect(fs.existsSync(path.join(fixture.runtimeDirectory, 'bin'))).toBe(false);
+    },
+  );
+}
 
+function registerTraversalTest(): void {
   it('rejects manifest traversal outside the platform resource root', async () => {
     const fixture = createFixture('traversal');
     const manifest = JSON.parse(fs.readFileSync(fixture.manifestPath, 'utf8')) as Record<
@@ -99,7 +73,9 @@ describe('packaged Runtime artifact', () => {
       code: 'artifact-unavailable',
     });
   });
+}
 
+function registerSignedArtifactTest(): void {
   it('accepts the final signed bytes after the package hook refreshes the manifest', async () => {
     const fixture = createFixture('signed-package');
     fs.appendFileSync(fixture.artifactPath, '-platform-signature');
@@ -109,7 +85,9 @@ describe('packaged Runtime artifact', () => {
       buildId: 'build-19',
     });
   });
+}
 
+function registerMaterializationSymlinkTest(): void {
   it('rejects a materialization symlink outside the per-user Runtime root', async () => {
     if (process.platform === 'win32') return;
     const fixture = createFixture('materialization-traversal');
@@ -123,7 +101,9 @@ describe('packaged Runtime artifact', () => {
     });
     expect(fs.readdirSync(outside)).toEqual([]);
   });
+}
 
+function registerConcurrentMaterializationTest(): void {
   it('atomically converges concurrent materialization without partial files', async () => {
     const fixture = createFixture('concurrent-日本語');
     const ports = Array.from({ length: 8 }, () => createPort(fixture));
@@ -135,42 +115,84 @@ describe('packaged Runtime artifact', () => {
     expect(fs.readdirSync(destinationDirectory)).toEqual([EXECUTABLE_NAME]);
     expect(fs.readFileSync(artifacts[0].executablePath, 'utf8')).toBe('standalone-runtime');
   });
+}
 
-  function createFixture(label: string): Fixture {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), `hariari-${label}-`));
-    roots.push(root);
-    const resourcesPath = path.join(root, 'packaged resources');
-    const runtimeDirectory = path.join(root, 'home 用户', '.hariari', 'runtime');
-    const platformDirectory = path.join(resourcesPath, 'runtime', `${PLATFORM}-${ARCH}`);
-    fs.mkdirSync(platformDirectory, { recursive: true });
-    const artifactPath = path.join(platformDirectory, EXECUTABLE_NAME);
-    fs.writeFileSync(artifactPath, 'standalone-runtime', { mode: 0o755 });
-    const bytes = fs.readFileSync(artifactPath);
-    const manifestPath = path.join(platformDirectory, 'runtime-manifest.json');
-    fs.writeFileSync(
-      manifestPath,
-      `${JSON.stringify({
-        schemaVersion: 1,
-        runtimeVersion: '0.6.8',
-        buildId: 'build-19',
-        platform: PLATFORM,
-        arch: ARCH,
-        executable: EXECUTABLE_NAME,
-        nodeVersion: process.versions.node,
-        protocolRange: { min: 1, max: 1 },
-        sha256: createHash('sha256').update(bytes).digest('hex'),
-        size: bytes.length,
-      })}\n`,
-    );
-    return { resourcesPath, runtimeDirectory, manifestPath, artifactPath };
-  }
-});
+function createFixture(label: string): Fixture {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `hariari-${label}-`));
+  roots.push(root);
+  const resourcesPath = path.join(root, 'packaged resources');
+  const runtimeDirectory = path.join(root, 'home 用户', '.hariari', 'runtime');
+  const platformDirectory = path.join(resourcesPath, 'runtime', `${PLATFORM}-${ARCH}`);
+  fs.mkdirSync(platformDirectory, { recursive: true });
+  const artifactPath = path.join(platformDirectory, EXECUTABLE_NAME);
+  fs.writeFileSync(artifactPath, 'standalone-runtime', { mode: 0o755 });
+  const bytes = fs.readFileSync(artifactPath);
+  const manifestPath = path.join(platformDirectory, 'runtime-manifest.json');
+  fs.writeFileSync(
+    manifestPath,
+    `${JSON.stringify({
+      schemaVersion: 1,
+      runtimeVersion: '0.6.8',
+      buildId: 'build-19',
+      platform: PLATFORM,
+      arch: ARCH,
+      executable: EXECUTABLE_NAME,
+      nodeVersion: process.versions.node,
+      protocolRange: { min: 1, max: 1 },
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      size: bytes.length,
+    })}\n`,
+  );
+  return { resourcesPath, runtimeDirectory, manifestPath, artifactPath };
+}
 
 interface Fixture {
   readonly resourcesPath: string;
   readonly runtimeDirectory: string;
   readonly manifestPath: string;
   readonly artifactPath: string;
+}
+
+const INVALID_ARTIFACT_CASES: ReadonlyArray<readonly [string, (fixture: Fixture) => void]> = [
+  ['missing manifest', (fixture) => fs.unlinkSync(fixture.manifestPath)],
+  [
+    'tampered manifest',
+    (fixture) => {
+      const manifest = readManifest(fixture);
+      manifest.sha256 = '0'.repeat(64);
+      writeManifest(fixture, manifest);
+    },
+  ],
+  [
+    'manifest without protocol metadata',
+    (fixture) => {
+      const manifest = readManifest(fixture);
+      delete manifest.protocolRange;
+      writeManifest(fixture, manifest);
+    },
+  ],
+  [
+    'manifest for another Runtime version',
+    (fixture) => {
+      const manifest = readManifest(fixture);
+      manifest.runtimeVersion = '0.6.7';
+      writeManifest(fixture, manifest);
+    },
+  ],
+  ['missing artifact', (fixture) => fs.unlinkSync(fixture.artifactPath)],
+  ['tampered artifact', (fixture) => fs.appendFileSync(fixture.artifactPath, '-tampered')],
+];
+
+function readManifest(fixture: Fixture): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(fixture.manifestPath, 'utf8')) as Record<string, unknown>;
+}
+
+function writeManifest(fixture: Fixture, manifest: Record<string, unknown>): void {
+  fs.writeFileSync(fixture.manifestPath, `${JSON.stringify(manifest)}\n`);
+}
+
+function cleanRoots(): void {
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 }
 
 function createPort(fixture: Fixture): PackagedRuntimeArtifactPort {

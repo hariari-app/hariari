@@ -5,7 +5,18 @@ import {
 } from '../../src/renderer/src/runtime-health';
 import type { RuntimeRendererStatus } from '../../src/shared/ipc-types';
 
-describe('Runtime health renderer model', () => {
+describe('Runtime health renderer model', registerRuntimeRendererTests);
+
+function registerRuntimeRendererTests(): void {
+  registerConnectedViewTest();
+  registerRetryableUnavailableViewTest();
+  registerNonRetryableUnavailableViewTest();
+  registerIncompatibleViewTest();
+  registerMountLifecycleTest();
+  registerLiveStatusTest();
+}
+
+function registerConnectedViewTest(): void {
   it('shows connected health with safe version and protocol context', () => {
     expect(
       createRuntimeHealthViewModel({
@@ -20,7 +31,9 @@ describe('Runtime health renderer model', () => {
       announcement: 'Runtime connected. Version 0.6.8, protocol 2.',
     });
   });
+}
 
+function registerRetryableUnavailableViewTest(): void {
   it('explains unavailable health without offering process-start authority', () => {
     expect(
       createRuntimeHealthViewModel({
@@ -35,7 +48,9 @@ describe('Runtime health renderer model', () => {
       announcement: 'Runtime unavailable. Desktop could not reach the Runtime.',
     });
   });
+}
 
+function registerNonRetryableUnavailableViewTest(): void {
   it('does not offer Retry for a non-retryable unavailable state', () => {
     expect(
       createRuntimeHealthViewModel({
@@ -50,7 +65,9 @@ describe('Runtime health renderer model', () => {
       announcement: 'Runtime unavailable. Runtime authentication was rejected.',
     });
   });
+}
 
+function registerIncompatibleViewTest(): void {
   it('shows incompatible health with safe version ranges and update context', () => {
     expect(
       createRuntimeHealthViewModel({
@@ -67,7 +84,9 @@ describe('Runtime health renderer model', () => {
         'Runtime incompatible. Runtime version 1.4.0 supports protocols 5 to 7; Desktop supports protocols 1 to 2.',
     });
   });
+}
 
+function registerMountLifecycleTest(): void {
   it('subscribes before the initial query and cleans up the listener and DOM', async () => {
     const documentRef = new FakeDocument();
     const container = documentRef.createElement('div');
@@ -99,7 +118,9 @@ describe('Runtime health renderer model', () => {
     expect(runtime.unsubscribe).toHaveBeenCalledOnce();
     expect(container.children).toHaveLength(0);
   });
+}
 
+function registerLiveStatusTest(): void {
   it('renders live status pushes without querying or controlling a Runtime process', async () => {
     const documentRef = new FakeDocument();
     const container = documentRef.createElement('div');
@@ -131,7 +152,7 @@ describe('Runtime health renderer model', () => {
     expect(runtime.callOrder).toEqual(['onStatus', 'getStatus']);
     dispose();
   });
-});
+}
 
 class FakeRuntimeApi {
   readonly callOrder: string[] = [];

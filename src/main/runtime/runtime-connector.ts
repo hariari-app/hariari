@@ -56,15 +56,20 @@ class RuntimeConnector implements RuntimeInterface {
   private session: RuntimeClientSession | null = null;
   private removeDisconnectListener: (() => void) | null = null;
   private connectInFlight: Promise<RuntimeConnectionState> | null = null;
+  private reconnectInFlight: Promise<void> | null = null;
   private manualDisconnect = false;
   private suppressReconnect = false;
 
   constructor(private readonly dependencies: RuntimeConnectorDependencies) {}
 
   connectOrStart(): Promise<RuntimeConnectionState> {
-    if (this.connectInFlight) return this.connectInFlight;
     this.manualDisconnect = false;
     this.suppressReconnect = false;
+    return this.startConnectAttempt();
+  }
+
+  private startConnectAttempt(): Promise<RuntimeConnectionState> {
+    if (this.connectInFlight) return this.connectInFlight;
     const attempt = this.performConnectOrStart()
       .catch(() => this.publishUnavailable('connection-failed', true))
       .finally(() => {
@@ -232,13 +237,25 @@ class RuntimeConnector implements RuntimeInterface {
   }
 
   private scheduleReconnect(): void {
-    const delay = this.dependencies.reconnectDelayMs ?? 100;
-    void this.dependencies
-      .delay(delay)
-      .then(() => {
-        if (!this.manualDisconnect && !this.suppressReconnect) void this.connectOrStart();
-      })
-      .catch(() => undefined);
+    if (this.reconnectInFlight || this.manualDisconnect || this.suppressReconnect) return;
+    const reconnect = this.runReconnectLoop().finally(() => {
+      if (this.reconnectInFlight === reconnect) this.reconnectInFlight = null;
+    });
+    this.reconnectInFlight = reconnect;
+  }
+
+  private async runReconnectLoop(): Promise<void> {
+    while (!this.manualDisconnect && !this.suppressReconnect) {
+      try {
+        await this.dependencies.delay(this.dependencies.reconnectDelayMs ?? 100);
+      } catch {
+        return;
+      }
+      if (this.manualDisconnect || this.suppressReconnect) return;
+      const state = await this.startConnectAttempt();
+      if (state.state === 'connected' || state.state === 'incompatible') return;
+      if (!state.retryable) return;
+    }
   }
 
   private handleSessionFailure(
@@ -278,6 +295,9 @@ class RuntimeConnector implements RuntimeInterface {
     try {
       const result = await session.shutdown(request, this.dependencies.connectDeadlineMs);
       await this.releaseSession();
+      if (result.state === 'stopped' && !(await this.waitForRuntimeTermination())) {
+        return this.publishUnavailable('health-timeout', true);
+      }
       if (result.state === 'stopped' || result.state === 'not-running') {
         this.publishUnavailable('runtime-stopped', false);
       }
@@ -286,6 +306,42 @@ class RuntimeConnector implements RuntimeInterface {
       return this.publishPortError(
         error instanceof RuntimePortError ? error : new RuntimePortError('connection-failed'),
       );
+    }
+  }
+
+  private async waitForRuntimeTermination(): Promise<boolean> {
+    const endpoint = await this.dependencies.endpoints.resolve();
+    const deadlineAt = this.dependencies.now() + this.dependencies.connectDeadlineMs;
+    let token: Uint8Array | null = null;
+    try {
+      token = await this.dependencies.tokens.read();
+    } catch {
+      // A transport probe still distinguishes a released endpoint without credentials.
+    }
+    do {
+      const remaining = Math.max(1, deadlineAt - this.dependencies.now());
+      if (await this.endpointIsUnavailable(endpoint, token, remaining)) return true;
+      if (this.dependencies.now() >= deadlineAt) return false;
+      await this.dependencies.delay(Math.min(25, remaining));
+    } while (this.dependencies.now() < deadlineAt);
+    return this.endpointIsUnavailable(endpoint, token, 1);
+  }
+
+  private async endpointIsUnavailable(
+    endpoint: RuntimeEndpoint,
+    token: Uint8Array | null,
+    deadlineMs: number,
+  ): Promise<boolean> {
+    try {
+      const connection = await this.dependencies.clients.connect(endpoint, token, {
+        clientIdentity: this.dependencies.clientIdentity,
+        supportedProtocolRange: this.dependencies.supportedProtocolRange,
+        deadlineMs,
+      });
+      if (connection.kind === 'connected') await connection.session.disconnect();
+      return false;
+    } catch (error) {
+      return error instanceof RuntimePortError && error.code === 'endpoint-unavailable';
     }
   }
 
