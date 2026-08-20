@@ -14,3 +14,7 @@ agent-os/
 .gstack/
 todo.md
 .hariari-worktrees/
+/AGENTS.md
+/.agents/
+/.claude/
+/skills-lock.json
