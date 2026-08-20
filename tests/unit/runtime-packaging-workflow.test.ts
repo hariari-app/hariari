@@ -15,4 +15,19 @@ describe('Runtime native release workflow', () => {
     expect(workflow).toContain('mv dist/latest-linux.yml dist/latest-linux-x64.yml');
     expect(workflow).toContain('test -f dist/latest-linux-arm64.yml');
   });
+
+  it('launches packaged Desktop executables on each native CI platform', () => {
+    const ci = fs.readFileSync(path.resolve('.github/workflows/ci.yml'), 'utf8');
+    const release = fs.readFileSync(path.resolve('.github/workflows/build-release.yml'), 'utf8');
+    const smoke = fs.readFileSync(path.resolve('scripts/runtime-package-smoke.mjs'), 'utf8');
+
+    expect(ci).toContain('xvfb-run -a npm run runtime:package-smoke -- --dist dist');
+    expect(release).toContain(
+      'xvfb-run -a npm run runtime:package-smoke -- --dist dist/linux-unpacked',
+    );
+    expect(release).toContain('Verify macOS DMG and ZIP application launch');
+    expect(release).toContain('Verify installed Windows application launch');
+    expect(smoke).toContain('HARIARI_RUNTIME_PACKAGE_SMOKE_OK');
+    expect(smoke).toContain('spawnSync(desktopExecutable');
+  });
 });

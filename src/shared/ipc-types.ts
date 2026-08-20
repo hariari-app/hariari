@@ -278,7 +278,6 @@ export interface HariariApi {
   };
   runtime: {
     getStatus(): Promise<RuntimeRendererStatus>;
-    retry(): Promise<RuntimeRendererStatus>;
     onStatus(callback: (status: RuntimeRendererStatus) => void): () => void;
   };
   shell: {

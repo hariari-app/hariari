@@ -47,7 +47,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify unpacked Runtime lifecycle
-        run: npm run runtime:package-smoke -- --dist dist/linux-unpacked
+        run: xvfb-run -a npm run runtime:package-smoke -- --dist dist/linux-unpacked
       - name: Verify AppImage, deb, and rpm Runtime layouts
         shell: bash
         run: |
@@ -61,9 +61,9 @@ jobs:
           (cd "$RUNNER_TEMP/runtime-appimage" && "$GITHUB_WORKSPACE/$APPIMAGE" --appimage-extract >/dev/null)
           dpkg-deb -x "$DEB" "$RUNNER_TEMP/runtime-deb"
           (cd "$RUNNER_TEMP/runtime-rpm" && rpm2cpio "$GITHUB_WORKSPACE/$RPM" | cpio -idmu)
-          npm run runtime:package-smoke -- --dist "$RUNNER_TEMP/runtime-appimage/squashfs-root"
-          npm run runtime:package-smoke -- --dist "$RUNNER_TEMP/runtime-deb"
-          npm run runtime:package-smoke -- --dist "$RUNNER_TEMP/runtime-rpm"
+          xvfb-run -a npm run runtime:package-smoke -- --dist "$RUNNER_TEMP/runtime-appimage/squashfs-root"
+          xvfb-run -a npm run runtime:package-smoke -- --dist "$RUNNER_TEMP/runtime-deb"
+          xvfb-run -a npm run runtime:package-smoke -- --dist "$RUNNER_TEMP/runtime-rpm"
       - name: Preserve architecture-specific update metadata
         shell: bash
         run: |
@@ -166,6 +166,21 @@ jobs:
           codesign --display --entitlements :- "$RUNTIME"
       - name: Verify packaged Runtime lifecycle
         run: npm run runtime:package-smoke -- --dist dist
+      - name: Verify macOS DMG and ZIP application launch
+        shell: bash
+        run: |
+          set -euo pipefail
+          DMG=$(find dist -maxdepth 1 -name '*.dmg' -print -quit)
+          ZIP=$(find dist -maxdepth 1 -name '*.zip' -print -quit)
+          test -n "$DMG" && test -n "$ZIP"
+          mkdir -p "$RUNNER_TEMP/hariari-dmg" "$RUNNER_TEMP/hariari-zip"
+          hdiutil attach "$DMG" -readonly -nobrowse -mountpoint "$RUNNER_TEMP/hariari-dmg"
+          trap 'hdiutil detach "$RUNNER_TEMP/hariari-dmg"' EXIT
+          npm run runtime:package-smoke -- --dist "$RUNNER_TEMP/hariari-dmg"
+          ditto -x -k "$ZIP" "$RUNNER_TEMP/hariari-zip"
+          npm run runtime:package-smoke -- --dist "$RUNNER_TEMP/hariari-zip"
+          hdiutil detach "$RUNNER_TEMP/hariari-dmg"
+          trap - EXIT
       - name: Preserve architecture-specific update metadata
         run: mv dist/latest-mac.yml dist/latest-mac-${{ matrix.arch }}.yml
 
@@ -238,6 +253,24 @@ jobs:
           $signature | Format-List Status,StatusMessage,SignerCertificate
       - name: Verify packaged Runtime lifecycle
         run: npm run runtime:package-smoke -- --dist dist
+      - name: Verify installed Windows application launch
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist -File -Filter '*.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Windows installer is missing' }
+          $installDirectory = Join-Path $env:RUNNER_TEMP 'hariari-installed'
+          $install = Start-Process $installer.FullName -ArgumentList '/S', "/D=$installDirectory" -PassThru -Wait
+          if ($install.ExitCode -ne 0) { throw "Windows installer exited with $($install.ExitCode)" }
+          try {
+            npm run runtime:package-smoke -- --dist $installDirectory
+            if ($LASTEXITCODE -ne 0) { throw "Installed Desktop smoke exited with $LASTEXITCODE" }
+          } finally {
+            $uninstaller = Get-ChildItem $installDirectory -File -Filter 'Uninstall*.exe' |
+              Select-Object -First 1
+            if ($uninstaller) {
+              Start-Process $uninstaller.FullName -ArgumentList '/S' -Wait
+            }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-builds

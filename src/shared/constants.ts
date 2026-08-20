@@ -90,7 +90,6 @@ export const IPC_CHANNELS = {
   UPDATE_INSTALL: 'update:install',
   UPDATE_STATUS: 'update:status',
   RUNTIME_GET_STATUS: 'runtime:get-status',
-  RUNTIME_RETRY: 'runtime:retry',
   RUNTIME_STATUS: 'runtime:status',
   OPEN_EXTERNAL: 'shell:open-external',
 } as const;

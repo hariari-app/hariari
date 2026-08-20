@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createAuthenticatedReplyEnvelope,
   createClientProof,
   createServerProof,
   selectHighestMutualVersion,
@@ -75,6 +76,19 @@ describe('Runtime protocol', () => {
 
     expect(verifyServerProof(TOKEN, reply)).toBe(true);
     expect(verifyServerProof(TOKEN, { ...reply, selectedProtocolVersion: 2 })).toBe(false);
+  });
+
+  it('builds one authenticated envelope for every proven Runtime reply', () => {
+    expect(
+      createAuthenticatedReplyEnvelope(CHALLENGE, AUTHENTICATE, { min: 2, max: 3 }),
+    ).toEqual({
+      handshakeVersion: 1,
+      challengeId: 'challenge-1',
+      requestId: 'request-1',
+      serverNonce: 'server-nonce-123456',
+      clientNonce: 'client-nonce-123456',
+      runtimeRange: { min: 2, max: 3 },
+    });
   });
 
   it('reserves correlation, causation, and idempotency without accepting extra operations', () => {

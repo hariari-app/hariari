@@ -25,21 +25,19 @@ describe('Desktop Runtime preload API', () => {
     vi.stubGlobal('APP_VERSION', '0.6.8');
   });
 
-  it('exposes exactly getStatus, retry, and a removable status listener', async () => {
+  it('exposes only status reads and a removable status listener', async () => {
     await import('../../src/preload/index');
     const api = electron.exposeInMainWorld.mock.calls[0]?.[1] as {
       runtime: {
         getStatus(): Promise<unknown>;
-        retry(): Promise<unknown>;
         onStatus(callback: (status: RuntimeRendererStatus) => void): () => void;
       };
     };
 
-    expect(Object.keys(api.runtime).sort()).toEqual(['getStatus', 'onStatus', 'retry']);
+    expect(Object.keys(api.runtime).sort()).toEqual(['getStatus', 'onStatus']);
     await api.runtime.getStatus();
-    await api.runtime.retry();
-    expect(electron.invoke).toHaveBeenNthCalledWith(1, IPC_CHANNELS.RUNTIME_GET_STATUS);
-    expect(electron.invoke).toHaveBeenNthCalledWith(2, IPC_CHANNELS.RUNTIME_RETRY);
+    expect(electron.invoke).toHaveBeenCalledOnce();
+    expect(electron.invoke).toHaveBeenCalledWith(IPC_CHANNELS.RUNTIME_GET_STATUS);
 
     const callback = vi.fn();
     const unsubscribe = api.runtime.onStatus(callback);

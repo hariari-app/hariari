@@ -54,5 +54,9 @@ jobs:
       - run: npm ci
       - name: Build unsigned unpacked application
         run: npm run pack -- --publish never
-      - name: Verify packaged Runtime lifecycle
+      - name: Verify packaged Runtime and Desktop lifecycle on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run runtime:package-smoke -- --dist dist
+      - name: Verify packaged Runtime and Desktop lifecycle
+        if: runner.os != 'Linux'
         run: npm run runtime:package-smoke -- --dist dist

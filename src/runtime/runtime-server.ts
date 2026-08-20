@@ -10,12 +10,15 @@ import {
   RUNTIME_HEALTH_OPERATION,
   RUNTIME_OPERATION_VERSION,
   RUNTIME_SHUTDOWN_OPERATION,
+  createAuthenticatedReplyEnvelope,
   createServerProof,
   selectHighestMutualVersion,
   verifyClientProof,
+  type RuntimeAuthenticateFrame,
   type RuntimeChallengeFrame,
   type RuntimeIdentityFrame,
   type RuntimeRequestFrame,
+  type RuntimeReplyWithoutProof,
   type RuntimeResponseFrame,
 } from './protocol';
 import {
@@ -109,73 +112,78 @@ export class RuntimeServer {
   }
 
   private async authenticate(connection: RuntimeFrameConnection): Promise<number | null> {
-    const challenge: RuntimeChallengeFrame = {
+    const challenge = this.createChallenge();
+    await connection.writeFrame({ ...challenge }, this.options.handshakeDeadlineMs);
+    const authenticate = await this.readAuthentication(connection, challenge);
+    if (!authenticate) return null;
+    const selected = selectHighestMutualVersion(
+      authenticate.protocolRange,
+      this.options.supportedProtocolRange,
+    );
+    const envelope = createAuthenticatedReplyEnvelope(
+      challenge,
+      authenticate,
+      this.options.supportedProtocolRange,
+    );
+    if (selected === null) {
+      const withoutProof = {
+        kind: 'runtime.incompatible' as const,
+        ...envelope,
+        runtimeVersion: this.identity.runtimeVersion,
+        buildId: this.identity.buildId,
+      };
+      await this.writeAuthenticatedReply(connection, withoutProof);
+      return null;
+    }
+    const withoutProof = {
+      kind: 'runtime.welcome' as const,
+      ...envelope,
+      sessionId: this.options.randomId(),
+      selectedProtocolVersion: selected,
+      runtime: this.identity,
+    };
+    await this.writeAuthenticatedReply(connection, withoutProof);
+    return selected;
+  }
+
+  private createChallenge(): RuntimeChallengeFrame {
+    return {
       kind: 'runtime.challenge',
       handshakeVersion: RUNTIME_HANDSHAKE_VERSION,
       challengeId: this.options.randomId(),
       serverNonce: this.options.randomNonce(),
       expiresAt: new Date(this.options.now() + this.options.handshakeDeadlineMs).toISOString(),
     };
-    await connection.writeFrame({ ...challenge }, this.options.handshakeDeadlineMs);
+  }
 
-    let authenticate;
+  private async readAuthentication(
+    connection: RuntimeFrameConnection,
+    challenge: RuntimeChallengeFrame,
+  ): Promise<RuntimeAuthenticateFrame | null> {
     try {
-      authenticate = parseAuthenticateFrame(
+      const authenticate = parseAuthenticateFrame(
         await connection.readFrame(this.options.handshakeDeadlineMs),
       );
+      const valid =
+        authenticate.challengeId === challenge.challengeId &&
+        this.options.now() <= Date.parse(challenge.expiresAt) &&
+        verifyClientProof(this.options.token, challenge, authenticate);
+      if (valid) return authenticate;
     } catch {
-      await this.rejectAuthentication(connection);
-      return null;
+      // Authentication failures share one redacted response.
     }
-    if (
-      authenticate.challengeId !== challenge.challengeId ||
-      this.options.now() > Date.parse(challenge.expiresAt) ||
-      !verifyClientProof(this.options.token, challenge, authenticate)
-    ) {
-      await this.rejectAuthentication(connection);
-      return null;
-    }
+    await this.rejectAuthentication(connection);
+    return null;
+  }
 
-    const selected = selectHighestMutualVersion(
-      authenticate.protocolRange,
-      this.options.supportedProtocolRange,
-    );
-    if (selected === null) {
-      const withoutProof = {
-        kind: 'runtime.incompatible' as const,
-        handshakeVersion: RUNTIME_HANDSHAKE_VERSION,
-        challengeId: challenge.challengeId,
-        requestId: authenticate.requestId,
-        serverNonce: challenge.serverNonce,
-        clientNonce: authenticate.clientNonce,
-        runtimeRange: this.options.supportedProtocolRange,
-        runtimeVersion: this.identity.runtimeVersion,
-        buildId: this.identity.buildId,
-      };
-      await connection.writeFrame(
-        { ...withoutProof, proof: createServerProof(this.options.token, withoutProof) },
-        this.options.handshakeDeadlineMs,
-      );
-      return null;
-    }
-
-    const withoutProof = {
-      kind: 'runtime.welcome' as const,
-      handshakeVersion: RUNTIME_HANDSHAKE_VERSION,
-      challengeId: challenge.challengeId,
-      requestId: authenticate.requestId,
-      serverNonce: challenge.serverNonce,
-      clientNonce: authenticate.clientNonce,
-      sessionId: this.options.randomId(),
-      selectedProtocolVersion: selected,
-      runtimeRange: this.options.supportedProtocolRange,
-      runtime: this.identity,
-    };
+  private async writeAuthenticatedReply(
+    connection: RuntimeFrameConnection,
+    reply: RuntimeReplyWithoutProof,
+  ): Promise<void> {
     await connection.writeFrame(
-      { ...withoutProof, proof: createServerProof(this.options.token, withoutProof) },
+      { ...reply, proof: createServerProof(this.options.token, reply) },
       this.options.handshakeDeadlineMs,
     );
-    return selected;
   }
 
   private handleRequest(

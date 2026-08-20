@@ -377,31 +377,6 @@ select:focus-visible {
   font-size: var(--font-xs);
 }
 
-.runtime-health-retry {
-  border: 1px solid currentColor;
-  border-radius: var(--radius-xs);
-  padding: 0 var(--space-1);
-  background: transparent;
-  color: currentColor;
-  font: inherit;
-  line-height: 16px;
-  cursor: pointer;
-}
-
-.runtime-health-retry:hover {
-  background: var(--surface-hover);
-}
-
-.runtime-health-retry:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.runtime-health-retry:disabled {
-  cursor: wait;
-  opacity: 0.7;
-}
-
 @media (forced-colors: active) {
   .runtime-health::before {
     forced-color-adjust: none;

@@ -9,6 +9,7 @@ import {
   RUNTIME_OPERATION_VERSION,
   RUNTIME_SHUTDOWN_OPERATION,
   type RuntimeAuthenticateFrame,
+  type RuntimeAuthenticatedReplyEnvelope,
   type RuntimeChallengeFrame,
   type RuntimeIncompatibleFrame,
   type RuntimeOperationFrame,
@@ -74,38 +75,41 @@ export function parseHandshakeReply(
   if (frame.kind === 'runtime.unauthorized') {
     return { kind: 'runtime.unauthorized', handshakeVersion: RUNTIME_HANDSHAKE_VERSION };
   }
+  const envelope = authenticatedReplyEnvelope(frame);
   if (frame.kind === 'runtime.incompatible') {
     return {
       kind: 'runtime.incompatible',
-      handshakeVersion: RUNTIME_HANDSHAKE_VERSION,
-      challengeId: identifier(frame.challengeId),
-      requestId: identifier(frame.requestId),
-      serverNonce: nonce(frame.serverNonce),
-      clientNonce: nonce(frame.clientNonce),
-      runtimeRange: protocolRange(frame.runtimeRange),
+      ...envelope,
       runtimeVersion: boundedString(frame.runtimeVersion, MAX_VERSION_LENGTH),
       buildId: identifier(frame.buildId),
-      proof: boundedString(frame.proof, MAX_PROOF_LENGTH),
     };
   }
   if (frame.kind !== 'runtime.welcome') invalid();
   const runtime = object(frame.runtime);
   return {
     kind: 'runtime.welcome',
-    handshakeVersion: RUNTIME_HANDSHAKE_VERSION,
-    challengeId: identifier(frame.challengeId),
-    requestId: identifier(frame.requestId),
-    serverNonce: nonce(frame.serverNonce),
-    clientNonce: nonce(frame.clientNonce),
+    ...envelope,
     sessionId: identifier(frame.sessionId),
     selectedProtocolVersion: positiveInteger(frame.selectedProtocolVersion),
-    runtimeRange: protocolRange(frame.runtimeRange),
     runtime: {
       instanceId: identifier(runtime.instanceId),
       runtimeVersion: boundedString(runtime.runtimeVersion, MAX_VERSION_LENGTH),
       buildId: identifier(runtime.buildId),
       startedAt: timestamp(runtime.startedAt),
     },
+  };
+}
+
+function authenticatedReplyEnvelope(
+  frame: Record<string, unknown>,
+): RuntimeAuthenticatedReplyEnvelope {
+  return {
+    handshakeVersion: RUNTIME_HANDSHAKE_VERSION,
+    challengeId: identifier(frame.challengeId),
+    requestId: identifier(frame.requestId),
+    serverNonce: nonce(frame.serverNonce),
+    clientNonce: nonce(frame.clientNonce),
+    runtimeRange: protocolRange(frame.runtimeRange),
     proof: boundedString(frame.proof, MAX_PROOF_LENGTH),
   };
 }

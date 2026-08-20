@@ -95,20 +95,16 @@ class NodeRuntimeFrameConnection implements RuntimeFrameConnection {
     }
 
     return new Promise((resolve, reject) => {
-      let settled = false;
-      const timer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
+      const complete = createTimeoutSettlement(boundedDeadline(deadlineMs), () => {
         this.socket.destroy();
         this.finishClose();
         reject(new RuntimeTransportError('deadline'));
-      }, boundedDeadline(deadlineMs));
+      });
       this.socket.write(encoded, (error?: Error | null) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (error) reject(new RuntimeTransportError('closed'));
-        else resolve();
+        complete(() => {
+          if (error) reject(new RuntimeTransportError('closed'));
+          else resolve();
+        });
       });
     });
   }
@@ -182,23 +178,11 @@ export class NodeLocalRuntimeTransport implements RuntimeLocalTransport {
   connect(endpoint: RuntimeLocalEndpoint, deadlineMs: number): Promise<RuntimeFrameConnection> {
     return new Promise((resolve, reject) => {
       const socket = net.createConnection({ path: endpoint.address });
-      let settled = false;
-      const timer = setTimeout(
-        () => finish(new RuntimeTransportError('deadline')),
-        boundedDeadline(deadlineMs),
+      const complete = createTimeoutSettlement(boundedDeadline(deadlineMs), () =>
+        finishConnection(new RuntimeTransportError('deadline')),
       );
       const finish = (error?: RuntimeTransportError): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        socket.removeListener('connect', connected);
-        socket.removeListener('error', failed);
-        if (error) {
-          socket.destroy();
-          reject(error);
-        } else {
-          resolve(new NodeRuntimeFrameConnection(socket));
-        }
+        complete(() => finishConnection(error));
       };
       const connected = (): void => finish();
       const failed = (error: NodeJS.ErrnoException): void =>
@@ -209,6 +193,13 @@ export class NodeLocalRuntimeTransport implements RuntimeLocalTransport {
               : 'connect-failed',
           ),
         );
+      const finishConnection = (error?: RuntimeTransportError): void => {
+        socket.removeListener('connect', connected);
+        socket.removeListener('error', failed);
+        if (!error) return resolve(new NodeRuntimeFrameConnection(socket));
+        socket.destroy();
+        reject(error);
+      };
       socket.once('connect', connected);
       socket.once('error', failed);
     });
@@ -322,22 +313,34 @@ async function removeOwnedStaleSocket(socketPath: string): Promise<void> {
 function socketIsReachable(socketPath: string): Promise<boolean> {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ path: socketPath });
-    let settled = false;
-    const finish = (result: boolean, error?: RuntimeTransportError): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
+    const complete = createTimeoutSettlement(100, () => finish(true));
+    const finish = (result: boolean, error?: RuntimeTransportError): void =>
+      complete(() => {
       socket.destroy();
       if (error) reject(error);
       else resolve(result);
-    };
-    const timer = setTimeout(() => finish(true), 100);
+      });
     socket.once('connect', () => finish(true));
     socket.once('error', (error: NodeJS.ErrnoException) => {
       if (error.code === 'ECONNREFUSED' || error.code === 'ENOENT') finish(false);
       else finish(false, new RuntimeTransportError('connect-failed'));
     });
   });
+}
+
+function createTimeoutSettlement(
+  timeoutMs: number,
+  onTimeout: () => void,
+): (effect: () => void) => void {
+  let settled = false;
+  const complete = (effect: () => void): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    effect();
+  };
+  const timer = setTimeout(() => complete(onTimeout), timeoutMs);
+  return complete;
 }
 
 async function unlinkIfOwned(socketPath: string, expected: SocketIdentity): Promise<void> {

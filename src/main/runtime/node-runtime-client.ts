@@ -17,9 +17,12 @@ import {
   selectHighestMutualVersion,
   verifyServerProof,
   type RuntimeAuthenticateFrame,
+  type RuntimeChallengeFrame,
   type RuntimeIdentityFrame,
+  type RuntimeIncompatibleFrame,
   type RuntimeOperationName,
   type RuntimeRequestFrame,
+  type RuntimeWelcomeFrame,
 } from '../../runtime/protocol';
 import {
   parseChallengeFrame,
@@ -58,65 +61,81 @@ export class NodeRuntimeClient implements RuntimeClientPort {
     }
 
     try {
-      const challenge = parseChallengeFrame(await connection.readFrame(options.deadlineMs));
-      const authenticateWithoutProof: Omit<RuntimeAuthenticateFrame, 'proof'> = {
-        kind: 'runtime.authenticate',
-        handshakeVersion: RUNTIME_HANDSHAKE_VERSION,
-        challengeId: challenge.challengeId,
-        requestId: this.options.randomId(),
-        clientNonce: this.options.randomNonce(),
-        client: options.clientIdentity,
-        protocolRange: options.supportedProtocolRange,
-      };
-      const authenticate: RuntimeAuthenticateFrame = {
-        ...authenticateWithoutProof,
-        proof: createClientProof(token, challenge, authenticateWithoutProof),
-      };
-      await connection.writeFrame({ ...authenticate }, options.deadlineMs);
-      const reply = parseHandshakeReply(await connection.readFrame(options.deadlineMs));
-      if (reply.kind === 'runtime.unauthorized') {
-        throw new RuntimePortError('authentication-rejected');
-      }
-      if (
-        reply.challengeId !== challenge.challengeId ||
-        reply.requestId !== authenticate.requestId ||
-        reply.serverNonce !== challenge.serverNonce ||
-        reply.clientNonce !== authenticate.clientNonce ||
-        !verifyServerProof(token, reply)
-      ) {
-        throw new RuntimePortError('protocol-error');
-      }
-      const selected = selectHighestMutualVersion(
-        options.supportedProtocolRange,
-        reply.runtimeRange,
-      );
-      if (reply.kind === 'runtime.incompatible') {
-        if (selected !== null) throw new RuntimePortError('protocol-error');
-        connection.close();
-        return {
-          kind: 'incompatible',
-          runtimeRange: reply.runtimeRange,
-          runtimeVersion: reply.runtimeVersion,
-          buildId: reply.buildId,
-        };
-      }
-      if (selected === null || reply.selectedProtocolVersion !== selected) {
-        throw new RuntimePortError('protocol-error');
-      }
-      return {
-        kind: 'connected',
-        session: new NodeRuntimeClientSession(
-          connection,
-          reply.selectedProtocolVersion,
-          reply.runtime,
-          this.options.randomId,
-        ),
-      };
+      const reply = await this.authenticate(connection, token, options);
+      return this.createConnection(connection, reply, options);
     } catch (error) {
       connection.close();
       if (error instanceof RuntimePortError) throw error;
       throw new RuntimePortError('protocol-error');
     }
+  }
+
+  private async authenticate(
+    connection: RuntimeFrameConnection,
+    token: Uint8Array,
+    options: RuntimeClientConnectOptions,
+  ): Promise<RuntimeWelcomeFrame | RuntimeIncompatibleFrame> {
+    const challenge = parseChallengeFrame(await connection.readFrame(options.deadlineMs));
+    const authenticate = this.createAuthenticate(challenge, token, options);
+    await connection.writeFrame({ ...authenticate }, options.deadlineMs);
+    const reply = parseHandshakeReply(await connection.readFrame(options.deadlineMs));
+    if (reply.kind === 'runtime.unauthorized') {
+      throw new RuntimePortError('authentication-rejected');
+    }
+    if (!authenticatedReplyMatches(reply, challenge, authenticate, token)) {
+      throw new RuntimePortError('protocol-error');
+    }
+    return reply;
+  }
+
+  private createAuthenticate(
+    challenge: RuntimeChallengeFrame,
+    token: Uint8Array,
+    options: RuntimeClientConnectOptions,
+  ): RuntimeAuthenticateFrame {
+    const frame: Omit<RuntimeAuthenticateFrame, 'proof'> = {
+      kind: 'runtime.authenticate',
+      handshakeVersion: RUNTIME_HANDSHAKE_VERSION,
+      challengeId: challenge.challengeId,
+      requestId: this.options.randomId(),
+      clientNonce: this.options.randomNonce(),
+      client: options.clientIdentity,
+      protocolRange: options.supportedProtocolRange,
+    };
+    return { ...frame, proof: createClientProof(token, challenge, frame) };
+  }
+
+  private createConnection(
+    connection: RuntimeFrameConnection,
+    reply: RuntimeWelcomeFrame | RuntimeIncompatibleFrame,
+    options: RuntimeClientConnectOptions,
+  ): RuntimeClientConnection {
+    const selected = selectHighestMutualVersion(
+      options.supportedProtocolRange,
+      reply.runtimeRange,
+    );
+    if (reply.kind === 'runtime.incompatible') {
+      if (selected !== null) throw new RuntimePortError('protocol-error');
+      connection.close();
+      return {
+        kind: 'incompatible',
+        runtimeRange: reply.runtimeRange,
+        runtimeVersion: reply.runtimeVersion,
+        buildId: reply.buildId,
+      };
+    }
+    if (selected === null || reply.selectedProtocolVersion !== selected) {
+      throw new RuntimePortError('protocol-error');
+    }
+    return {
+      kind: 'connected',
+      session: new NodeRuntimeClientSession(
+        connection,
+        reply.selectedProtocolVersion,
+        reply.runtime,
+        this.options.randomId,
+      ),
+    };
   }
 
   private async connectTransport(
@@ -135,6 +154,21 @@ export class NodeRuntimeClient implements RuntimeClientPort {
       throw new RuntimePortError('connection-failed');
     }
   }
+}
+
+function authenticatedReplyMatches(
+  reply: RuntimeWelcomeFrame | RuntimeIncompatibleFrame,
+  challenge: RuntimeChallengeFrame,
+  authenticate: RuntimeAuthenticateFrame,
+  token: Uint8Array,
+): boolean {
+  return (
+    reply.challengeId === challenge.challengeId &&
+    reply.requestId === authenticate.requestId &&
+    reply.serverNonce === challenge.serverNonce &&
+    reply.clientNonce === authenticate.clientNonce &&
+    verifyServerProof(token, reply)
+  );
 }
 
 class NodeRuntimeClientSession implements RuntimeClientSession {

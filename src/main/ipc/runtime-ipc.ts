@@ -45,11 +45,7 @@ export function registerRuntimeIpc(
   const unsubscribe = runtime.subscribeStatus((state) => acceptStatus(state, true));
 
   ipc.removeHandler(IPC_CHANNELS.RUNTIME_GET_STATUS);
-  ipc.removeHandler(IPC_CHANNELS.RUNTIME_RETRY);
   ipc.handle(IPC_CHANNELS.RUNTIME_GET_STATUS, () => latest);
-  ipc.handle(IPC_CHANNELS.RUNTIME_RETRY, async () =>
-    acceptStatus(await runtime.connectOrStart(), true),
-  );
 
   const registration: RuntimeIpcRegistration = {
     publishLatest: () => {
@@ -60,7 +56,6 @@ export function registerRuntimeIpc(
       disposed = true;
       unsubscribe();
       ipc.removeHandler(IPC_CHANNELS.RUNTIME_GET_STATUS);
-      ipc.removeHandler(IPC_CHANNELS.RUNTIME_RETRY);
       if (activeRegistrations.get(ipc) === registration) {
         activeRegistrations.delete(ipc);
       }

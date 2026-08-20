@@ -44,7 +44,6 @@ export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
       const executablePath = await this.materialize(source.manifest, source.executablePath);
       return {
         executablePath,
-        entryPath: executablePath,
         buildId: source.manifest.buildId,
       };
     } catch (error) {

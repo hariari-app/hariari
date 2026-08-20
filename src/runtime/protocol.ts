@@ -35,31 +35,32 @@ export interface RuntimeIdentityFrame {
   readonly startedAt: string;
 }
 
-export interface RuntimeWelcomeFrame {
-  readonly kind: 'runtime.welcome';
+export interface RuntimeAuthenticatedReplyEnvelope {
   readonly handshakeVersion: typeof RUNTIME_HANDSHAKE_VERSION;
   readonly challengeId: string;
   readonly requestId: string;
   readonly serverNonce: string;
   readonly clientNonce: string;
-  readonly sessionId: string;
-  readonly selectedProtocolVersion: number;
   readonly runtimeRange: RuntimeProtocolRange;
-  readonly runtime: RuntimeIdentityFrame;
   readonly proof: string;
 }
 
-export interface RuntimeIncompatibleFrame {
+export type RuntimeUnsignedAuthenticatedReplyEnvelope = Omit<
+  RuntimeAuthenticatedReplyEnvelope,
+  'proof'
+>;
+
+export interface RuntimeWelcomeFrame extends RuntimeAuthenticatedReplyEnvelope {
+  readonly kind: 'runtime.welcome';
+  readonly sessionId: string;
+  readonly selectedProtocolVersion: number;
+  readonly runtime: RuntimeIdentityFrame;
+}
+
+export interface RuntimeIncompatibleFrame extends RuntimeAuthenticatedReplyEnvelope {
   readonly kind: 'runtime.incompatible';
-  readonly handshakeVersion: typeof RUNTIME_HANDSHAKE_VERSION;
-  readonly challengeId: string;
-  readonly requestId: string;
-  readonly serverNonce: string;
-  readonly clientNonce: string;
-  readonly runtimeRange: RuntimeProtocolRange;
   readonly runtimeVersion: string;
   readonly buildId: string;
-  readonly proof: string;
 }
 
 export interface RuntimeUnauthorizedFrame {
@@ -119,9 +120,24 @@ export type RuntimeResponseFrame =
     };
 
 type RuntimeProvenReply = RuntimeWelcomeFrame | RuntimeIncompatibleFrame;
-type RuntimeReplyWithoutProof =
+export type RuntimeReplyWithoutProof =
   | Omit<RuntimeWelcomeFrame, 'proof'>
   | Omit<RuntimeIncompatibleFrame, 'proof'>;
+
+export function createAuthenticatedReplyEnvelope(
+  challenge: RuntimeChallengeFrame,
+  authenticate: Omit<RuntimeAuthenticateFrame, 'proof'>,
+  runtimeRange: RuntimeProtocolRange,
+): RuntimeUnsignedAuthenticatedReplyEnvelope {
+  return {
+    handshakeVersion: RUNTIME_HANDSHAKE_VERSION,
+    challengeId: challenge.challengeId,
+    requestId: authenticate.requestId,
+    serverNonce: challenge.serverNonce,
+    clientNonce: authenticate.clientNonce,
+    runtimeRange,
+  };
+}
 
 export function selectHighestMutualVersion(
   client: RuntimeProtocolRange,

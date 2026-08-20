@@ -198,7 +198,6 @@ contextBridge.exposeInMainWorld('api', {
   },
   runtime: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_GET_STATUS),
-    retry: () => ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_RETRY),
     onStatus: (callback: (status: RuntimeRendererStatus) => void) => {
       const handler = (
         _event: Electron.IpcRendererEvent,

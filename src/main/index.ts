@@ -8,8 +8,7 @@ import { registerIpcHandlers } from './ipc/handlers';
 import { StateManager } from './state/state-manager';
 import { AutoUpdateManager } from './updater/auto-updater';
 import { migrateLegacyVoiceApiKey } from './voice/voice-secrets';
-import { registerRuntimeIpc } from './ipc/runtime-ipc';
-import { createDesktopRuntimeInterface } from './runtime/desktop-runtime';
+import * as runtimeDesktop from './runtime/runtime-desktop-lifecycle';
 import { IPC_CHANNELS } from '../shared/constants';
 
 let ptyManager: PtyManager;
@@ -281,7 +280,7 @@ app.commandLine.appendSwitch('enable-features', 'WebSpeechAPI');
 // Disable SUID sandbox for environments where chrome-sandbox is not setuid root
 app.commandLine.appendSwitch('no-sandbox');
 
-app.whenReady().then(() => {
+if (!runtimeDesktop.startRuntimePackageSmokeIfRequested(app)) app.whenReady().then(() => {
   migrateLegacyVoiceApiKey();
 
   // Set CSP via response headers (more authoritative than <meta> tag)
@@ -322,23 +321,21 @@ app.whenReady().then(() => {
     }
   });
 
-  // The Desktop owns one Runtime client across renderer loads and window lifecycles.
-  // Runtime startup is independent from first paint and never grants process control
-  // to the renderer.
-  const runtime = createDesktopRuntimeInterface();
-  const runtimeIpc = registerRuntimeIpc(runtime, ipcMain, (status) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(IPC_CHANNELS.RUNTIME_STATUS, status);
-    }
+  const runtimeLifecycle = runtimeDesktop.startDesktopRuntimeLifecycle({
+    ipc: ipcMain,
+    publishStatus: (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.RUNTIME_STATUS, status);
+      }
+    },
   });
-  void runtime.connectOrStart().catch(() => undefined);
 
   // Register IPC handlers BEFORE creating window so renderer can call them immediately
   registerIpcHandlers(agentManager, ptyManager, stateManager, projectManager, notificationManager);
 
   // Now create the window — renderer will load and IPC handlers are ready
   mainWindow = createMainWindow(savedState?.window);
-  mainWindow.webContents.on('did-finish-load', () => runtimeIpc.publishLatest());
+  mainWindow.webContents.on('did-finish-load', () => runtimeLifecycle.publishLatest());
 
   // Auto-updater — checks GitHub Releases for new versions
   autoUpdateManager = new AutoUpdateManager();
@@ -392,8 +389,7 @@ app.whenReady().then(() => {
     autoUpdateManager?.dispose();
     agentManager?.disposeAll();
     ptyManager?.disposeAll();
-    runtimeIpc.dispose();
-    void runtime.disconnect().catch(() => undefined);
+    runtimeLifecycle.dispose();
   });
 });
 

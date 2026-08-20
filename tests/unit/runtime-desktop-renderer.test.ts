@@ -18,11 +18,10 @@ describe('Runtime health renderer model', () => {
       visibleText: 'Runtime: Connected',
       detail: 'v0.6.8 · protocol 2',
       announcement: 'Runtime connected. Version 0.6.8, protocol 2.',
-      showRetry: false,
     });
   });
 
-  it('shows unavailable health with explicit text and a Retry affordance', () => {
+  it('explains unavailable health without offering process-start authority', () => {
     expect(
       createRuntimeHealthViewModel({
         state: 'unavailable',
@@ -32,9 +31,8 @@ describe('Runtime health renderer model', () => {
     ).toEqual({
       state: 'unavailable',
       visibleText: 'Runtime: Unavailable',
-      detail: '',
-      announcement: 'Runtime unavailable. Retry is available.',
-      showRetry: true,
+      detail: 'Desktop could not reach the Runtime.',
+      announcement: 'Runtime unavailable. Desktop could not reach the Runtime.',
     });
   });
 
@@ -48,9 +46,8 @@ describe('Runtime health renderer model', () => {
     ).toEqual({
       state: 'unavailable',
       visibleText: 'Runtime: Unavailable',
-      detail: '',
-      announcement: 'Runtime unavailable.',
-      showRetry: false,
+      detail: 'Runtime authentication was rejected.',
+      announcement: 'Runtime unavailable. Runtime authentication was rejected.',
     });
   });
 
@@ -68,7 +65,6 @@ describe('Runtime health renderer model', () => {
       detail: 'v1.4.0 · protocol 5–7',
       announcement:
         'Runtime incompatible. Runtime version 1.4.0 supports protocols 5 to 7; Desktop supports protocols 1 to 2.',
-      showRetry: false,
     });
   });
 
@@ -94,43 +90,14 @@ describe('Runtime health renderer model', () => {
     expect(status?.attributes.get('role')).toBe('status');
     expect(status?.attributes.get('aria-live')).toBe('polite');
     expect(status?.attributes.get('aria-atomic')).toBe('true');
-    expect(findByClass(container, 'runtime-health-retry')?.textContent).toBe('Retry');
+    expect(findByClass(container, 'runtime-health-detail')?.textContent).toBe(
+      'Desktop could not reach the Runtime.',
+    );
+    expect(findByClass(container, 'runtime-health-retry')).toBeNull();
 
     dispose();
     expect(runtime.unsubscribe).toHaveBeenCalledOnce();
     expect(container.children).toHaveLength(0);
-  });
-
-  it('retries through the public renderer API and renders the pushed connected state', async () => {
-    const documentRef = new FakeDocument();
-    const container = documentRef.createElement('div');
-    const runtime = new FakeRuntimeApi({
-      state: 'unavailable',
-      reason: 'connection-failed',
-      retryable: true,
-    });
-    runtime.retryResult = {
-      state: 'connected',
-      runtimeVersion: '0.6.8',
-      protocolVersion: 2,
-    };
-    const dispose = mountRuntimeHealth(
-      container as unknown as HTMLElement,
-      runtime,
-      documentRef as unknown as Document,
-    );
-    await Promise.resolve();
-
-    findByClass(container, 'runtime-health-retry')?.click();
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(runtime.retry).toHaveBeenCalledOnce();
-    expect(findByClass(container, 'runtime-health-text')?.textContent).toBe('Runtime: Connected');
-    expect(findByClass(container, 'runtime-health-detail')?.textContent).toBe(
-      'v0.6.8 · protocol 2',
-    );
-    dispose();
   });
 
   it('renders live status pushes without querying or controlling a Runtime process', async () => {
@@ -169,13 +136,9 @@ describe('Runtime health renderer model', () => {
 class FakeRuntimeApi {
   readonly callOrder: string[] = [];
   readonly unsubscribe = vi.fn();
-  readonly retry = vi.fn(async () => this.retryResult);
-  retryResult: RuntimeRendererStatus;
   private listener: ((status: RuntimeRendererStatus) => void) | null = null;
 
-  constructor(private readonly initial: RuntimeRendererStatus) {
-    this.retryResult = initial;
-  }
+  constructor(private readonly initial: RuntimeRendererStatus) {}
 
   async getStatus(): Promise<RuntimeRendererStatus> {
     this.callOrder.push('getStatus');
@@ -203,12 +166,9 @@ class FakeElement {
   className = '';
   textContent = '';
   hidden = false;
-  disabled = false;
-  type = '';
   readonly dataset: Record<string, string> = {};
   readonly attributes = new Map<string, string>();
   readonly children: FakeElement[] = [];
-  private readonly listeners = new Map<string, () => void>();
   private parent: FakeElement | null = null;
 
   append(...children: FakeElement[]): void {
@@ -220,14 +180,6 @@ class FakeElement {
 
   setAttribute(name: string, value: string): void {
     this.attributes.set(name, value);
-  }
-
-  addEventListener(name: string, listener: () => void): void {
-    this.listeners.set(name, listener);
-  }
-
-  click(): void {
-    this.listeners.get('click')?.();
   }
 
   remove(): void {

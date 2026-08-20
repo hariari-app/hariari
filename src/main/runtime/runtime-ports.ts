@@ -78,7 +78,6 @@ export interface RuntimeTokenPort {
 
 export interface RuntimeArtifact {
   readonly executablePath: string;
-  readonly entryPath: string;
   readonly buildId: string;
 }
 

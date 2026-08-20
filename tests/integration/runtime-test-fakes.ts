@@ -53,7 +53,6 @@ export class FakeRuntimeEnvironment {
       if (this.artifactFailure) throw new RuntimePortError('artifact-unavailable');
       return {
         executablePath: '/test/hariari',
-        entryPath: '/test/runtime.js',
         buildId: this.health.buildId,
       };
     },

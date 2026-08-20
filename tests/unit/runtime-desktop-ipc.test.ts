@@ -68,42 +68,6 @@ describe('Desktop Runtime IPC', () => {
     registration.dispose();
   });
 
-  it('retries through RuntimeInterface and publishes the result', async () => {
-    const runtime = new FakeRuntime({
-      state: 'unavailable',
-      reason: 'connection-failed',
-      retryable: true,
-    });
-    runtime.connectResult = {
-      state: 'connected',
-      health: {
-        status: 'ready',
-        instanceId: 'runtime-id',
-        runtimeVersion: '0.6.8',
-        buildId: 'build-id',
-        protocolVersion: 2,
-        startedAt: '2026-08-20T10:00:00.000Z',
-        checkedAt: '2026-08-20T10:00:01.000Z',
-      },
-    };
-    const ipc = new FakeIpcRegistry();
-    const publishStatus = vi.fn();
-    const registration = registerRuntimeIpc(runtime, ipc, publishStatus);
-
-    await expect(ipc.invoke(IPC_CHANNELS.RUNTIME_RETRY)).resolves.toEqual({
-      state: 'connected',
-      runtimeVersion: '0.6.8',
-      protocolVersion: 2,
-    });
-    expect(runtime.connectCalls).toBe(1);
-    expect(publishStatus).toHaveBeenCalledWith({
-      state: 'connected',
-      runtimeVersion: '0.6.8',
-      protocolVersion: 2,
-    });
-    registration.dispose();
-  });
-
   it('replays the latest status to a recreated window without reconnecting Runtime', () => {
     const runtime = new FakeRuntime({
       state: 'connected',
@@ -152,7 +116,6 @@ describe('Desktop Runtime IPC', () => {
     await expect(ipc.invoke(IPC_CHANNELS.RUNTIME_GET_STATUS)).rejects.toThrow(
       'missing handler',
     );
-    await expect(ipc.invoke(IPC_CHANNELS.RUNTIME_RETRY)).rejects.toThrow('missing handler');
   });
 
   it('replaces duplicate registration without leaking listeners or adding privileged handlers', () => {
@@ -173,10 +136,9 @@ describe('Desktop Runtime IPC', () => {
     expect(first.unsubscribeCalls).toBe(1);
     expect(first.listenerCount).toBe(0);
     expect(second.listenerCount).toBe(1);
-    expect(ipc.channels()).toEqual([
-      IPC_CHANNELS.RUNTIME_GET_STATUS,
-      IPC_CHANNELS.RUNTIME_RETRY,
-    ]);
+    expect(ipc.channels()).toEqual([IPC_CHANNELS.RUNTIME_GET_STATUS]);
+    expect(first.connectCalls).toBe(0);
+    expect(second.connectCalls).toBe(0);
     expect(ipc.channels().some((channel) => /shutdown|process|token|endpoint|path/.test(channel)))
       .toBe(false);
 
