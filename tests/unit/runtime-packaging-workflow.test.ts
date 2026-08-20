@@ -25,6 +25,25 @@ describe('Runtime native release workflow', () => {
     expect(workflow).toContain('test -f dist/latest-linux-arm64.yml');
   });
 
+  it('smokes the architecture-specific Linux output for every native matrix leg', () => {
+    const workflow = fs.readFileSync(path.resolve('.github/workflows/build-release.yml'), 'utf8');
+    const buildLinux = workflow.slice(
+      workflow.indexOf('  build-linux:'),
+      workflow.indexOf('\n  build-macos:'),
+    );
+    const unpackedRuntimeSmoke = workflowStep(
+      buildLinux,
+      'name: Verify unpacked Runtime lifecycle',
+    );
+
+    expect(buildLinux).toContain('runner: ubuntu-latest\n            arch: x64');
+    expect(buildLinux).toContain('runner: ubuntu-24.04-arm\n            arch: arm64');
+    expect(unpackedRuntimeSmoke).toMatch(
+      /run: xvfb-run -a npm run runtime:package-smoke -- --dist dist\s*$/,
+    );
+    expect(unpackedRuntimeSmoke).not.toContain('dist/linux-unpacked');
+  });
+
   it('publishes updater channel metadata for both Linux architectures', () => {
     const workflow = fs.readFileSync(path.resolve('.github/workflows/build-release.yml'), 'utf8');
     const linuxArtifactUpload = workflowStep(workflow, 'name: linux-builds-${{ matrix.arch }}');
@@ -51,9 +70,7 @@ describe('Runtime native release workflow', () => {
     const smoke = fs.readFileSync(path.resolve('scripts/runtime-package-smoke.mjs'), 'utf8');
 
     expect(ci).toContain('xvfb-run -a npm run runtime:package-smoke -- --dist dist');
-    expect(release).toContain(
-      'xvfb-run -a npm run runtime:package-smoke -- --dist dist/linux-unpacked',
-    );
+    expect(release).toContain('xvfb-run -a npm run runtime:package-smoke -- --dist dist');
     expect(release).toContain('Verify macOS DMG and ZIP application launch');
     expect(release).toContain('Verify installed Windows application launch');
     expect(smoke).toContain('HARIARI_RUNTIME_PACKAGE_SMOKE_OK');

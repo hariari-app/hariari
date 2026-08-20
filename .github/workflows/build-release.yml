@@ -47,7 +47,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify unpacked Runtime lifecycle
-        run: xvfb-run -a npm run runtime:package-smoke -- --dist dist/linux-unpacked
+        run: xvfb-run -a npm run runtime:package-smoke -- --dist dist
       - name: Verify AppImage, deb, and rpm Runtime layouts
         shell: bash
         run: |
