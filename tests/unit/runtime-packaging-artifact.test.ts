@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PackagedRuntimeArtifactPort } from '../../src/main/runtime/packaged-runtime-artifact';
 
 const require = createRequire(import.meta.url);
@@ -27,6 +27,7 @@ function registerPackagedArtifactTests(): void {
   registerCanonicalRuntimeRootTest();
   registerMaterializationSymlinkTest();
   registerConcurrentMaterializationTest();
+  registerMaterializationStagingPathTest();
   registerWindowsBuildMaterializationTest();
   registerWindowsSignedArtifactMaterializationTest();
 }
@@ -154,6 +155,41 @@ function registerConcurrentMaterializationTest(): void {
     const destinationDirectory = path.dirname(artifacts[0].executablePath);
     expect(fs.readdirSync(destinationDirectory)).toEqual([EXECUTABLE_NAME]);
     expect(fs.readFileSync(artifacts[0].executablePath, 'utf8')).toBe('standalone-runtime');
+  });
+}
+
+function registerMaterializationStagingPathTest(): void {
+  it('stages Windows materialization below the build root with a short opaque name', async () => {
+    const fixture = createFixture('windows-long-materialization-root', {
+      platform: 'win32',
+      buildId: 'build-identity-with-a-realistically-long-signed-artifact-suffix',
+    });
+    const originalCopyFile = fs.promises.copyFile;
+    const stagedPaths: string[] = [];
+    const copyFile = vi
+      .spyOn(fs.promises, 'copyFile')
+      .mockImplementation(async (source, destination, mode) => {
+        stagedPaths.push(destination.toString());
+        await originalCopyFile(source, destination, mode);
+      });
+
+    try {
+      const artifact = await createPort(fixture).resolve();
+      const destinationDirectory = path.dirname(artifact.executablePath);
+      const buildDirectory = path.dirname(destinationDirectory);
+      const stagedPath = stagedPaths.at(0);
+      const destinationDerivedStagingPath = path.join(
+        destinationDirectory,
+        `.hariari-runtime.exe.${process.pid}.00000000-0000-4000-8000-000000000000.tmp`,
+      );
+
+      expect(stagedPath).toBeDefined();
+      expect(path.dirname(stagedPath!)).toBe(buildDirectory);
+      expect(destinationDerivedStagingPath.length - stagedPath!.length).toBeGreaterThan(64);
+      expect(stagedPath).not.toContain(path.basename(fixture.artifactPath));
+    } finally {
+      copyFile.mockRestore();
+    }
   });
 }
 

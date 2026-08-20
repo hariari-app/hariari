@@ -117,13 +117,14 @@ export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
     );
     const buildDirectory = path.join(platformDirectory, manifest.buildId);
     const requestedDestinationDirectory = path.join(buildDirectory, manifest.sha256);
-    const destinationDirectory = await ensureMaterializationDirectories(
-      runtimeRoot,
-      binRoot,
-      platformDirectory,
-      buildDirectory,
-      requestedDestinationDirectory,
-    );
+    const { buildDirectory: canonicalBuildDirectory, destinationDirectory } =
+      await ensureMaterializationDirectories(
+        runtimeRoot,
+        binRoot,
+        platformDirectory,
+        buildDirectory,
+        requestedDestinationDirectory,
+      );
     const destinationPath = path.join(destinationDirectory, manifest.executable);
     assertConfined(binRoot, destinationPath);
     if (await isValidMaterializedFile(destinationPath, manifest)) {
@@ -131,10 +132,8 @@ export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
       return destinationPath;
     }
 
-    const temporaryPath = path.join(
-      destinationDirectory,
-      `.${manifest.executable}.${process.pid}.${randomUUID()}.tmp`,
-    );
+    const temporaryPath = path.join(canonicalBuildDirectory, `.${randomUUID()}.tmp`);
+    assertConfined(canonicalBuildDirectory, temporaryPath);
     try {
       await fs.promises.copyFile(sourcePath, temporaryPath, fs.constants.COPYFILE_EXCL);
       await preserveExecutableMode(temporaryPath, this.platform);
@@ -151,6 +150,7 @@ export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
         if (!(await isValidMaterializedFile(destinationPath, manifest))) throw error;
       }
       await syncDirectory(destinationDirectory);
+      await syncDirectory(canonicalBuildDirectory);
       await verifyFile(destinationPath, manifest);
       await preserveExecutableMode(destinationPath, this.platform);
       return destinationPath;
@@ -208,13 +208,22 @@ async function ensureMaterializationDirectories(
   platformDirectory: string,
   buildDirectory: string,
   destinationDirectory: string,
-): Promise<string> {
+): Promise<{
+  readonly buildDirectory: string;
+  readonly destinationDirectory: string;
+}> {
   for (const directory of [binRoot, platformDirectory, buildDirectory, destinationDirectory]) {
     await createPrivateChildDirectory(directory);
   }
+  const canonicalBuildDirectory = await fs.promises.realpath(buildDirectory);
   const canonicalDestination = await fs.promises.realpath(destinationDirectory);
+  assertConfined(runtimeRoot, canonicalBuildDirectory);
+  assertConfined(canonicalBuildDirectory, canonicalDestination);
   assertConfined(runtimeRoot, canonicalDestination);
-  return canonicalDestination;
+  return {
+    buildDirectory: canonicalBuildDirectory,
+    destinationDirectory: canonicalDestination,
+  };
 }
 
 async function createPrivateChildDirectory(directory: string): Promise<void> {
