@@ -25,7 +25,7 @@ Closes #
 
 <!-- Rerun /code-review after every code change. The reviewed HEAD must equal the PR head. -->
 
-- Fixed point: `<!-- 40-character commit SHA -->`
+- Review base SHA: `<!-- clean pre-change commit used for /code-review -->`
 - Reviewed HEAD: `<!-- 40-character commit SHA -->`
 - Standards: <!-- pass, or link every disposition -->
 - Spec: <!-- pass, or link every disposition -->
