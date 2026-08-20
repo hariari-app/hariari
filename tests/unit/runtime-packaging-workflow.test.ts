@@ -76,4 +76,29 @@ describe('Runtime native release workflow', () => {
     expect(smoke).toContain('HARIARI_RUNTIME_PACKAGE_SMOKE_OK');
     expect(smoke).toContain('spawnSync(desktopExecutable');
   });
+
+  it('installs native dependencies on hosted runners supported by the pinned toolchain', () => {
+    const ci = fs.readFileSync(path.resolve('.github/workflows/ci.yml'), 'utf8');
+    const release = fs.readFileSync(path.resolve('.github/workflows/build-release.yml'), 'utf8');
+    const nativeSmoke = ci.slice(ci.indexOf('  runtime-package-smoke:'));
+    const windowsRelease = release.slice(
+      release.indexOf('  build-windows:'),
+      release.indexOf('\n  release:'),
+    );
+    const macosPrerequisite = [
+      '      - name: Install macOS native build prerequisites',
+      "        if: runner.os == 'macOS'",
+      '        run: python3 -m pip install setuptools --break-system-packages',
+    ].join('\n');
+
+    expect(nativeSmoke).toContain('- macos-latest');
+    expect(nativeSmoke).toContain('- windows-2022');
+    expect(nativeSmoke).not.toContain('- windows-latest');
+    expect(nativeSmoke).toContain(macosPrerequisite);
+    expect(nativeSmoke.indexOf(macosPrerequisite)).toBeLessThan(
+      nativeSmoke.indexOf('- run: npm ci'),
+    );
+    expect(windowsRelease).toContain('runs-on: windows-2022');
+    expect(`${ci}\n${release}`).not.toContain('--ignore-scripts');
+  });
 });

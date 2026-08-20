@@ -201,7 +201,7 @@ jobs:
 
   build-windows:
     needs: test
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
