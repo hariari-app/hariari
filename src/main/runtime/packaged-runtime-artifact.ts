@@ -108,23 +108,24 @@ export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
     manifest: RuntimeArtifactManifest,
     sourcePath: string,
   ): Promise<string> {
-    const runtimeRoot = path.resolve(this.options.runtimeDirectory);
+    const requestedRuntimeRoot = path.resolve(this.options.runtimeDirectory);
+    const runtimeRoot = await prepareMaterializationRuntimeRoot(requestedRuntimeRoot);
     const binRoot = path.join(runtimeRoot, 'bin');
     const platformDirectory = path.join(
       binRoot,
       `${manifest.runtimeVersion}-${manifest.platform}-${manifest.arch}`,
     );
     const buildDirectory = path.join(platformDirectory, manifest.buildId);
-    const destinationDirectory = path.join(buildDirectory, manifest.sha256);
-    const destinationPath = path.join(destinationDirectory, manifest.executable);
-    assertConfined(binRoot, destinationPath);
-    await ensureMaterializationDirectories(
+    const requestedDestinationDirectory = path.join(buildDirectory, manifest.sha256);
+    const destinationDirectory = await ensureMaterializationDirectories(
       runtimeRoot,
       binRoot,
       platformDirectory,
       buildDirectory,
-      destinationDirectory,
+      requestedDestinationDirectory,
     );
+    const destinationPath = path.join(destinationDirectory, manifest.executable);
+    assertConfined(binRoot, destinationPath);
     if (await isValidMaterializedFile(destinationPath, manifest)) {
       await preserveExecutableMode(destinationPath, this.platform);
       return destinationPath;
@@ -157,6 +158,14 @@ export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
       await fs.promises.unlink(temporaryPath).catch(() => undefined);
     }
   }
+}
+
+async function prepareMaterializationRuntimeRoot(runtimeRoot: string): Promise<string> {
+  await fs.promises.mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
+  await verifyPrivateDirectory(runtimeRoot);
+  const canonicalRuntimeRoot = await fs.promises.realpath(runtimeRoot);
+  await verifyPrivateDirectory(canonicalRuntimeRoot);
+  return canonicalRuntimeRoot;
 }
 
 function parseManifest(
@@ -199,18 +208,13 @@ async function ensureMaterializationDirectories(
   platformDirectory: string,
   buildDirectory: string,
   destinationDirectory: string,
-): Promise<void> {
-  await fs.promises.mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
-  await verifyPrivateDirectory(runtimeRoot);
+): Promise<string> {
   for (const directory of [binRoot, platformDirectory, buildDirectory, destinationDirectory]) {
     await createPrivateChildDirectory(directory);
   }
-  const canonicalRuntimeRoot = await fs.promises.realpath(runtimeRoot);
   const canonicalDestination = await fs.promises.realpath(destinationDirectory);
-  if (process.platform !== 'win32' && canonicalRuntimeRoot !== runtimeRoot) {
-    throw new Error('Runtime root contains a symbolic link');
-  }
-  assertConfined(canonicalRuntimeRoot, canonicalDestination);
+  assertConfined(runtimeRoot, canonicalDestination);
+  return canonicalDestination;
 }
 
 async function createPrivateChildDirectory(directory: string): Promise<void> {

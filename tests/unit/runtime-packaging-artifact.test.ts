@@ -24,6 +24,7 @@ function registerPackagedArtifactTests(): void {
   registerInvalidArtifactTests();
   registerTraversalTest();
   registerSignedArtifactTest();
+  registerCanonicalRuntimeRootTest();
   registerMaterializationSymlinkTest();
   registerConcurrentMaterializationTest();
   registerWindowsBuildMaterializationTest();
@@ -94,6 +95,35 @@ function registerSignedArtifactTest(): void {
     await expect(createPort(fixture).resolve()).resolves.toMatchObject({
       buildId: 'build-19',
     });
+  });
+}
+
+function registerCanonicalRuntimeRootTest(): void {
+  it('materializes below the canonical Runtime root through a safe ancestor alias', async () => {
+    if (process.platform === 'win32') return;
+    const fixture = createFixture('canonical-runtime-root');
+    const root = path.dirname(fixture.resourcesPath);
+    const canonicalHome = path.join(root, 'canonical home');
+    const aliasedHome = path.join(root, 'home alias');
+    fs.mkdirSync(canonicalHome, { mode: 0o700 });
+    fs.symlinkSync(canonicalHome, aliasedHome, 'dir');
+    const runtimeDirectory = path.join(aliasedHome, '.hariari', 'runtime');
+
+    const artifact = await createPort({ ...fixture, runtimeDirectory }).resolve();
+
+    expect(artifact.executablePath).toBe(
+      path.join(
+        canonicalHome,
+        '.hariari',
+        'runtime',
+        'bin',
+        '0.6.8-linux-x64',
+        'build-19',
+        '28b023a1ce5362303db380db0886e2eb5fe7690a86ab1dea9f87b63c4b2d5626',
+        EXECUTABLE_NAME,
+      ),
+    );
+    expect(fs.readFileSync(artifact.executablePath, 'utf8')).toBe('standalone-runtime');
   });
 }
 

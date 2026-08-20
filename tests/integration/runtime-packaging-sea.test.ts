@@ -14,7 +14,10 @@ import type {
 } from '../../src/main/runtime/runtime-ports';
 import { DetachedRuntimeProcessAdapter } from '../../src/main/runtime/detached-runtime-process';
 import { PackagedRuntimeArtifactPort } from '../../src/main/runtime/packaged-runtime-artifact';
-import type { RuntimeInterface } from '../../src/shared/runtime/runtime-interface';
+import type {
+  RuntimeConnectionState,
+  RuntimeInterface,
+} from '../../src/shared/runtime/runtime-interface';
 import { NodeLocalRuntimeTransport } from '../../src/runtime/local-transport';
 import { ProtectedRuntimeTokenStore } from '../../src/runtime/token-store';
 
@@ -34,21 +37,30 @@ async function verifiesPackagedSeaLifecycle(): Promise<void> {
   const fixture = createSeaFixture();
   const first = fixture.createInterface();
   const connected = await first.connectOrStart();
+  assertConnected(connected, 'initial connection');
   expect(connected).toMatchObject({
     state: 'connected',
     health: { runtimeVersion: fixture.runtimeVersion, status: 'ready', protocolVersion: 1 },
   });
-  if (connected.state !== 'connected') throw new Error('expected Runtime connection');
   await first.disconnect();
   fs.rmSync(path.join(fixture.resourcesPath, 'runtime'), { recursive: true, force: true });
   const second = fixture.createInterface();
   const reconnected = await second.connectOrStart();
+  assertConnected(reconnected, 'reconnection');
   expect(reconnected).toMatchObject({
     state: 'connected',
     health: { instanceId: connected.health.instanceId },
   });
   expect(fixture.launches.value).toBe(1);
   await shutdownPackagedRuntime(second, reconnected);
+}
+
+function assertConnected(
+  state: RuntimeConnectionState,
+  phase: string,
+): asserts state is Extract<RuntimeConnectionState, { readonly state: 'connected' }> {
+  if (state.state === 'connected') return;
+  throw new Error(`Packaged Runtime ${phase} failed: ${JSON.stringify(state)}`);
 }
 
 async function shutdownPackagedRuntime(
