@@ -11,6 +11,7 @@ import { LocalRuntimeEndpointPort } from './local-endpoint-port';
 import { NodeRuntimeClient } from './node-runtime-client';
 import { PackagedRuntimeArtifactPort } from './packaged-runtime-artifact';
 import { createRuntimeConnector, type RuntimeConnectorDependencies } from './runtime-connector';
+import type { RuntimeSupervisionSchedule } from './runtime-connection-supervisor';
 import type {
   RuntimeArtifactPort,
   RuntimeClientPort,
@@ -23,6 +24,7 @@ import type {
 const CONNECT_DEADLINE_MS = 2_000;
 const STARTUP_DEADLINE_MS = 8_000;
 const RECONNECT_DELAY_MS = 250;
+const HEALTH_POLL_INTERVAL_MS = 10_000;
 
 export interface DesktopRuntimeOptions {
   readonly runtimeVersion?: string;
@@ -36,6 +38,8 @@ export interface DesktopRuntimeOptions {
   readonly artifacts?: RuntimeArtifactPort;
   readonly now?: () => number;
   readonly delay?: (milliseconds: number) => Promise<void>;
+  readonly healthPollIntervalMs?: number;
+  readonly schedule?: RuntimeSupervisionSchedule;
 }
 
 export function createDesktopRuntimeInterface(
@@ -73,10 +77,18 @@ export function createDesktopRuntimeInterface(
     connectDeadlineMs: CONNECT_DEADLINE_MS,
     startupDeadlineMs: STARTUP_DEADLINE_MS,
     reconnectDelayMs: RECONNECT_DELAY_MS,
+    healthPollIntervalMs: options.healthPollIntervalMs ?? HEALTH_POLL_INTERVAL_MS,
+    schedule: options.schedule ?? scheduleRuntimeTask,
     now: options.now ?? Date.now,
     delay:
       options.delay ??
       ((milliseconds) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds))),
   };
   return createRuntimeConnector(dependencies);
+}
+
+function scheduleRuntimeTask(milliseconds: number, task: () => void): () => void {
+  const timer = setTimeout(task, milliseconds);
+  timer.unref();
+  return () => clearTimeout(timer);
 }

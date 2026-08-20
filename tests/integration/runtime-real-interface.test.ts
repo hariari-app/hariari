@@ -31,7 +31,29 @@ describe('real local Runtime Interface vertical', () => {
     verifiesRealRuntimeLifecycle,
   );
   it('waits for endpoint termination before public shutdown reports stopped', verifiesShutdown);
+  it(
+    'keeps a healthy idle session connected across multiple server request deadlines',
+    verifiesIdleHealthSupervision,
+  );
 });
+
+async function verifiesIdleHealthSupervision(): Promise<void> {
+  const fixture = await createRealRuntimeFixture({
+    requestDeadlineMs: 80,
+    healthPollIntervalMs: 20,
+  });
+  const runtime = fixture.createInterface();
+  const observed: Array<Awaited<ReturnType<RuntimeInterface['queryHealth']>>> = [];
+  runtime.subscribeStatus((state) => observed.push(state));
+  await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  const connectedAt = observed.findIndex((state) => state.state === 'connected');
+
+  await waitFor(260);
+
+  expect(observed.slice(connectedAt)).toHaveLength(1);
+  expect(observed.at(-1)?.state).toBe('connected');
+  await runtime.disconnect();
+}
 
 async function verifiesShutdown(): Promise<void> {
   const fixture = await createRealRuntimeFixture({ gateShutdown: true });
@@ -113,6 +135,8 @@ interface RealRuntimeFixture {
 
 interface RealRuntimeFixtureOptions {
   readonly gateShutdown?: boolean;
+  readonly requestDeadlineMs?: number;
+  readonly healthPollIntervalMs?: number;
 }
 
 async function createRealRuntimeFixture(
@@ -133,7 +157,14 @@ async function createRealRuntimeFixture(
   let id = 0;
   const randomId = (): string => `vertical-${++id}`;
   const launches = { value: 0 };
-  const processes = createProcessPort({ tokens, endpoint, transport, randomId, launches });
+  const processes = createProcessPort({
+    tokens,
+    endpoint,
+    transport,
+    randomId,
+    launches,
+    requestDeadlineMs: options.requestDeadlineMs,
+  });
   const artifacts: RuntimeArtifactPort = {
     resolve: async () => ({ executablePath: '/packaged/Hariari', buildId: 'build-19' }),
   };
@@ -150,6 +181,8 @@ async function createRealRuntimeFixture(
       connectDeadlineMs: 500,
       startupDeadlineMs: 2_000,
       reconnectDelayMs: 25,
+      healthPollIntervalMs: options.healthPollIntervalMs ?? 100,
+      schedule: scheduleTestTask,
       now: Date.now,
       delay: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
     });
@@ -162,6 +195,7 @@ interface ProcessFixtureOptions {
   readonly transport: NodeLocalRuntimeTransport;
   readonly randomId: () => string;
   readonly launches: { value: number };
+  readonly requestDeadlineMs?: number;
 }
 
 function createProcessPort(options: ProcessFixtureOptions): RuntimeProcessPort {
@@ -184,12 +218,21 @@ function createProcessPort(options: ProcessFixtureOptions): RuntimeProcessPort {
         randomId: options.randomId,
         randomNonce: options.randomId,
         handshakeDeadlineMs: 500,
-        requestDeadlineMs: 500,
+        requestDeadlineMs: options.requestDeadlineMs ?? 500,
       });
       servers.push(server);
       await server.start();
     },
   };
+}
+
+function waitFor(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function scheduleTestTask(milliseconds: number, task: () => void): () => void {
+  const timer = setTimeout(task, milliseconds);
+  return () => clearTimeout(timer);
 }
 
 async function cleanRuntimeFixtures(): Promise<void> {

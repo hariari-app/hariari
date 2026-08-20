@@ -156,6 +156,12 @@ function createSeaRuntimeInterface(options: SeaRuntimeOptions): RuntimeInterface
     connectDeadlineMs: 2_000,
     startupDeadlineMs: 8_000,
     reconnectDelayMs: 50,
+    healthPollIntervalMs: 10_000,
+    schedule: (milliseconds, task) => {
+      const timer = setTimeout(task, milliseconds);
+      timer.unref();
+      return () => clearTimeout(timer);
+    },
     now: Date.now,
     delay: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   });

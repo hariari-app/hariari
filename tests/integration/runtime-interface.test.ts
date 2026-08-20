@@ -3,6 +3,7 @@ import {
   createRuntimeConnector,
   type RuntimeConnectorDependencies,
 } from '../../src/main/runtime/runtime-connector';
+import type { RuntimeClientPort } from '../../src/main/runtime/runtime-ports';
 import type { RuntimeConnectionState } from '../../src/shared/runtime/runtime-interface';
 import { FakeRuntimeEnvironment } from './runtime-test-fakes';
 
@@ -28,9 +29,14 @@ describe('Runtime Interface', registerRuntimeInterfaceTests);
 function registerRuntimeInterfaceTests(): void {
   registerStartupTests();
   registerConnectionLifecycleTests();
+  registerHealthSupervisionTest();
+  registerHealthFailureSupervisionTest();
   registerPersistentReconnectTest();
-  registerReconnectCancellationTest();
+  registerDelayedReconnectCancellationTest();
+  registerInFlightReconnectCancellationTest();
   registerReconnectTerminalStateTests();
+  registerInitialRetryTests();
+  registerInitialRetryTerminalStateTests();
   registerConnectionFailureTests();
   registerShutdownTests();
   registerBoundarySecurityTest();
@@ -92,13 +98,16 @@ function registerConnectionLifecycleTests(): void {
 
   it('reconnects after transport loss and preserves the Runtime identity', async () => {
     const environment = new FakeRuntimeEnvironment();
+    const reconnects = controlledTimers(25);
     environment.running = true;
-    const runtime = connector(environment);
+    const runtime = connector(environment, { schedule: reconnects.schedule });
     const observed: RuntimeConnectionState[] = [];
     runtime.subscribeStatus((state) => observed.push(state));
     await runtime.connectOrStart();
 
     environment.dropConnections();
+    await eventually(() => reconnects.pending() === 1);
+    reconnects.releaseNext();
     await eventually(() => observed.at(-1)?.state === 'connected');
 
     expect(observed.some((state) => state.state === 'unavailable')).toBe(true);
@@ -113,9 +122,9 @@ function registerConnectionLifecycleTests(): void {
 function registerPersistentReconnectTest(): void {
   it('keeps retrying automatic reconnects after a transient failed attempt', async () => {
     const environment = new FakeRuntimeEnvironment();
-    const delays = controlledDelays();
+    const delays = controlledTimers(25);
     environment.running = true;
-    const runtime = connector(environment, { delay: delays.wait });
+    const runtime = connector(environment, { schedule: delays.schedule });
     const observed: RuntimeConnectionState[] = [];
     runtime.subscribeStatus((state) => observed.push(state));
     await runtime.connectOrStart();
@@ -145,12 +154,71 @@ function registerPersistentReconnectTest(): void {
   });
 }
 
-function registerReconnectCancellationTest(): void {
+function registerHealthSupervisionTest(): void {
+  it('polls connected health continuously and cancels polling on explicit disconnect', async () => {
+    const environment = new FakeRuntimeEnvironment();
+    const polls = controlledTimers(10);
+    environment.running = true;
+    const runtime = connector(environment, {
+      healthPollIntervalMs: 10,
+      schedule: polls.schedule,
+    });
+    const observed: RuntimeConnectionState[] = [];
+    runtime.subscribeStatus((state) => observed.push(state));
+
+    await runtime.connectOrStart();
+    expect(environment.healthQueryCount).toBe(1);
+    expect(polls.pending()).toBe(1);
+    polls.releaseNext();
+    await eventually(() => environment.healthQueryCount === 2 && polls.pending() === 1);
+
+    await runtime.disconnect();
+    expect(polls.pending()).toBe(0);
+    expect(observed.at(-1)).toMatchObject({
+      state: 'unavailable',
+      reason: 'client-disconnected',
+    });
+  });
+}
+
+function registerHealthFailureSupervisionTest(): void {
+  it('routes a failed health poll through unavailable and automatic reconnect', async () => {
+    const environment = new FakeRuntimeEnvironment();
+    const timers = controlledTimers(10, 25);
+    environment.running = true;
+    const runtime = connector(environment, {
+      healthPollIntervalMs: 10,
+      schedule: timers.schedule,
+    });
+    const observed: RuntimeConnectionState[] = [];
+    runtime.subscribeStatus((state) => observed.push(state));
+    await runtime.connectOrStart();
+
+    environment.healthFailure = true;
+    timers.releaseNext(10);
+    await eventually(() => {
+      const latest = observed.at(-1);
+      return (
+        latest?.state === 'unavailable' &&
+        latest.reason === 'health-timeout' &&
+        timers.pending(25) === 1
+      );
+    });
+    expect(timers.pending(25)).toBe(1);
+
+    environment.healthFailure = false;
+    timers.releaseNext(25);
+    await eventually(() => observed.at(-1)?.state === 'connected');
+    expect(environment.launchCount).toBe(0);
+  });
+}
+
+function registerDelayedReconnectCancellationTest(): void {
   it('cancels a pending automatic retry when Desktop explicitly disconnects', async () => {
     const environment = new FakeRuntimeEnvironment();
-    const delays = controlledDelays();
+    const delays = controlledTimers(25);
     environment.running = true;
-    const runtime = connector(environment, { delay: delays.wait });
+    const runtime = connector(environment, { schedule: delays.schedule });
     await runtime.connectOrStart();
 
     environment.dropConnections();
@@ -166,12 +234,53 @@ function registerReconnectCancellationTest(): void {
   });
 }
 
+function registerInFlightReconnectCancellationTest(): void {
+  it('discards an in-flight reconnect session when Desktop explicitly disconnects', async () => {
+    const environment = new FakeRuntimeEnvironment();
+    const delays = controlledTimers(25);
+    const reconnectEntered = deferred<void>();
+    const releaseReconnect = deferred<void>();
+    let blockReconnect = false;
+    const clients: RuntimeClientPort = {
+      connect: async (...args) => {
+        if (blockReconnect) {
+          reconnectEntered.resolve();
+          await releaseReconnect.promise;
+        }
+        return environment.clients.connect(...args);
+      },
+    };
+    environment.running = true;
+    const runtime = connector(environment, { clients, schedule: delays.schedule });
+    const observed: RuntimeConnectionState[] = [];
+    runtime.subscribeStatus((state) => observed.push(state));
+    await runtime.connectOrStart();
+
+    blockReconnect = true;
+    environment.dropConnections();
+    await eventually(() => delays.pending() === 1);
+    delays.releaseNext();
+    await reconnectEntered.promise;
+    await runtime.disconnect();
+    releaseReconnect.resolve();
+    await flushMicrotasks();
+
+    expect(observed.at(-1)).toEqual({
+      state: 'unavailable',
+      reason: 'client-disconnected',
+      retryable: true,
+    });
+    expect(environment.activeSessionCount).toBe(0);
+    expect(environment.launchCount).toBe(0);
+  });
+}
+
 function registerReconnectTerminalStateTests(): void {
   it.each(RECONNECT_TERMINAL_CASES)('stops automatic retries after $name', async (testCase) => {
     const environment = new FakeRuntimeEnvironment();
-    const delays = controlledDelays();
+    const delays = controlledTimers(25);
     environment.running = true;
-    const runtime = connector(environment, { delay: delays.wait });
+    const runtime = connector(environment, { schedule: delays.schedule });
     const observed: RuntimeConnectionState[] = [];
     runtime.subscribeStatus((state) => observed.push(state));
     await runtime.connectOrStart();
@@ -198,6 +307,75 @@ function registerReconnectTerminalStateTests(): void {
     expect(delays.pending()).toBe(0);
     expect(environment.launchCount).toBe(0);
   });
+}
+
+function registerInitialRetryTests(): void {
+  it('automatically recovers when a Runtime becomes ready after the initial startup timeout', async () => {
+    const environment = new FakeRuntimeEnvironment();
+    const retries = controlledTimers(100);
+    environment.availabilityFailures = 100;
+    const runtime = connector(environment, {
+      startupDeadlineMs: 50,
+      reconnectDelayMs: 100,
+      schedule: retries.schedule,
+    });
+    const observed: RuntimeConnectionState[] = [];
+    runtime.subscribeStatus((state) => observed.push(state));
+
+    await expect(runtime.connectOrStart()).resolves.toEqual({
+      state: 'unavailable',
+      reason: 'startup-timeout',
+      retryable: true,
+    });
+    await eventually(() => retries.pending() === 1);
+    environment.availabilityFailures = 0;
+    retries.releaseNext();
+    await eventually(() => observed.at(-1)?.state === 'connected');
+
+    expect(observed.at(-1)).toMatchObject({
+      state: 'connected',
+      health: { instanceId: environment.health.instanceId },
+    });
+    expect(environment.launchCount).toBe(1);
+  });
+}
+
+function registerInitialRetryTerminalStateTests(): void {
+  it.each(RECONNECT_TERMINAL_CASES)(
+    'stops initial retry supervision after $name',
+    async (testCase) => {
+      const environment = new FakeRuntimeEnvironment();
+      const retries = controlledTimers(100);
+      environment.availabilityFailures = 100;
+      const runtime = connector(environment, {
+        startupDeadlineMs: 50,
+        reconnectDelayMs: 100,
+        schedule: retries.schedule,
+      });
+      const observed: RuntimeConnectionState[] = [];
+      runtime.subscribeStatus((state) => observed.push(state));
+
+      await expect(runtime.connectOrStart()).resolves.toMatchObject({
+        state: 'unavailable',
+        reason: 'startup-timeout',
+      });
+      await eventually(() => retries.pending() === 1);
+      environment.availabilityFailures = 0;
+      testCase.configure(environment);
+      retries.releaseNext();
+      await eventually(() => {
+        const latest = observed.at(-1);
+        return (
+          latest?.state === 'incompatible' ||
+          (latest?.state === 'unavailable' && latest.reason === 'authentication-rejected')
+        );
+      });
+
+      expect(observed.at(-1)).toMatchObject(testCase.expected);
+      expect(retries.pending()).toBe(0);
+      expect(environment.launchCount).toBe(1);
+    },
+  );
 }
 
 function registerConnectionFailureTests(): void {
@@ -325,6 +503,8 @@ function connector(
     connectDeadlineMs: 100,
     startupDeadlineMs: 1_000,
     reconnectDelayMs: 25,
+    healthPollIntervalMs: 10_000,
+    schedule: () => () => undefined,
     now: environment.now,
     delay: environment.delay,
     ...overrides,
@@ -339,13 +519,37 @@ async function eventually(predicate: () => boolean): Promise<void> {
   throw new Error('condition was not met');
 }
 
-function controlledDelays() {
-  const resolvers: Array<() => void> = [];
+function controlledTimers(...acceptedDelayMs: number[]) {
+  const tasks: Array<{ milliseconds: number; task: () => void }> = [];
   return {
-    wait: () => new Promise<void>((resolve) => resolvers.push(resolve)),
-    pending: () => resolvers.length,
-    releaseNext: () => resolvers.shift()?.(),
+    schedule: (milliseconds: number, task: () => void) => {
+      if (!acceptedDelayMs.includes(milliseconds)) return () => undefined;
+      const scheduled = { milliseconds, task };
+      tasks.push(scheduled);
+      return () => {
+        const index = tasks.indexOf(scheduled);
+        if (index >= 0) tasks.splice(index, 1);
+      };
+    },
+    pending: (milliseconds?: number) =>
+      milliseconds === undefined
+        ? tasks.length
+        : tasks.filter((task) => task.milliseconds === milliseconds).length,
+    releaseNext: (milliseconds?: number) => {
+      const index = tasks.findIndex(
+        (task) => milliseconds === undefined || task.milliseconds === milliseconds,
+      );
+      if (index >= 0) tasks.splice(index, 1)[0]?.task();
+    },
   };
+}
+
+function deferred<T>() {
+  let resolve = (_value: T | PromiseLike<T>): void => undefined;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
 }
 
 async function flushMicrotasks(): Promise<void> {

@@ -95,6 +95,7 @@ export class FakeRuntimeEnvironment {
   artifactFailure = false;
   startFailure = false;
   healthFailure = false;
+  healthQueryCount = 0;
   availabilityFailures = 0;
   launchCount = 0;
   connectCount = 0;
@@ -108,6 +109,10 @@ export class FakeRuntimeEnvironment {
   readonly delay = async (milliseconds: number): Promise<void> => {
     this.nowMs += milliseconds;
   };
+
+  get activeSessionCount(): number {
+    return this.sessions.size;
+  }
 
   dropConnections(): void {
     for (const session of [...this.sessions]) session.forceDisconnect();
@@ -158,6 +163,7 @@ class FakeRuntimeSession implements RuntimeClientSession {
   async queryHealth(): Promise<RuntimeHealth> {
     if (this.disconnected) throw new RuntimePortError('transport-lost');
     if (this.environment.healthFailure) throw new RuntimePortError('timeout');
+    this.environment.healthQueryCount += 1;
     return { ...this.environment.health, protocolVersion: this.protocolVersion };
   }
 
