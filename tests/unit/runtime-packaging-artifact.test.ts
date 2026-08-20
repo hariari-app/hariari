@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PackagedRuntimeArtifactPort } from '../../src/main/runtime/packaged-runtime-artifact';
+import { RuntimePortError } from '../../src/main/runtime/runtime-ports';
 
 const require = createRequire(import.meta.url);
 const { refreshRuntimeManifest } = require('../../scripts/runtime-after-pack.js') as {
@@ -21,6 +22,7 @@ describe('packaged Runtime artifact', registerPackagedArtifactTests);
 function registerPackagedArtifactTests(): void {
   afterEach(cleanRoots);
   registerArtifactResolutionTest();
+  registerArtifactFailureCauseTest();
   registerInvalidArtifactTests();
   registerTraversalTest();
   registerSignedArtifactTest();
@@ -30,6 +32,31 @@ function registerPackagedArtifactTests(): void {
   registerMaterializationStagingPathTest();
   registerWindowsBuildMaterializationTest();
   registerWindowsSignedArtifactMaterializationTest();
+}
+
+function registerArtifactFailureCauseTest(): void {
+  it('preserves the original internal failure as the public artifact error cause', async () => {
+    const fixture = createFixture('internal-failure-cause');
+    const internalFailure = new Error('artifact filesystem diagnostic');
+    const realpath = vi.spyOn(fs.promises, 'realpath').mockRejectedValueOnce(internalFailure);
+    let failure: unknown;
+
+    try {
+      await createPort(fixture).resolve();
+    } catch (error) {
+      failure = error;
+    } finally {
+      realpath.mockRestore();
+    }
+
+    expect(failure).toBeInstanceOf(RuntimePortError);
+    expect(failure).toMatchObject({
+      code: 'artifact-unavailable',
+      message: 'Runtime operation failed: artifact-unavailable',
+      retryable: undefined,
+    });
+    expect((failure as Error).cause).toBe(internalFailure);
+  });
 }
 
 function registerArtifactResolutionTest(): void {

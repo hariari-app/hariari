@@ -24,8 +24,9 @@ export class RuntimePortError extends Error {
   constructor(
     code: RuntimePortErrorCode,
     readonly retryable?: boolean,
+    options?: ErrorOptions,
   ) {
-    super(`Runtime operation failed: ${code}`);
+    super(`Runtime operation failed: ${code}`, options);
     this.name = 'RuntimePortError';
     this.code = code;
   }

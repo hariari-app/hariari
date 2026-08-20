@@ -35,6 +35,7 @@ describe('host Node SEA Runtime artifact', () => {
 
 async function verifiesPackagedSeaLifecycle(): Promise<void> {
   const fixture = createSeaFixture();
+  await preflightPackagedArtifact(fixture.artifacts);
   const first = fixture.createInterface();
   const connected = await first.connectOrStart();
   assertConnected(connected, 'initial connection');
@@ -53,6 +54,46 @@ async function verifiesPackagedSeaLifecycle(): Promise<void> {
   });
   expect(fixture.launches.value).toBe(1);
   await shutdownPackagedRuntime(second, reconnected);
+}
+
+async function preflightPackagedArtifact(artifacts: PackagedRuntimeArtifactPort): Promise<void> {
+  try {
+    await artifacts.resolve();
+  } catch (error) {
+    throw new Error(`Packaged Runtime artifact preflight failed: ${formatErrorCauseChain(error)}`);
+  }
+}
+
+function formatErrorCauseChain(error: unknown): string {
+  const chain: Array<{
+    readonly name: string;
+    readonly message: string;
+    readonly code: string | null;
+  }> = [];
+  const visited = new Set<unknown>();
+  let current = error;
+  while (current instanceof Error && !visited.has(current)) {
+    visited.add(current);
+    chain.push({
+      name: current.name,
+      message: current.message,
+      code: readErrorCode(current),
+    });
+    current = current.cause;
+  }
+  if (current !== undefined) {
+    chain.push({
+      name: current instanceof Error ? current.name : 'NonErrorCause',
+      message: current instanceof Error ? 'Cyclic cause omitted' : 'Non-Error cause omitted',
+      code: current instanceof Error ? readErrorCode(current) : null,
+    });
+  }
+  return JSON.stringify(chain);
+}
+
+function readErrorCode(error: Error): string | null {
+  const code = (error as Error & { readonly code?: unknown }).code;
+  return typeof code === 'string' || typeof code === 'number' ? String(code) : null;
 }
 
 function assertConnected(
@@ -84,6 +125,7 @@ interface SeaFixture {
   readonly resourcesPath: string;
   readonly runtimeVersion: string;
   readonly launches: { value: number };
+  readonly artifacts: PackagedRuntimeArtifactPort;
   readonly createInterface: () => RuntimeInterface;
 }
 
@@ -118,7 +160,7 @@ function createSeaFixture(): SeaFixture {
       artifacts,
       runtimeVersion,
     });
-  return { resourcesPath, runtimeVersion, launches, createInterface };
+  return { resourcesPath, runtimeVersion, launches, artifacts, createInterface };
 }
 
 function createProcessPort(

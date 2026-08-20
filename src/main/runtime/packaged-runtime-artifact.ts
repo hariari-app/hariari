@@ -60,7 +60,7 @@ export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
       };
     } catch (error) {
       if (error instanceof RuntimePortError) throw error;
-      throw new RuntimePortError('artifact-unavailable');
+      throw new RuntimePortError('artifact-unavailable', undefined, { cause: error });
     }
   }
 
