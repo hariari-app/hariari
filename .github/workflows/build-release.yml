@@ -332,6 +332,7 @@ jobs:
             artifacts/linux/*.rpm
             artifacts/linux/*.AppImage
             artifacts/linux/latest-linux.yml
+            artifacts/linux/latest-linux-arm64.yml
             artifacts/macos/*.dmg
             artifacts/macos/*.zip
             artifacts/macos/latest-mac.yml
