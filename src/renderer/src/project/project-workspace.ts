@@ -396,7 +396,10 @@ export class ProjectWorkspace {
     return undefined;
   }
 
-  getTrackedAgents(): ReadonlyMap<string, { readonly info: AgentInfo }> {
+  getTrackedAgents(): ReadonlyMap<
+    string,
+    { readonly info: AgentInfo; readonly statusBar: AgentStatusBar }
+  > {
     return this.tracked;
   }
 

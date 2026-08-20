@@ -1,4 +1,4 @@
-import { computeGraphLayout, getMaxLane, type GraphNode } from './scm-graph-layout';
+import { computeGraphLayout, getMaxLane } from './scm-graph-layout';
 import type { GitLogEntry } from '../../../shared/git-types';
 
 const ROW_HEIGHT = 20;

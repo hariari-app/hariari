@@ -20,6 +20,13 @@ function syntaxThemeExtensions(): readonly [] | readonly [typeof oneDark] {
 
 type ViewMode = 'files' | 'changes';
 
+interface FileTreeNode {
+  readonly entry: FileEntry;
+  expanded: boolean;
+  children: FileTreeNode[] | null;
+  readonly depth: number;
+}
+
 export class FileViewer {
   private readonly overlay: HTMLElement;
   private readonly treeContainer: HTMLElement;
@@ -41,7 +48,7 @@ export class FileViewer {
   private readonly languageCompartment = new Compartment();
   private scmPanel: SourceControlPanel | null = null;
   private _rightPane!: HTMLElement;
-  private treeNodes: Array<{ entry: FileEntry; expanded: boolean; children: any[] | null; depth: number }> = [];
+  private treeNodes: FileTreeNode[] = [];
   private pendingCreate: { type: 'file' | 'folder'; parentPath: string } | null = null;
   private contextMenu: HTMLElement | null = null;
   private selectedTreePath = '';
@@ -628,7 +635,7 @@ export class FileViewer {
         if (this.pendingCreate && this.pendingCreate.parentPath === node.entry.path) {
           container.appendChild(this.createInlineInput(this.pendingCreate.type, node.entry.path, node.depth + 1));
         }
-        this.renderNodes(node.children as typeof this.treeNodes, container);
+        this.renderNodes(node.children, container);
       }
     }
   }

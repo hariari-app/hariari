@@ -32,7 +32,7 @@ export class VoiceRouter {
     // Strip all punctuation, normalize whitespace
     const cleaned = transcript
       .toLowerCase()
-      .replace(/[.,!?;:'"()\[\]{}\-—]/g, '')
+      .replace(/[.,!?;:'"()[\]{}\-—]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
 

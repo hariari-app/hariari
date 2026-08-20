@@ -10,12 +10,15 @@ import { getTheme, loadSavedTheme } from './terminal-theme';
 import { TerminalSearch } from './terminal-search';
 import { toastManager } from '../ui/toast-manager';
 
-function debounce<T extends (...args: any[]) => void>(fn: T, ms: number): T {
+function debounce<TArgs extends unknown[]>(
+  fn: (...args: TArgs) => void,
+  ms: number,
+): (...args: TArgs) => void {
   let timer: ReturnType<typeof setTimeout> | null = null;
-  return ((...args: any[]) => {
+  return (...args: TArgs) => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => fn(...args), ms);
-  }) as T;
+  };
 }
 
 export class TerminalPanel {

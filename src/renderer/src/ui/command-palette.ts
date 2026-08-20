@@ -309,11 +309,12 @@ export class CommandPalette {
         this.updateSelection();
         allItems[this.selectedIndex]?.scrollIntoView({ block: 'nearest' });
         break;
-      case 'Enter':
+      case 'Enter': {
         e.preventDefault();
         const selected = allItems[this.selectedIndex] as HTMLElement | undefined;
         if (selected) selected.click();
         break;
+      }
       case 'Escape':
         e.preventDefault();
         this.hide();

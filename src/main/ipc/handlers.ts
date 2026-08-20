@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { IPC_CHANNELS } from '../../shared/constants';
-import type { AppState } from '../../shared/ipc-types';
+import type { AgentType } from '../../shared/agent-types';
 import type { AgentManager } from '../agent/agent-manager';
 import type { PtyManager } from '../pty/pty-manager';
 import type { StateManager } from '../state/state-manager';
@@ -15,7 +15,6 @@ import { installSkills, loadInstalled, uninstallSkill } from '../skills/skills-i
 import { detectProjectLanguages } from '../skills/language-detector';
 import { clearVoiceApiKey, hasVoiceApiKey, readVoiceApiKey, saveVoiceApiKey } from '../voice/voice-secrets';
 import {
-  validateSessionId,
   validateWriteRequest,
   validateResizeRequest,
   validateKillRequest,
@@ -29,6 +28,14 @@ import {
 } from './validators';
 
 const MAX_AGENTS = 20;
+
+interface DeepgramTranscriptionResponse {
+  readonly results?: {
+    readonly channels?: ReadonlyArray<{
+      readonly alternatives?: ReadonlyArray<{ readonly transcript?: string }>;
+    }>;
+  };
+}
 
 function loadVoiceConfig(): { provider: string; postProcessMode: string; deviceId: string; hasApiKey: boolean } {
   try {
@@ -444,7 +451,7 @@ export function registerIpcHandlers(
           return { error: `${provider}_api_error_${response.status}: ${errText}` };
         }
 
-        const result = await response.json() as any;
+        const result = (await response.json()) as DeepgramTranscriptionResponse;
         const text = result.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim() ?? '';
         console.log('[IPC][voice:transcribe] Success, text length:', text.length);
         return { text };
@@ -912,7 +919,6 @@ export function registerIpcHandlers(
 
       if (isWin) {
         const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
-        const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
         extraPaths.push(
           path.join(appData, 'npm'),
           path.join(home, '.cargo', 'bin'),
@@ -1099,8 +1105,12 @@ export function registerIpcHandlers(
   });
 
   const VALID_SKILL_ID = /^[a-z0-9-]+$/;
-  const KNOWN_AGENTS = new Set<string>(['claude', 'gemini', 'codex', 'pi', 'opencode',
+  const KNOWN_AGENTS = new Set<AgentType>(['claude', 'gemini', 'codex', 'pi', 'opencode',
     'cline', 'copilot', 'amp', 'continue', 'cursor', 'crush', 'qwen']);
+
+  function isKnownAgent(value: unknown): value is AgentType {
+    return typeof value === 'string' && KNOWN_AGENTS.has(value as AgentType);
+  }
 
   ipcMain.handle(IPC_CHANNELS.SKILLS_INSTALL, async (_event, raw: unknown) => {
     if (!raw || typeof raw !== 'object') return { results: [], summary: { installed: 0, failed: 0, skipped: 0 } };
@@ -1110,8 +1120,8 @@ export function registerIpcHandlers(
     }
     // Validate each element: skillIds must match safe identifier pattern, targetAgents must be known
     const safeSkillIds = req.skillIds.filter((id): id is string => typeof id === 'string' && VALID_SKILL_ID.test(id));
-    const safeTargetAgents = req.targetAgents.filter((a): a is string => typeof a === 'string' && KNOWN_AGENTS.has(a));
-    return installSkills({ skillIds: safeSkillIds, targetAgents: safeTargetAgents as any });
+    const safeTargetAgents = req.targetAgents.filter(isKnownAgent);
+    return installSkills({ skillIds: safeSkillIds, targetAgents: safeTargetAgents });
   });
 
   ipcMain.handle(IPC_CHANNELS.SKILLS_INSTALLED, async () => {

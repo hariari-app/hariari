@@ -15,11 +15,6 @@ function collectSessionIds(node: LayoutNode): string[] {
   ];
 }
 
-function maxDepth(node: LayoutNode): number {
-  if (node.type === 'leaf') return 0;
-  return 1 + Math.max(maxDepth(node.children[0]), maxDepth(node.children[1]));
-}
-
 describe('buildBalancedTree', () => {
   it('creates a single leaf for 1 session', () => {
     const tree = buildBalancedTree(['s1']);

@@ -40,8 +40,7 @@ if (typeof globalThis.document === 'undefined') {
   });
 }
 
-import { getTheme, getThemeNames, loadSavedTheme, themes } from '../../src/renderer/src/terminal/terminal-theme';
-import type { AppTheme } from '../../src/renderer/src/terminal/terminal-theme';
+import { getTheme, getThemeNames, loadSavedTheme } from '../../src/renderer/src/terminal/terminal-theme';
 
 describe('Terminal Theme', () => {
   beforeEach(() => {

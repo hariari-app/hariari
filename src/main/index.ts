@@ -1,4 +1,4 @@
-import { app, session, type BrowserWindow } from 'electron';
+import { app, session } from 'electron';
 import { createMainWindow } from './window/main-window';
 import { PtyManager } from './pty/pty-manager';
 import { AgentManager } from './agent/agent-manager';
