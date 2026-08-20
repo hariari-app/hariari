@@ -4,33 +4,54 @@ import os from 'node:os';
 import path from 'node:path';
 import { IPC_CHANNELS } from '../../shared/constants';
 import { extractDeepgramTranscript } from '../voice/deepgram-response';
-import { clearVoiceApiKey, hasVoiceApiKey, readVoiceApiKey, saveVoiceApiKey } from '../voice/voice-secrets';
+import {
+  clearVoiceApiKey,
+  hasVoiceApiKey,
+  readVoiceApiKey,
+  saveVoiceApiKey,
+} from '../voice/voice-secrets';
 
-function loadVoiceConfig(): { provider: string; postProcessMode: string; deviceId: string; hasApiKey: boolean } {
+function loadVoiceConfig(): {
+  provider: string;
+  postProcessMode: string;
+  deviceId: string;
+  hasApiKey: boolean;
+} {
   try {
     const filePath = path.join(os.homedir(), '.hariari', 'settings.json');
-    const parsed = fs.existsSync(filePath)
-      ? JSON.parse(fs.readFileSync(filePath, 'utf-8'))
-      : {};
-    const settings = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+    const parsed = fs.existsSync(filePath) ? JSON.parse(fs.readFileSync(filePath, 'utf-8')) : {};
+    const settings =
+      parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
     return {
       provider: typeof settings.voiceProvider === 'string' ? settings.voiceProvider : 'openai',
-      postProcessMode: typeof settings.voicePostProcessMode === 'string' ? settings.voicePostProcessMode : 'command',
+      postProcessMode:
+        typeof settings.voicePostProcessMode === 'string'
+          ? settings.voicePostProcessMode
+          : 'command',
       deviceId: typeof settings.voiceDeviceId === 'string' ? settings.voiceDeviceId : '',
       hasApiKey: hasVoiceApiKey(),
     };
   } catch {
-    return { provider: 'openai', postProcessMode: 'command', deviceId: '', hasApiKey: hasVoiceApiKey() };
+    return {
+      provider: 'openai',
+      postProcessMode: 'command',
+      deviceId: '',
+      hasApiKey: hasVoiceApiKey(),
+    };
   }
 }
 
-function saveVoiceConfig(config: { provider: string; postProcessMode: string; deviceId: string }): void {
+function saveVoiceConfig(config: {
+  provider: string;
+  postProcessMode: string;
+  deviceId: string;
+}): void {
   const filePath = path.join(os.homedir(), '.hariari', 'settings.json');
   let settings: Record<string, unknown> = {};
   try {
     if (fs.existsSync(filePath)) {
       const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-      settings = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+      settings = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
     }
   } catch {
     settings = {};
@@ -84,11 +105,13 @@ export function registerVoiceHandlers(): void {
       const audioBase64 = req.audioBase64 as string;
       if (!provider || !audioBase64) return { error: 'missing_fields' };
 
-      const apiKey = req.apiKey as string | undefined || readVoiceApiKey();
+      const apiKey = (req.apiKey as string | undefined) || readVoiceApiKey();
       if (!apiKey) return { error: 'no_api_key' };
 
       const audioBuffer = Buffer.from(audioBase64, 'base64');
-      console.log(`[IPC][voice:transcribe] provider=${provider}, audioSize=${audioBuffer.length} bytes`);
+      console.log(
+        `[IPC][voice:transcribe] provider=${provider}, audioSize=${audioBuffer.length} bytes`,
+      );
 
       let url: string;
       let model = '';
@@ -108,7 +131,7 @@ export function registerVoiceHandlers(): void {
         const response = await fetch(url, {
           method: 'POST',
           headers: {
-            'Authorization': `Token ${apiKey}`,
+            Authorization: `Token ${apiKey}`,
             'Content-Type': 'audio/webm',
           },
           body: audioBuffer,
@@ -116,7 +139,10 @@ export function registerVoiceHandlers(): void {
 
         if (!response.ok) {
           const errText = await response.text();
-          console.error(`[IPC][voice:transcribe] ${provider} API error ${response.status}:`, errText);
+          console.error(
+            `[IPC][voice:transcribe] ${provider} API error ${response.status}:`,
+            errText,
+          );
           return { error: `${provider}_api_error_${response.status}: ${errText}` };
         }
 
@@ -128,19 +154,25 @@ export function registerVoiceHandlers(): void {
       const boundary = '----HariariBoundary' + Date.now();
       const parts: Buffer[] = [];
 
-      parts.push(Buffer.from(
-        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.webm"\r\nContent-Type: audio/webm\r\n\r\n`
-      ));
+      parts.push(
+        Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.webm"\r\nContent-Type: audio/webm\r\n\r\n`,
+        ),
+      );
       parts.push(audioBuffer);
       parts.push(Buffer.from('\r\n'));
 
-      parts.push(Buffer.from(
-        `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n${model}\r\n`
-      ));
+      parts.push(
+        Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n${model}\r\n`,
+        ),
+      );
 
-      parts.push(Buffer.from(
-        `--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nen\r\n`
-      ));
+      parts.push(
+        Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\nen\r\n`,
+        ),
+      );
 
       parts.push(Buffer.from(`--${boundary}--\r\n`));
 
@@ -149,7 +181,7 @@ export function registerVoiceHandlers(): void {
       const response = await fetch(url, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${apiKey}`,
+          Authorization: `Bearer ${apiKey}`,
           'Content-Type': `multipart/form-data; boundary=${boundary}`,
         },
         body,
@@ -161,8 +193,11 @@ export function registerVoiceHandlers(): void {
         return { error: `${provider}_api_error_${response.status}: ${errText}` };
       }
 
-      const result = await response.json() as Record<string, unknown>;
-      console.log('[IPC][voice:transcribe] Success, text length:', (result.text as string)?.length ?? 0);
+      const result = (await response.json()) as Record<string, unknown>;
+      console.log(
+        '[IPC][voice:transcribe] Success, text length:',
+        (result.text as string)?.length ?? 0,
+      );
       return { text: (result.text as string)?.trim() ?? '' };
     } catch (error) {
       console.error('[IPC][voice:transcribe] Exception:', error);
@@ -178,7 +213,7 @@ export function registerVoiceHandlers(): void {
       const messages = req.messages as Array<{ role: string; content: string }>;
       if (!provider || !messages) return { error: 'missing_fields' };
 
-      const apiKey = req.apiKey as string | undefined || readVoiceApiKey();
+      const apiKey = (req.apiKey as string | undefined) || readVoiceApiKey();
       if (!apiKey) return { error: 'no_api_key' };
 
       let url: string;
@@ -197,7 +232,7 @@ export function registerVoiceHandlers(): void {
       const response = await fetch(url, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${apiKey}`,
+          Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -214,7 +249,7 @@ export function registerVoiceHandlers(): void {
         return { error: `llm_error_${response.status}` };
       }
 
-      const result = await response.json() as Record<string, unknown>;
+      const result = (await response.json()) as Record<string, unknown>;
       const choices = result.choices as Array<{ message: { content: string } }>;
       const text = choices?.[0]?.message?.content?.trim() ?? '';
       return { text };

@@ -32,7 +32,13 @@ function parseSearchResults(output: string, projectPath: string, isRipgrep: bool
       filePath = filePath.slice(pathPrefix.length);
     }
 
-    results.push({ filePath, lineNumber, lineContent: lineContent.trim(), matchStart, matchEnd: matchStart + 1 });
+    results.push({
+      filePath,
+      lineNumber,
+      lineContent: lineContent.trim(),
+      matchStart,
+      matchEnd: matchStart + 1,
+    });
     if (results.length >= 200) break;
   }
 
@@ -55,11 +61,19 @@ export function registerGitHandlers(): void {
     try {
       if (typeof raw !== 'object' || raw === null) return { error: 'invalid_request' };
       const req = raw as Record<string, unknown>;
-      if (typeof req.projectPath !== 'string' || typeof req.filePath !== 'string' || typeof req.group !== 'string') {
+      if (
+        typeof req.projectPath !== 'string' ||
+        typeof req.filePath !== 'string' ||
+        typeof req.group !== 'string'
+      ) {
         return { error: 'invalid_request' };
       }
       const { getGitDiff } = await import('../git/git-service');
-      return await getGitDiff(req.projectPath, req.filePath, req.group as 'staged' | 'unstaged' | 'untracked');
+      return await getGitDiff(
+        req.projectPath,
+        req.filePath,
+        req.group as 'staged' | 'unstaged' | 'untracked',
+      );
     } catch (error) {
       console.error('[IPC][git:diff]', error);
       return { error: 'git_diff_failed' };
@@ -70,7 +84,11 @@ export function registerGitHandlers(): void {
     try {
       if (typeof raw !== 'object' || raw === null) return { error: 'invalid_request' };
       const req = raw as Record<string, unknown>;
-      if (typeof req.projectPath !== 'string' || typeof req.filePath !== 'string' || typeof req.ref !== 'string') {
+      if (
+        typeof req.projectPath !== 'string' ||
+        typeof req.filePath !== 'string' ||
+        typeof req.ref !== 'string'
+      ) {
         return { error: 'invalid_request' };
       }
       const { getFileAtRef } = await import('../git/git-service');
@@ -91,7 +109,9 @@ export function registerGitHandlers(): void {
       }
       const { runGit } = await import('../git/git-executor');
       const result = await runGit(req.projectPath, ['checkout', '--', req.filePath]);
-      return result.exitCode === 0 ? { success: true } : { error: result.stderr || 'discard_failed' };
+      return result.exitCode === 0
+        ? { success: true }
+        : { error: result.stderr || 'discard_failed' };
     } catch (error) {
       console.error('[IPC][git:discard]', error);
       return { error: 'discard_failed' };
@@ -153,7 +173,8 @@ export function registerGitHandlers(): void {
     try {
       if (typeof raw !== 'object' || raw === null) return { error: 'invalid_request' };
       const req = raw as Record<string, unknown>;
-      if (typeof req.projectPath !== 'string' || typeof req.filePath !== 'string') return { error: 'invalid_request' };
+      if (typeof req.projectPath !== 'string' || typeof req.filePath !== 'string')
+        return { error: 'invalid_request' };
       const { gitUnstage } = await import('../git/git-service');
       return await gitUnstage(req.projectPath, req.filePath);
     } catch (error) {
@@ -199,7 +220,8 @@ export function registerGitHandlers(): void {
     try {
       if (typeof raw !== 'object' || raw === null) return { error: 'invalid_request' };
       const req = raw as Record<string, unknown>;
-      if (typeof req.projectPath !== 'string' || typeof req.message !== 'string') return { error: 'invalid_request' };
+      if (typeof req.projectPath !== 'string' || typeof req.message !== 'string')
+        return { error: 'invalid_request' };
       const { gitCommit } = await import('../git/git-service');
       return await gitCommit(req.projectPath, req.message, req.amend === true);
     } catch (error) {
@@ -234,10 +256,22 @@ export function registerGitHandlers(): void {
 
       return new Promise<unknown[]>((resolve) => {
         const rgArgs = [
-          '--line-number', '--column', '--no-heading',
-          '--max-count', String(maxResults),
-          '--glob', '!node_modules', '--glob', '!.git', '--glob', '!dist', '--glob', '!out',
-          '--', req.query as string, req.projectPath as string,
+          '--line-number',
+          '--column',
+          '--no-heading',
+          '--max-count',
+          String(maxResults),
+          '--glob',
+          '!node_modules',
+          '--glob',
+          '!.git',
+          '--glob',
+          '!dist',
+          '--glob',
+          '!out',
+          '--',
+          req.query as string,
+          req.projectPath as string,
         ];
 
         execFile('rg', rgArgs, { timeout: 10000, maxBuffer: 2 * 1024 * 1024 }, (_rgErr, rgOut) => {
@@ -248,19 +282,28 @@ export function registerGitHandlers(): void {
 
           const grepArgs = [
             '-rn',
-            '--exclude-dir=node_modules', '--exclude-dir=.git',
-            '--exclude-dir=dist', '--exclude-dir=out',
-            '--exclude-dir=__pycache__', '--exclude-dir=.cache',
-            req.query as string, req.projectPath as string,
+            '--exclude-dir=node_modules',
+            '--exclude-dir=.git',
+            '--exclude-dir=dist',
+            '--exclude-dir=out',
+            '--exclude-dir=__pycache__',
+            '--exclude-dir=.cache',
+            req.query as string,
+            req.projectPath as string,
           ];
 
-          execFile('grep', grepArgs, { timeout: 10000, maxBuffer: 2 * 1024 * 1024 }, (_grepErr, grepOut) => {
-            if (grepOut && grepOut.trim()) {
-              resolve(parseSearchResults(grepOut, req.projectPath as string, false));
-            } else {
-              resolve([]);
-            }
-          });
+          execFile(
+            'grep',
+            grepArgs,
+            { timeout: 10000, maxBuffer: 2 * 1024 * 1024 },
+            (_grepErr, grepOut) => {
+              if (grepOut && grepOut.trim()) {
+                resolve(parseSearchResults(grepOut, req.projectPath as string, false));
+              } else {
+                resolve([]);
+              }
+            },
+          );
         });
       });
     } catch (error) {

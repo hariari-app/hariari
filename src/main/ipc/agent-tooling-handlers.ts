@@ -10,15 +10,32 @@ import { getSkillsManifest } from '../skills/skills-manifest';
 import { installSkills, loadInstalled, uninstallSkill } from '../skills/skills-installer';
 import { detectProjectLanguages } from '../skills/language-detector';
 
-const ALLOWED_COMMANDS = new Set(['claude', 'gemini', 'codex', 'pi', 'opencode',
-  'cline', 'copilot', 'amp', 'cn', 'cursor-agent', 'crush', 'qwen']);
+const ALLOWED_COMMANDS = new Set([
+  'claude',
+  'gemini',
+  'codex',
+  'pi',
+  'opencode',
+  'cline',
+  'copilot',
+  'amp',
+  'cn',
+  'cursor-agent',
+  'crush',
+  'qwen',
+]);
 const VALID_SKILL_ID = /^[a-z0-9-]+$/;
 
 export function registerAgentToolingHandlers(agentManager: AgentManager): void {
   ipcMain.handle(IPC_CHANNELS.AGENT_CHECK_INSTALLED, async (_event, raw: unknown) => {
     try {
       if (typeof raw !== 'string') return { installed: false };
-      if (!ALLOWED_COMMANDS.has(raw) || raw.includes('/') || raw.includes('\\') || raw.includes('..')) {
+      if (
+        !ALLOWED_COMMANDS.has(raw) ||
+        raw.includes('/') ||
+        raw.includes('\\') ||
+        raw.includes('..')
+      ) {
         return { installed: false };
       }
       const { execFile } = await import('node:child_process');
@@ -30,8 +47,8 @@ export function registerAgentToolingHandlers(agentManager: AgentManager): void {
       const pathSep = isWin ? ';' : ':';
 
       const home = isWin
-        ? (process.env.USERPROFILE || process.env.HOME || '')
-        : (process.env.HOME || '');
+        ? process.env.USERPROFILE || process.env.HOME || ''
+        : process.env.HOME || '';
       const extraPaths: string[] = [];
 
       if (isWin) {
@@ -45,7 +62,8 @@ export function registerAgentToolingHandlers(agentManager: AgentManager): void {
           nodePath.join(home, 'scoop', 'shims'),
         );
         const nvmHome = process.env.NVM_HOME || nodePath.join(appData, 'nvm');
-        const nvmSymlink = process.env.NVM_SYMLINK || nodePath.join(home, 'AppData', 'Roaming', 'nvm', 'current');
+        const nvmSymlink =
+          process.env.NVM_SYMLINK || nodePath.join(home, 'AppData', 'Roaming', 'nvm', 'current');
         if (nodeFs.existsSync(nvmSymlink)) {
           extraPaths.unshift(nvmSymlink);
         } else if (nodeFs.existsSync(nvmHome)) {
@@ -56,7 +74,8 @@ export function registerAgentToolingHandlers(agentManager: AgentManager): void {
           extraPaths.push('/opt/homebrew/bin', '/opt/homebrew/sbin');
         }
         extraPaths.push(
-          '/usr/local/bin', '/usr/local/sbin',
+          '/usr/local/bin',
+          '/usr/local/sbin',
           nodePath.join(home, '.local', 'bin'),
           nodePath.join(home, '.cargo', 'bin'),
         );
@@ -116,8 +135,8 @@ export function registerAgentToolingHandlers(agentManager: AgentManager): void {
       const shellArgs = isWin ? ['/c', installCommand] : ['-c', installCommand];
 
       const home = isWin
-        ? (process.env.USERPROFILE || process.env.HOME || '')
-        : (process.env.HOME || '');
+        ? process.env.USERPROFILE || process.env.HOME || ''
+        : process.env.HOME || '';
       const extraPaths: string[] = [];
 
       if (isWin) {
@@ -134,7 +153,8 @@ export function registerAgentToolingHandlers(agentManager: AgentManager): void {
           extraPaths.push('/opt/homebrew/bin', '/opt/homebrew/sbin');
         }
         extraPaths.push(
-          '/usr/local/bin', '/usr/local/sbin',
+          '/usr/local/bin',
+          '/usr/local/sbin',
           path.join(home, '.local', 'bin'),
           path.join(home, '.cargo', 'bin'),
         );
@@ -209,12 +229,15 @@ export function registerAgentToolingHandlers(agentManager: AgentManager): void {
   });
 
   ipcMain.handle(IPC_CHANNELS.SKILLS_INSTALL, async (_event, raw: unknown) => {
-    if (!raw || typeof raw !== 'object') return { results: [], summary: { installed: 0, failed: 0, skipped: 0 } };
+    if (!raw || typeof raw !== 'object')
+      return { results: [], summary: { installed: 0, failed: 0, skipped: 0 } };
     const req = raw as { skillIds: string[]; targetAgents: string[] };
     if (!Array.isArray(req.skillIds) || !Array.isArray(req.targetAgents)) {
       return { results: [], summary: { installed: 0, failed: 0, skipped: 0 } };
     }
-    const safeSkillIds = req.skillIds.filter((id): id is string => typeof id === 'string' && VALID_SKILL_ID.test(id));
+    const safeSkillIds = req.skillIds.filter(
+      (id): id is string => typeof id === 'string' && VALID_SKILL_ID.test(id),
+    );
     const safeTargetAgents = req.targetAgents.filter(isCliAgentType);
     return installSkills({ skillIds: safeSkillIds, targetAgents: safeTargetAgents });
   });
@@ -224,7 +247,8 @@ export function registerAgentToolingHandlers(agentManager: AgentManager): void {
   });
 
   ipcMain.handle(IPC_CHANNELS.SKILLS_UNINSTALL, async (_event, skillId: unknown) => {
-    if (typeof skillId !== 'string' || !VALID_SKILL_ID.test(skillId)) return { error: 'Invalid skill ID' };
+    if (typeof skillId !== 'string' || !VALID_SKILL_ID.test(skillId))
+      return { error: 'Invalid skill ID' };
     return uninstallSkill(skillId);
   });
 
@@ -284,7 +308,8 @@ export function registerAgentToolingHandlers(agentManager: AgentManager): void {
   });
 
   ipcMain.handle(IPC_CHANNELS.WORKTREE_MERGE, async (_event, agentId: unknown) => {
-    if (typeof agentId !== 'string') return { success: false, mergedBranch: '', error: 'Invalid agent ID' };
+    if (typeof agentId !== 'string')
+      return { success: false, mergedBranch: '', error: 'Invalid agent ID' };
     return worktreeManager.mergeWorktree(agentId);
   });
 
