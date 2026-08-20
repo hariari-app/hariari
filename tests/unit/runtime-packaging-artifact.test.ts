@@ -27,6 +27,7 @@ function registerPackagedArtifactTests(): void {
   registerMaterializationSymlinkTest();
   registerConcurrentMaterializationTest();
   registerWindowsBuildMaterializationTest();
+  registerWindowsSignedArtifactMaterializationTest();
 }
 
 function registerArtifactResolutionTest(): void {
@@ -39,7 +40,14 @@ function registerArtifactResolutionTest(): void {
     expect(artifact.runtimeVersion).toBe('0.6.8');
     expect(artifact.buildId).toBe('build-19');
     expect(artifact.executablePath).toBe(
-      path.join(fixture.runtimeDirectory, 'bin', '0.6.8-build-19-linux-x64', EXECUTABLE_NAME),
+      path.join(
+        fixture.runtimeDirectory,
+        'bin',
+        '0.6.8-linux-x64',
+        'build-19',
+        '28b023a1ce5362303db380db0886e2eb5fe7690a86ab1dea9f87b63c4b2d5626',
+        EXECUTABLE_NAME,
+      ),
     );
     expect(fs.readFileSync(artifact.executablePath, 'utf8')).toBe('standalone-runtime');
     expect(fs.statSync(artifact.executablePath).mode & 0o111).not.toBe(0);
@@ -139,6 +147,34 @@ function registerWindowsBuildMaterializationTest(): void {
     expect(firstArtifact.executablePath).not.toBe(secondArtifact.executablePath);
     expect(fs.readFileSync(firstArtifact.executablePath, 'utf8')).toBe('standalone-runtime-a');
     expect(fs.readFileSync(secondArtifact.executablePath, 'utf8')).toBe('standalone-runtime-b');
+  });
+}
+
+function registerWindowsSignedArtifactMaterializationTest(): void {
+  it('keeps differently signed same-build Windows artifacts at distinct verified paths', async () => {
+    const first = createFixture('windows-signed-a', {
+      platform: 'win32',
+      buildId: 'unsigned-code-build',
+      contents: 'standalone-runtime-signed-a',
+    });
+    const second = createFixture('windows-signed-b', {
+      platform: 'win32',
+      buildId: 'unsigned-code-build',
+      contents: 'standalone-runtime-signed-b',
+      runtimeDirectory: first.runtimeDirectory,
+    });
+
+    const firstArtifact = await createPort(first).resolve();
+    const secondArtifact = await createPort(second).resolve();
+
+    expect(firstArtifact.buildId).toBe(secondArtifact.buildId);
+    expect(firstArtifact.executablePath).not.toBe(secondArtifact.executablePath);
+    expect(fs.readFileSync(firstArtifact.executablePath, 'utf8')).toBe(
+      'standalone-runtime-signed-a',
+    );
+    expect(fs.readFileSync(secondArtifact.executablePath, 'utf8')).toBe(
+      'standalone-runtime-signed-b',
+    );
   });
 }
 

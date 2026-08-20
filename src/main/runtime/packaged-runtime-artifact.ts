@@ -110,13 +110,21 @@ export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
   ): Promise<string> {
     const runtimeRoot = path.resolve(this.options.runtimeDirectory);
     const binRoot = path.join(runtimeRoot, 'bin');
-    const destinationDirectory = path.join(
+    const platformDirectory = path.join(
       binRoot,
-      `${manifest.runtimeVersion}-${manifest.buildId}-${manifest.platform}-${manifest.arch}`,
+      `${manifest.runtimeVersion}-${manifest.platform}-${manifest.arch}`,
     );
+    const buildDirectory = path.join(platformDirectory, manifest.buildId);
+    const destinationDirectory = path.join(buildDirectory, manifest.sha256);
     const destinationPath = path.join(destinationDirectory, manifest.executable);
     assertConfined(binRoot, destinationPath);
-    await ensureMaterializationDirectories(runtimeRoot, binRoot, destinationDirectory);
+    await ensureMaterializationDirectories(
+      runtimeRoot,
+      binRoot,
+      platformDirectory,
+      buildDirectory,
+      destinationDirectory,
+    );
     if (await isValidMaterializedFile(destinationPath, manifest)) {
       await preserveExecutableMode(destinationPath, this.platform);
       return destinationPath;
@@ -188,12 +196,15 @@ function parseManifest(
 async function ensureMaterializationDirectories(
   runtimeRoot: string,
   binRoot: string,
+  platformDirectory: string,
+  buildDirectory: string,
   destinationDirectory: string,
 ): Promise<void> {
   await fs.promises.mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
   await verifyPrivateDirectory(runtimeRoot);
-  await createPrivateChildDirectory(binRoot);
-  await createPrivateChildDirectory(destinationDirectory);
+  for (const directory of [binRoot, platformDirectory, buildDirectory, destinationDirectory]) {
+    await createPrivateChildDirectory(directory);
+  }
   const canonicalRuntimeRoot = await fs.promises.realpath(runtimeRoot);
   const canonicalDestination = await fs.promises.realpath(destinationDirectory);
   if (process.platform !== 'win32' && canonicalRuntimeRoot !== runtimeRoot) {
