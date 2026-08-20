@@ -90,7 +90,7 @@ describe('ProjectManager', () => {
 
     it('returns projects sorted by pinned first, then last active', () => {
       const p1 = manager.createProject({ path: projectDir });
-      const p2 = manager.createProject({ path: projectDir2 });
+      manager.createProject({ path: projectDir2 });
       manager.updateProject({ id: p1.id, pinned: true });
 
       const list = manager.listProjects();
@@ -100,7 +100,7 @@ describe('ProjectManager', () => {
 
     it('sorts unpinned by lastActiveAt descending', () => {
       const p1 = manager.createProject({ path: projectDir });
-      const p2 = manager.createProject({ path: projectDir2 });
+      manager.createProject({ path: projectDir2 });
 
       // Touch p1 to make it more recent
       manager.touchProject(p1.id);

@@ -2,12 +2,16 @@ import { app, ipcMain, type BrowserWindow } from 'electron';
 import { IPC_CHANNELS } from '../../shared/constants';
 
 // Lazy-load electron-updater so dev mode never crashes on missing native deps
-let _cachedAutoUpdater: any;
-function getAutoUpdater() {
-  if (!_cachedAutoUpdater) {
-    _cachedAutoUpdater = require('electron-updater').autoUpdater;
-  }
-  return _cachedAutoUpdater;
+type AutoUpdater = typeof import('electron-updater').autoUpdater;
+
+let cachedAutoUpdater: AutoUpdater | undefined;
+
+function getAutoUpdater(): AutoUpdater {
+  if (cachedAutoUpdater) return cachedAutoUpdater;
+
+  const { autoUpdater } = require('electron-updater') as typeof import('electron-updater');
+  cachedAutoUpdater = autoUpdater;
+  return autoUpdater;
 }
 
 export type UpdateState =

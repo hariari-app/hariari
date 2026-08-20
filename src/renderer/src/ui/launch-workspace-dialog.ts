@@ -3,7 +3,6 @@
 import type { ProjectInfo } from '../../../shared/ipc-types';
 import type { AgentType } from '../../../shared/agent-types';
 import { SPAWNABLE_AGENT_TYPES } from '../../../shared/agent-types';
-import { createAgentIcon } from './agent-icons';
 import type { LayoutPreset, PresetTree } from '../layout/layout-presets';
 
 type LayoutMode = 'grid' | 'columns' | 'rows';

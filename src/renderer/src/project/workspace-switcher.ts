@@ -1,7 +1,7 @@
 import { ProjectWorkspace } from './project-workspace';
 import { SinglePreview } from '../preview/single-preview';
 import type { ProjectInfo } from '../../../shared/ipc-types';
-import type { AgentInfo, AgentType } from '../../../shared/agent-types';
+import type { AgentInfo } from '../../../shared/agent-types';
 import type { PreviewAgent } from '../../../shared/preview-types';
 import { ACTIVE_STATUSES } from '../../../shared/preview-types';
 

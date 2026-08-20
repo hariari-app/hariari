@@ -252,7 +252,7 @@ export class FileFinder {
         this.selectedIndex = Math.max(0, this.selectedIndex - 1);
         this.updateSelection(container);
         break;
-      case 'Enter':
+      case 'Enter': {
         e.preventDefault();
         const items = container.querySelectorAll('.ff-item');
         if (items[this.selectedIndex]) {
@@ -260,6 +260,7 @@ export class FileFinder {
           if (path) this.openFile(path);
         }
         break;
+      }
       case 'Escape':
         e.preventDefault();
         this.hide();

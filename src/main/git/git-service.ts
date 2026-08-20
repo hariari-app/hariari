@@ -3,48 +3,6 @@ import path from 'node:path';
 import { isGitRepo, runGit } from './git-executor';
 import type { GitFileChange, GitStatusResult, GitDiffResult, GitStageGroup, GitFileStatus, GitLogEntry, GitLogResult, GitAheadBehind } from '../../shared/git-types';
 
-function parseStatusLine(line: string): GitFileChange | null {
-  if (line.length < 4) return null;
-
-  const index = line[0];  // staged status
-  const worktree = line[1]; // unstaged status
-  const filePath = line.slice(3).trim();
-
-  if (!filePath) return null;
-
-  // Handle renames: "R  old -> new"
-  let finalPath = filePath;
-  let oldPath: string | undefined;
-  const renameMatch = filePath.match(/^(.+) -> (.+)$/);
-  if (renameMatch) {
-    oldPath = renameMatch[1];
-    finalPath = renameMatch[2];
-  }
-
-  // Staged changes
-  if (index !== ' ' && index !== '?') {
-    const status = mapStatus(index);
-    if (status) {
-      return { path: finalPath, status, group: 'staged', oldPath };
-    }
-  }
-
-  // Unstaged changes
-  if (worktree !== ' ' && worktree !== '?') {
-    const status = mapStatus(worktree);
-    if (status) {
-      return { path: finalPath, status, group: 'unstaged', oldPath };
-    }
-  }
-
-  // Untracked
-  if (index === '?' && worktree === '?') {
-    return { path: finalPath, status: 'untracked', group: 'untracked' };
-  }
-
-  return null;
-}
-
 function mapStatus(code: string): GitFileStatus | null {
   switch (code) {
     case 'M': return 'modified';
@@ -67,7 +25,6 @@ export async function getGitStatus(projectPath: string): Promise<GitStatusResult
   ]);
 
   const changes: GitFileChange[] = [];
-  const seenPaths = new Map<string, GitFileChange>();
 
   for (const line of statusResult.stdout.split('\n')) {
     if (!line) continue;

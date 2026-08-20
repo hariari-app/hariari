@@ -9,6 +9,11 @@ import type { ProjectWorkspaceState } from '../../../shared/ipc-types';
 import type { LayoutNode, LeafNode, SplitNode } from '../../../shared/layout-types';
 import type { LayoutPreset, PresetTree } from '../layout/layout-presets';
 
+type TrackedAgent = {
+  readonly info: AgentInfo;
+  readonly statusBar: AgentStatusBar;
+};
+
 function collectLeafSessionIds(node: LayoutNode): ReadonlyArray<string> {
   if (node.type === 'leaf') return [node.sessionId];
   return [
@@ -37,7 +42,7 @@ export class ProjectWorkspace {
   readonly containerEl: HTMLElement;
   readonly terminalManager: TerminalManager;
   readonly layoutManager: LayoutManager;
-  private readonly tracked = new Map<string, { readonly info: AgentInfo; readonly statusBar: AgentStatusBar }>();
+  private readonly tracked = new Map<string, TrackedAgent>();
   private active = false;
   useWorktree = true;
 
@@ -389,14 +394,14 @@ export class ProjectWorkspace {
     return findLeaf(tree);
   }
 
-  private findTrackedBySession(sessionId: string): { readonly info: AgentInfo; readonly statusBar: AgentStatusBar } | undefined {
+  private findTrackedBySession(sessionId: string): TrackedAgent | undefined {
     for (const tracked of this.tracked.values()) {
       if (tracked.info.sessionId === sessionId) return tracked;
     }
     return undefined;
   }
 
-  getTrackedAgents(): ReadonlyMap<string, { readonly info: AgentInfo }> {
+  getTrackedAgents(): ReadonlyMap<string, TrackedAgent> {
     return this.tracked;
   }
 

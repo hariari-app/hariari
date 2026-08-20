@@ -161,9 +161,9 @@ export function postProcessTranscription(
   }
 
   // Collapse spaces around path-like symbols (/ \ ~ .)
-  result = result.replace(/\s*([\/\\~])\s*/g, '$1');
+  result = result.replace(/\s*([/\\~])\s*/g, '$1');
   // Collapse spaces around brackets/parens/braces
-  result = result.replace(/\s*([(\[{])\s*/g, '$1');
+  result = result.replace(/\s*([([{])\s*/g, '$1');
   result = result.replace(/\s*([)\]}])\s*/g, '$1');
   // Collapse spaces around quotes (keep content spaces)
   result = result.replace(/"\s+/g, '"');

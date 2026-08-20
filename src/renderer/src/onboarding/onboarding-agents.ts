@@ -25,7 +25,6 @@ const AGENT_ORDER: readonly AgentRow[] = [
 
 const VISIBLE_COUNT = 6;
 const RESCAN_DELAY_MS = 3000;
-const RESCAN_ATTEMPTS = 5;
 
 export class AgentsStep implements StepRenderer {
   private availability: Record<string, boolean> = {};

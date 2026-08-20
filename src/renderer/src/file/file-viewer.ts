@@ -3,22 +3,12 @@ import { EditorState, Compartment } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
 import { autocompletion, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { MergeView } from '@codemirror/merge';
-import { oneDark } from '@codemirror/theme-one-dark';
 import { search } from '@codemirror/search';
 import { getLanguageExtension, cmTheme } from '../editor-window/lang-extensions';
-import { isCurrentThemeLight } from '../terminal/terminal-theme';
 import { SourceControlPanel } from '../scm/source-control-panel';
+import { syntaxThemeExtensions, type ViewMode, type FileTreeNode } from './file-viewer-support';
 import type { FileEntry, FileContent } from '../../../shared/ipc-types';
 import type { GitStageGroup } from '../../../shared/git-types';
-
-// oneDark only applies on dark app themes. See editor-pane.ts for the
-// same pattern — evaluated at editor-create time; a theme switch requires
-// reopening the file to take effect.
-function syntaxThemeExtensions(): readonly [] | readonly [typeof oneDark] {
-  return isCurrentThemeLight() ? [] : [oneDark];
-}
-
-type ViewMode = 'files' | 'changes';
 
 export class FileViewer {
   private readonly overlay: HTMLElement;
@@ -41,7 +31,7 @@ export class FileViewer {
   private readonly languageCompartment = new Compartment();
   private scmPanel: SourceControlPanel | null = null;
   private _rightPane!: HTMLElement;
-  private treeNodes: Array<{ entry: FileEntry; expanded: boolean; children: any[] | null; depth: number }> = [];
+  private treeNodes: FileTreeNode[] = [];
   private pendingCreate: { type: 'file' | 'folder'; parentPath: string } | null = null;
   private contextMenu: HTMLElement | null = null;
   private selectedTreePath = '';
@@ -628,7 +618,7 @@ export class FileViewer {
         if (this.pendingCreate && this.pendingCreate.parentPath === node.entry.path) {
           container.appendChild(this.createInlineInput(this.pendingCreate.type, node.entry.path, node.depth + 1));
         }
-        this.renderNodes(node.children as typeof this.treeNodes, container);
+        this.renderNodes(node.children, container);
       }
     }
   }

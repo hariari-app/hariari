@@ -2,7 +2,6 @@ import { LayoutManager } from '../layout/layout-manager';
 import { AgentStatusBar } from '../agent/agent-status-bar';
 import type { LayoutNode, LeafNode, SplitNode } from '../../../shared/layout-types';
 import type { PreviewAgent } from '../../../shared/preview-types';
-import type { AgentInfo } from '../../../shared/agent-types';
 
 type AgentLookup = () => ReadonlyArray<PreviewAgent>;
 type TerminalCreateFn = (sessionId: string, container: HTMLElement) => void;

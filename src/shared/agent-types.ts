@@ -1,7 +1,18 @@
 export type AgentType = 'claude' | 'gemini' | 'codex' | 'pi' | 'opencode' | 'cline' | 'copilot' | 'amp' | 'continue' | 'cursor' | 'crush' | 'qwen' | 'shell' | 'custom';
 export type AgentStatus = 'starting' | 'running' | 'needs-input' | 'idle' | 'complete' | 'error' | 'stopped';
 
-export const SPAWNABLE_AGENT_TYPES = new Set<AgentType>(['claude', 'gemini', 'codex', 'pi', 'opencode', 'cline', 'copilot', 'amp', 'continue', 'cursor', 'crush', 'qwen', 'shell']);
+export type CliAgentType = Exclude<AgentType, 'shell' | 'custom'>;
+
+export const CLI_AGENT_TYPES: readonly CliAgentType[] = [
+  'claude', 'gemini', 'codex', 'pi', 'opencode', 'cline',
+  'copilot', 'amp', 'continue', 'cursor', 'crush', 'qwen',
+];
+export const CLI_AGENT_TYPE_SET = new Set<CliAgentType>(CLI_AGENT_TYPES);
+export const SPAWNABLE_AGENT_TYPES = new Set<AgentType>([...CLI_AGENT_TYPES, 'shell']);
+
+export function isCliAgentType(value: unknown): value is CliAgentType {
+  return typeof value === 'string' && CLI_AGENT_TYPE_SET.has(value as CliAgentType);
+}
 
 export interface AgentConfig {
   readonly type: AgentType;

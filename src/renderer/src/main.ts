@@ -27,7 +27,7 @@ import { NotificationPreferences } from './ui/notification-preferences';
 import { VoiceRouter } from './voice/voice-router';
 import { LaunchWorkspaceDialog, buildDynamicPreset } from './ui/launch-workspace-dialog';
 import type { ProjectInfo, AppState } from '../../shared/ipc-types';
-import type { AgentInfo, AgentType } from '../../shared/agent-types';
+import type { AgentInfo, AgentStatus, AgentType } from '../../shared/agent-types';
 
 const AUTO_SAVE_INTERVAL_MS = 30_000;
 
@@ -653,7 +653,7 @@ function main(): void {
   });
 
   // Agent event listeners
-  const unsubStatus = window.api.agent.onStatus((event) => {
+  window.api.agent.onStatus((event) => {
     workspaceSwitcher.handleAgentStatus(event.agentId, event.status);
     store.updateAgentStatus(event.agentId, event.status);
 
@@ -698,13 +698,13 @@ function main(): void {
     }
   });
 
-  const unsubExit = window.api.agent.onExit((event) => {
+  window.api.agent.onExit((event) => {
     // Capture agent info before status update (which may remove it from tracked map)
     const agentInfo = findAgentInfo(event.agentId);
 
     workspaceSwitcher.handleAgentExit(event.agentId, event.exitCode);
-    const exitStatus = event.exitCode === 0 ? 'complete' : 'error';
-    store.updateAgentStatus(event.agentId, exitStatus as any);
+    const exitStatus: AgentStatus = event.exitCode === 0 ? 'complete' : 'error';
+    store.updateAgentStatus(event.agentId, exitStatus);
 
     const config = getNotificationConfig();
 
@@ -1524,7 +1524,7 @@ function main(): void {
     for (const ws of getAllWorkspaces()) {
       const tracked = ws.getTrackedAgents().get(event.agentId);
       if (tracked) {
-        (tracked as any).statusBar?.updateVersion?.(event.version);
+        tracked.statusBar.updateVersion(event.version);
         break;
       }
     }
@@ -1619,7 +1619,7 @@ function main(): void {
 
   // Check if onboarding is needed
   window.api.settings.load().then(async (settings) => {
-    const projects = await window.api.project.list();
+    await window.api.project.list();
     if (!settings.onboardingComplete) {
       const { OnboardingWizard } = await import('./onboarding/onboarding-wizard');
       const wizard = new OnboardingWizard(appEl, {
