@@ -6,7 +6,7 @@ const typescriptFiles = ['src/**/*.ts', 'tests/**/*.ts', '*.config.ts'];
 
 export default defineConfig(
   {
-    ignores: ['node_modules/**', 'out/**', 'dist/**'],
+    ignores: ['node_modules/**', 'out/**', 'dist/**', '**/*.js', '**/*.mjs', '**/*.cjs'],
   },
   {
     files: typescriptFiles,
