@@ -34,6 +34,7 @@ describe('background Runtime server', () => {
   it('reports incompatible only after authenticated disjoint ranges', verifiesIncompatibility);
   it('expires challenges and rejects their replay without version disclosure', rejectsReplay);
   it('closes exactly one listener when stopped during startup', stopsDuringStartup);
+  it('closes exactly one listener after an accepted shutdown loses its reply', stopsAfterLostReply);
 });
 
 async function stopsDuringStartup(): Promise<void> {
@@ -55,6 +56,20 @@ async function stopsDuringStartup(): Promise<void> {
   await Promise.all([start, stop, server.stop()]);
 
   expect(closeCount).toBe(1);
+}
+
+async function stopsAfterLostReply(): Promise<void> {
+  const fixture = await startRuntimeWithLostShutdownReply();
+  const connected = await connect(fixture, TOKEN, { min: 1, max: 1 });
+  if (connected.kind !== 'connected') throw new Error('expected connection');
+
+  await expect(
+    connected.session.shutdown(shutdownRequest(fixture.server.identity.instanceId), 500),
+  ).rejects.toBeInstanceOf(RuntimePortError);
+  await waitUntil(() => fixture.listenerCloseCount() === 1);
+  await Promise.all([fixture.server.stop(), fixture.server.stop()]);
+
+  expect(fixture.listenerCloseCount()).toBe(1);
 }
 
 async function verifiesIdentity(): Promise<void> {
@@ -194,6 +209,10 @@ interface ServerFixture {
   readonly client: NodeRuntimeClient;
 }
 
+interface LostReplyFixture extends ServerFixture {
+  readonly listenerCloseCount: () => number;
+}
+
 async function startRuntime(options: RuntimeFixtureOptions): Promise<ServerFixture> {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), `hariari-runtime-${options.prefix}-`));
   directories.push(directory);
@@ -224,6 +243,73 @@ async function startRuntime(options: RuntimeFixtureOptions): Promise<ServerFixtu
   return { endpoint, transport, server, client };
 }
 
+async function startRuntimeWithLostShutdownReply(): Promise<LostReplyFixture> {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'hariari-runtime-lost-reply-'));
+  directories.push(directory);
+  const endpoint: RuntimeEndpoint = {
+    kind: 'unix',
+    address: path.join(directory, 'runtime.sock'),
+    runtimeDirectory: directory,
+  };
+  const transport = new NodeLocalRuntimeTransport();
+  let listenerCloseCount = 0;
+  const server = runtimeServer(
+    lostShutdownReplyTransport(transport, () => listenerCloseCount++),
+    endpoint,
+  );
+  servers.push(server);
+  await server.start();
+  const client = new NodeRuntimeClient({
+    transport,
+    randomId: () => 'client-id',
+    randomNonce: () => 'client-nonce',
+  });
+  return { endpoint, transport, server, client, listenerCloseCount: () => listenerCloseCount };
+}
+
+function lostShutdownReplyTransport(
+  transport: NodeLocalRuntimeTransport,
+  recordListenerClose: () => void,
+): RuntimeLocalTransport {
+  return {
+    connect: (...args) => transport.connect(...args),
+    listen: async (endpoint, onConnection) => {
+      const listener = await transport.listen(endpoint, (connection) =>
+        onConnection(rejectSuccessfulShutdownReply(connection)),
+      );
+      return {
+        close: async () => {
+          recordListenerClose();
+          await listener.close();
+        },
+      };
+    },
+  };
+}
+
+function rejectSuccessfulShutdownReply(connection: RuntimeFrameConnection): RuntimeFrameConnection {
+  return {
+    readFrame: (deadlineMs) => connection.readFrame(deadlineMs),
+    writeFrame: async (frame, deadlineMs) => {
+      if (isSuccessfulShutdownReply(frame)) {
+        connection.close();
+        throw new Error('client disconnected before shutdown reply');
+      }
+      return connection.writeFrame(frame, deadlineMs);
+    },
+    onClose: (listener) => connection.onClose(listener),
+    close: () => connection.close(),
+  };
+}
+
+function isSuccessfulShutdownReply(frame: unknown): boolean {
+  if (!frame || typeof frame !== 'object') return false;
+  const value = frame as Record<string, unknown>;
+  const operation = value.operation as Record<string, unknown> | undefined;
+  const result = value.result as Record<string, unknown> | undefined;
+  return value.ok === true && operation?.name === 'runtime.shutdown' && result?.state === 'stopped';
+}
+
 function runtimeServer(
   transport: RuntimeLocalTransport,
   endpoint: RuntimeLocalEndpoint,
@@ -242,6 +328,10 @@ function runtimeServer(
     handshakeDeadlineMs: 500,
     requestDeadlineMs: 500,
   });
+}
+
+function shutdownRequest(expectedInstanceId: string) {
+  return { idempotencyKey: 'lost-reply', expectedInstanceId, reason: 'test' as const };
 }
 
 function deferred<T>() {
@@ -270,4 +360,12 @@ async function cleanRuntimeFixtures(): Promise<void> {
   for (const directory of directories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+}
+
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  if (!predicate()) throw new Error('condition was not met');
 }

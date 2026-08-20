@@ -77,21 +77,15 @@ class RuntimeConnector implements RuntimeInterface {
   }
 
   shutdown(request: RuntimeShutdownRequest): Promise<RuntimeShutdownResult> {
-    const active = this.lifecycle.shutdownInFlight();
-    if (active) return active;
-    const session = this.session;
-    const generation = this.supervisor.suspend();
-    return this.lifecycle.beginShutdown((owner) =>
-      this.performShutdown(request, generation, session, owner),
-    );
+    return this.lifecycle.beginShutdown(request, (owner) => this.performShutdown(request, owner));
   }
 
   private async performShutdown(
     request: RuntimeShutdownRequest,
-    generation: number,
-    session: RuntimeClientSession | null,
     owner: RuntimeConnectOwnership | null,
   ): Promise<RuntimeShutdownResult> {
+    const session = this.session;
+    const generation = this.supervisor.suspend();
     await owner?.promise.catch(() => undefined);
     await owner?.launch?.terminate();
     await owner?.launch?.settled();

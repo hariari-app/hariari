@@ -1,5 +1,6 @@
 import type {
   RuntimeConnectionState,
+  RuntimeShutdownRequest,
   RuntimeShutdownResult,
 } from '../../shared/runtime/runtime-interface';
 import type { RuntimeProcessLaunch } from './runtime-ports';
@@ -10,26 +11,20 @@ export interface RuntimeConnectOwnership {
   launch: RuntimeProcessLaunch | null;
 }
 
-type RuntimeConnectorLifecycleState =
-  | { readonly phase: 'idle' }
-  | { readonly phase: 'connecting'; readonly owner: RuntimeConnectOwnership }
-  | {
-      readonly phase: 'shutting-down';
-      readonly promise: Promise<RuntimeShutdownResult>;
-      readonly owner: RuntimeConnectOwnership | null;
-    };
-
 export class RuntimeConnectorLifecycle {
-  private state: RuntimeConnectorLifecycleState = { phase: 'idle' };
+  private connectOwnerValue: RuntimeConnectOwnership | null = null;
+  private shutdownOwner: RuntimeConnectOwnership | null = null;
+  private shutdownTail: Promise<RuntimeShutdownResult> | null = null;
+  private readonly shutdownsByFingerprint = new Map<string, Promise<RuntimeShutdownResult>>();
 
   connectInFlight(generation: number): Promise<RuntimeConnectionState> | null {
-    return this.state.phase === 'connecting' && this.state.owner.generation === generation
-      ? this.state.owner.promise
+    return this.connectOwnerValue?.generation === generation
+      ? this.connectOwnerValue.promise
       : null;
   }
 
   shutdownInFlight(): Promise<RuntimeShutdownResult> | null {
-    return this.state.phase === 'shutting-down' ? this.state.promise : null;
+    return this.shutdownTail;
   }
 
   beginConnect(
@@ -46,39 +41,59 @@ export class RuntimeConnectorLifecycle {
       launch: null,
     };
     const promise = operation().finally(() => {
-      if (this.state.phase === 'connecting' && this.state.owner === owner) {
-        this.state = { phase: 'idle' };
-      }
+      if (this.connectOwnerValue === owner) this.connectOwnerValue = null;
     });
     owner.promise = promise;
-    this.state = { phase: 'connecting', owner };
+    this.connectOwnerValue = owner;
     return promise;
   }
 
   ownLaunch(generation: number, launch: RuntimeProcessLaunch): void {
-    const owner = this.connectOwner();
+    const owner = this.connectOwnerValue ?? this.shutdownOwner;
     if (owner?.generation === generation) owner.launch = launch;
   }
 
   beginShutdown(
+    request: RuntimeShutdownRequest,
     operation: (owner: RuntimeConnectOwnership | null) => Promise<RuntimeShutdownResult>,
   ): Promise<RuntimeShutdownResult> {
-    const active = this.shutdownInFlight();
-    if (active) return active;
-    const owner = this.connectOwner();
-    const promise = Promise.resolve()
-      .then(() => operation(owner))
-      .finally(() => {
-        if (this.state.phase === 'shutting-down' && this.state.promise === promise) {
-          this.state = { phase: 'idle' };
-        }
-      });
-    this.state = { phase: 'shutting-down', promise, owner };
+    const fingerprint = shutdownFingerprint(request);
+    const equivalent = this.shutdownsByFingerprint.get(fingerprint);
+    if (equivalent) return equivalent;
+    const predecessor = this.shutdownTail;
+    const owner = predecessor ? null : this.connectOwnerValue;
+    if (owner) this.shutdownOwner = owner;
+    const execute = () => invokeShutdown(operation, owner);
+    const promise = predecessor ? predecessor.then(execute, execute) : execute();
+    this.shutdownTail = promise;
+    this.shutdownsByFingerprint.set(fingerprint, promise);
+    const settled = () => this.settleShutdown(fingerprint, promise);
+    void promise.then(settled, settled);
     return promise;
   }
 
-  private connectOwner(): RuntimeConnectOwnership | null {
-    if (this.state.phase === 'connecting') return this.state.owner;
-    return this.state.phase === 'shutting-down' ? this.state.owner : null;
+  private settleShutdown(fingerprint: string, promise: Promise<RuntimeShutdownResult>): void {
+    if (this.shutdownsByFingerprint.get(fingerprint) === promise) {
+      this.shutdownsByFingerprint.delete(fingerprint);
+    }
+    if (this.shutdownTail === promise) {
+      this.shutdownTail = null;
+      this.shutdownOwner = null;
+    }
+  }
+}
+
+function shutdownFingerprint(request: RuntimeShutdownRequest): string {
+  return JSON.stringify([request.idempotencyKey, request.expectedInstanceId, request.reason]);
+}
+
+function invokeShutdown(
+  operation: (owner: RuntimeConnectOwnership | null) => Promise<RuntimeShutdownResult>,
+  owner: RuntimeConnectOwnership | null,
+): Promise<RuntimeShutdownResult> {
+  try {
+    return operation(owner);
+  } catch (error) {
+    return Promise.reject(error);
   }
 }

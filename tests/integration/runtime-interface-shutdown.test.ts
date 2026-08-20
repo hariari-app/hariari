@@ -19,6 +19,51 @@ function registerShutdownOwnershipTests(): void {
   it('bounds shutdown while the Runtime endpoint remains live', boundsShutdown);
   it('starts a fresh connection only after the shutdown-owned session settles', reconnectsSafely);
   it('waits for a connector-owned cold-start child to terminate', terminatesColdStart);
+  it('evaluates a valid shutdown queued behind a stale request', stopsAfterStaleRequest);
+  it('does not report a queued stale request as stopped', rejectsStaleRequestAfterStop);
+}
+
+async function stopsAfterStaleRequest(): Promise<void> {
+  const environment = new FakeRuntimeEnvironment();
+  const gate = shutdownGate();
+  environment.running = true;
+  const runtime = connector(environment, {
+    clients: orderedShutdownClient(environment.clients, gate),
+  });
+  await runtime.connectOrStart();
+  const stale = runtime.shutdown(shutdownRequest('stale-first', 'stale-runtime'));
+  await gate.entered.promise;
+  const valid = runtime.shutdown(shutdownRequest('valid-second'));
+
+  await flushMicrotasks();
+  expect(gate.expectedInstanceIds).toEqual(['stale-runtime']);
+  gate.release.resolve();
+  await expect(stale).resolves.toEqual({
+    state: 'unavailable',
+    reason: 'stale-instance',
+    retryable: false,
+  });
+  await expect(valid).resolves.toEqual({ state: 'stopped', instanceId: 'runtime-1' });
+  expect(gate.expectedInstanceIds).toEqual(['stale-runtime', 'runtime-1']);
+}
+
+async function rejectsStaleRequestAfterStop(): Promise<void> {
+  const environment = new FakeRuntimeEnvironment();
+  const gate = shutdownGate();
+  environment.running = true;
+  const runtime = connector(environment, {
+    clients: orderedShutdownClient(environment.clients, gate),
+  });
+  await runtime.connectOrStart();
+  const valid = runtime.shutdown(shutdownRequest('valid-first'));
+  await gate.entered.promise;
+  const stale = runtime.shutdown(shutdownRequest('stale-second', 'stale-runtime'));
+
+  await flushMicrotasks();
+  expect(gate.expectedInstanceIds).toEqual(['runtime-1']);
+  gate.release.resolve();
+  await expect(valid).resolves.toEqual({ state: 'stopped', instanceId: 'runtime-1' });
+  await expect(stale).resolves.toEqual({ state: 'not-running' });
 }
 
 async function reconnectsSafely(): Promise<void> {
@@ -200,6 +245,46 @@ function gatedShutdownClient(
   };
 }
 
+interface ShutdownGate {
+  readonly entered: ReturnType<typeof deferred<void>>;
+  readonly release: ReturnType<typeof deferred<void>>;
+  readonly expectedInstanceIds: string[];
+}
+
+function shutdownGate(): ShutdownGate {
+  return { entered: deferred<void>(), release: deferred<void>(), expectedInstanceIds: [] };
+}
+
+function orderedShutdownClient(client: RuntimeClientPort, gate: ShutdownGate): RuntimeClientPort {
+  return {
+    connect: async (...args) => {
+      const connection = await client.connect(...args);
+      if (connection.kind !== 'connected') return connection;
+      let shutdownCount = 0;
+      return {
+        kind: 'connected',
+        session: {
+          queryHealth: (deadlineMs) => connection.session.queryHealth(deadlineMs),
+          shutdown: async (request, deadlineMs) => {
+            gate.expectedInstanceIds.push(request.expectedInstanceId);
+            shutdownCount += 1;
+            if (shutdownCount === 1) {
+              gate.entered.resolve();
+              await gate.release.promise;
+            }
+            if (request.expectedInstanceId !== 'runtime-1') {
+              throw new RuntimePortError('stale-instance');
+            }
+            return connection.session.shutdown(request, deadlineMs);
+          },
+          disconnect: () => connection.session.disconnect(),
+          onDisconnect: (listener) => connection.session.onDisconnect(listener),
+        },
+      };
+    },
+  };
+}
+
 function gatedShutdownSession(
   session: RuntimeClientSession,
   entered: ReturnType<typeof deferred<void>>,
@@ -268,10 +353,10 @@ function connector(
   });
 }
 
-function shutdownRequest(idempotencyKey: string) {
+function shutdownRequest(idempotencyKey: string, expectedInstanceId = 'runtime-1') {
   return {
     idempotencyKey,
-    expectedInstanceId: 'runtime-1',
+    expectedInstanceId,
     reason: 'test' as const,
   };
 }

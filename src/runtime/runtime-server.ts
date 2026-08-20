@@ -113,15 +113,13 @@ export class RuntimeServer {
         const frame = await connection.readFrame(this.options.requestDeadlineMs);
         const request = parseRequestFrame(frame);
         const response = this.handleRequest(request, selectedProtocol);
-        await connection.writeFrame({ ...response }, this.options.requestDeadlineMs);
-        if (
-          request.operation.name === RUNTIME_SHUTDOWN_OPERATION &&
-          response.ok &&
-          response.result.state === 'stopped'
-        ) {
-          setTimeout(() => void this.stop(), 0);
-          return;
+        const acceptedShutdown = stopsRuntime(request, response);
+        try {
+          await connection.writeFrame({ ...response }, this.options.requestDeadlineMs);
+        } finally {
+          if (acceptedShutdown) setTimeout(() => void this.stop(), 0);
         }
+        if (acceptedShutdown) return;
       }
     } catch {
       // Protocol and transport failures are intentionally redacted at this seam.
@@ -304,6 +302,14 @@ function success(
     ok: true,
     result,
   };
+}
+
+function stopsRuntime(request: RuntimeRequestFrame, response: RuntimeResponseFrame): boolean {
+  return (
+    request.operation.name === RUNTIME_SHUTDOWN_OPERATION &&
+    response.ok &&
+    response.result.state === 'stopped'
+  );
 }
 
 function failure(
