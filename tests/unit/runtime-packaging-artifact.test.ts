@@ -30,6 +30,7 @@ function registerPackagedArtifactTests(): void {
   registerMaterializationSymlinkTest();
   registerConcurrentMaterializationTest();
   registerMaterializationStagingPathTest();
+  registerWindowsMaterializationSyncTest();
   registerWindowsBuildMaterializationTest();
   registerWindowsSignedArtifactMaterializationTest();
 }
@@ -216,6 +217,46 @@ function registerMaterializationStagingPathTest(): void {
       expect(stagedPath).not.toContain(path.basename(fixture.artifactPath));
     } finally {
       copyFile.mockRestore();
+    }
+  });
+}
+
+function registerWindowsMaterializationSyncTest(): void {
+  it('opens the Windows staging artifact write-capable before syncing and closing it', async () => {
+    const fixture = createFixture('windows-staging-sync', { platform: 'win32' });
+    const originalOpen = fs.promises.open;
+    let stagingFlags: string | number | undefined;
+    let syncCalls = 0;
+    let closeCalls = 0;
+    const open = vi.spyOn(fs.promises, 'open').mockImplementation(async (filePath, flags, mode) => {
+      const handle = await originalOpen(filePath, flags, mode);
+      if (!filePath.toString().endsWith('.tmp')) return handle;
+      stagingFlags = flags;
+      const originalSync = handle.sync.bind(handle);
+      const originalClose = handle.close.bind(handle);
+      vi.spyOn(handle, 'sync').mockImplementation(async () => {
+        syncCalls += 1;
+        if (flags !== 'r+') {
+          throw Object.assign(new Error('operation not permitted, fsync'), { code: 'EPERM' });
+        }
+        await originalSync();
+      });
+      vi.spyOn(handle, 'close').mockImplementation(async () => {
+        closeCalls += 1;
+        await originalClose();
+      });
+      return handle;
+    });
+
+    try {
+      await expect(createPort(fixture).resolve()).resolves.toMatchObject({
+        runtimeVersion: '0.6.8',
+      });
+      expect(stagingFlags).toBe('r+');
+      expect(syncCalls).toBe(1);
+      expect(closeCalls).toBe(1);
+    } finally {
+      open.mockRestore();
     }
   });
 }

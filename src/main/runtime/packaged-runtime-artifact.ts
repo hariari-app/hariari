@@ -137,7 +137,7 @@ export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
     try {
       await fs.promises.copyFile(sourcePath, temporaryPath, fs.constants.COPYFILE_EXCL);
       await preserveExecutableMode(temporaryPath, this.platform);
-      const handle = await fs.promises.open(temporaryPath, 'r');
+      const handle = await fs.promises.open(temporaryPath, 'r+');
       try {
         await handle.sync();
       } finally {
