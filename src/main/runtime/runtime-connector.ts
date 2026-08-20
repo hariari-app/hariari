@@ -17,6 +17,7 @@ import {
 } from './runtime-connector-lifecycle';
 import { waitForRuntimeTermination } from './runtime-termination-probe';
 import type { RuntimeConnectorDependencies, RuntimeConnectResult } from './runtime-connector-types';
+import { RuntimeUpgradeIdentityPolicy } from './runtime-upgrade-identity';
 
 export type { RuntimeConnectorDependencies } from './runtime-connector-types';
 
@@ -25,6 +26,7 @@ class RuntimeConnector implements RuntimeInterface {
   private removeDisconnectListener: (() => void) | null = null;
   private readonly supervisor: RuntimeConnectionSupervisor;
   private readonly lifecycle = new RuntimeConnectorLifecycle();
+  private readonly upgradeIdentity: RuntimeUpgradeIdentityPolicy;
 
   constructor(private readonly dependencies: RuntimeConnectorDependencies) {
     this.supervisor = new RuntimeConnectionSupervisor({
@@ -32,6 +34,12 @@ class RuntimeConnector implements RuntimeInterface {
       healthPollIntervalMs: dependencies.healthPollIntervalMs,
       schedule: dependencies.schedule,
     });
+    this.upgradeIdentity = new RuntimeUpgradeIdentityPolicy(
+      dependencies,
+      this.supervisor,
+      (session, generation) => this.adoptSession(session, generation),
+      (generation, launch) => this.lifecycle.ownLaunch(generation, launch),
+    );
   }
 
   connectOrStart(): Promise<RuntimeConnectionState> {
@@ -111,6 +119,9 @@ class RuntimeConnector implements RuntimeInterface {
 
     const existing = await this.tryConnect(endpoint, token, generation);
     if (existing.kind === 'cancelled') return this.supervisor.currentState();
+    if (existing.kind === 'connected') {
+      return this.upgradeIdentity.connect(existing.candidate, endpoint, token, generation);
+    }
     if (existing.kind !== 'failed') return existing.state;
     if (existing.error.code !== 'endpoint-unavailable') {
       return this.supervisor.publishPortError(existing.error);
@@ -141,6 +152,9 @@ class RuntimeConnector implements RuntimeInterface {
     try {
       const recheck = await this.tryConnect(endpoint, token, generation);
       if (recheck.kind === 'cancelled') return this.supervisor.currentState();
+      if (recheck.kind === 'connected') {
+        return this.upgradeIdentity.connect(recheck.candidate, endpoint, token, generation, lease);
+      }
       if (recheck.kind !== 'failed') return recheck.state;
       if (recheck.error.code !== 'endpoint-unavailable') {
         return this.supervisor.publishPortError(recheck.error);
@@ -157,7 +171,7 @@ class RuntimeConnector implements RuntimeInterface {
       const launchFailure = await this.launchRuntime(endpoint, generation, lease);
       if (launchFailure) return launchFailure;
 
-      return this.waitForRuntime(endpoint, token, deadlineAt, generation);
+      return this.waitForRuntime(endpoint, token, deadlineAt, generation, lease);
     } finally {
       await lease.release().catch(() => undefined);
     }
@@ -190,6 +204,7 @@ class RuntimeConnector implements RuntimeInterface {
     token: Uint8Array | null,
     deadlineAt: number,
     generation: number,
+    lease?: RuntimeStartupLease,
   ): Promise<RuntimeConnectionState> {
     do {
       if (!this.supervisor.isActive(generation)) return this.supervisor.currentState();
@@ -203,6 +218,9 @@ class RuntimeConnector implements RuntimeInterface {
       }
       const result = await this.tryConnect(endpoint, token, generation);
       if (result.kind === 'cancelled') return this.supervisor.currentState();
+      if (result.kind === 'connected') {
+        return this.upgradeIdentity.connect(result.candidate, endpoint, token, generation, lease);
+      }
       if (result.kind !== 'failed') return result.state;
       if (result.error.code !== 'endpoint-unavailable') {
         return this.supervisor.publishPortError(result.error);
@@ -238,11 +256,7 @@ class RuntimeConnector implements RuntimeInterface {
         });
         return { kind: 'incompatible', state };
       }
-      this.adoptSession(connection.session, generation);
-      const state = await this.querySessionHealth(connection.session, generation);
-      if (state.state === 'connected') return { kind: 'connected', state };
-      if (state.state === 'incompatible') return { kind: 'incompatible', state };
-      return { kind: 'unavailable', state };
+      return this.upgradeIdentity.inspect(connection.session, generation);
     } catch (error) {
       if (!this.supervisor.isActive(generation)) return { kind: 'cancelled' };
       const portError =
@@ -337,8 +351,9 @@ class RuntimeConnector implements RuntimeInterface {
       if (connection.error.code === 'endpoint-unavailable') return { state: 'not-running' };
       return this.supervisor.publishPortError(connection.error);
     }
-    if (!this.session) return { state: 'not-running' };
-    return this.shutdownSession(this.session, request);
+    this.adoptSession(connection.candidate.session, generation);
+    this.supervisor.publish({ state: 'connected', health: connection.candidate.health });
+    return this.shutdownSession(connection.candidate.session, request);
   }
 
   private async shutdownSession(

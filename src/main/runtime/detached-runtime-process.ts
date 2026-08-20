@@ -65,7 +65,7 @@ export class DetachedRuntimeProcessAdapter implements RuntimeProcessPort {
         '--runtime-dir',
         request.endpoint.runtimeDirectory,
         '--runtime-version',
-        this.options.runtimeVersion,
+        request.artifact.runtimeVersion,
         '--build-id',
         request.artifact.buildId,
       ];
@@ -144,6 +144,8 @@ async function validateLaunchRequest(
     !path.isAbsolute(request.artifact.executablePath) ||
     !path.isAbsolute(request.endpoint.runtimeDirectory) ||
     !SAFE_VALUE_PATTERN.test(runtimeVersion) ||
+    request.artifact.runtimeVersion !== runtimeVersion ||
+    !SAFE_VALUE_PATTERN.test(request.artifact.runtimeVersion) ||
     !SAFE_VALUE_PATTERN.test(request.artifact.buildId)
   ) {
     throw new Error('Invalid Runtime launch request');
@@ -151,7 +153,7 @@ async function validateLaunchRequest(
   for (const value of [
     request.artifact.executablePath,
     request.endpoint.runtimeDirectory,
-    runtimeVersion,
+    request.artifact.runtimeVersion,
     request.artifact.buildId,
   ]) {
     if (value.includes('\0')) throw new Error('Invalid Runtime launch request');

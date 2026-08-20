@@ -27,7 +27,7 @@ export class FakeRuntimeEnvironment {
     address: '/tmp/hariari-runtime-test.sock',
     runtimeDirectory: '/tmp/hariari-runtime-test',
   };
-  readonly health: RuntimeHealth = {
+  health: RuntimeHealth = {
     status: 'ready',
     instanceId: 'runtime-1',
     runtimeVersion: '0.6.8',
@@ -36,6 +36,8 @@ export class FakeRuntimeEnvironment {
     startedAt: '2026-08-20T10:00:00.000Z',
     checkedAt: '2026-08-20T10:00:01.000Z',
   };
+  private packagedRuntimeVersion = '0.6.8';
+  private packagedBuildId = 'build-19';
   readonly token = DEFAULT_TOKEN;
   readonly endpoints: RuntimeEndpointPort = { resolve: async () => this.endpoint };
   readonly tokens: RuntimeTokenPort = {
@@ -54,7 +56,8 @@ export class FakeRuntimeEnvironment {
       if (this.artifactFailure) throw new RuntimePortError('artifact-unavailable');
       return {
         executablePath: '/test/hariari',
-        buildId: this.health.buildId,
+        runtimeVersion: this.packagedRuntimeVersion,
+        buildId: this.packagedBuildId,
       };
     },
   };
@@ -65,7 +68,15 @@ export class FakeRuntimeEnvironment {
       if (this.startFailure) throw new RuntimePortError('start-failed');
       this.launchCount += 1;
       this.launchedProcessAlive = true;
-      if (this.launchMakesReady) this.running = true;
+      if (this.launchMakesReady) {
+        this.health = {
+          ...this.health,
+          instanceId: `runtime-${this.launchCount}`,
+          runtimeVersion: request.artifact.runtimeVersion,
+          buildId: request.artifact.buildId,
+        };
+        this.running = true;
+      }
       this.launchedProcess = this.createProcessLaunch();
       return this.launchedProcess;
     },
@@ -123,6 +134,15 @@ export class FakeRuntimeEnvironment {
 
   get activeSessionCount(): number {
     return this.sessions.size;
+  }
+
+  setRunningIdentity(runtimeVersion: string, buildId: string, instanceId = 'runtime-old'): void {
+    this.health = { ...this.health, runtimeVersion, buildId, instanceId };
+  }
+
+  setPackagedIdentity(runtimeVersion: string, buildId: string): void {
+    this.packagedRuntimeVersion = runtimeVersion;
+    this.packagedBuildId = buildId;
   }
 
   dropConnections(): void {

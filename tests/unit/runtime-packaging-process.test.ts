@@ -23,6 +23,7 @@ describe('detached Runtime process adapter', () => {
   );
   it('terminates and settles an owned launch without exposing a process handle', terminatesLaunch);
   it('rejects a symlink or non-executable path before spawn', rejectsInvalidArtifact);
+  it('rejects an artifact whose Runtime version differs from its launcher', rejectsWrongVersion);
   it(
     'preserves case-insensitive Windows system variables without inheriting PATH',
     filtersWindowsEnvironment,
@@ -45,7 +46,7 @@ async function terminatesLaunch(): Promise<void> {
     },
   });
   const launch = await adapter.start({
-    artifact: { executablePath, buildId: 'build-19' },
+    artifact: { executablePath, runtimeVersion: '0.6.8', buildId: 'build-19' },
     endpoint: { kind: 'unix', address: path.join(root, 'runtime.sock'), runtimeDirectory },
   });
 
@@ -75,7 +76,7 @@ async function retainsLaunchUntilExit(platform: NodeJS.Platform): Promise<void> 
     spawn,
   });
   const request = {
-    artifact: { executablePath, buildId: 'build-19' },
+    artifact: { executablePath, runtimeVersion: '0.6.8', buildId: 'build-19' },
     endpoint: {
       kind: platform === 'win32' ? ('windows-pipe' as const) : ('unix' as const),
       address: platform === 'win32' ? '\\\\.\\pipe\\hariari-test' : path.join(root, 'runtime.sock'),
@@ -110,7 +111,7 @@ async function launchesSecurely(): Promise<void> {
     spawn: recordingSpawn(calls, unref),
   });
   await adapter.start({
-    artifact: { executablePath, buildId: 'build-19' },
+    artifact: { executablePath, runtimeVersion: '0.6.8', buildId: 'build-19' },
     endpoint: { kind: 'unix', address: path.join(root, 'runtime.sock'), runtimeDirectory },
   });
   assertSecureSpawn(calls, executablePath, runtimeDirectory, secret);
@@ -161,8 +162,33 @@ async function rejectsInvalidArtifact(): Promise<void> {
   });
   await expect(
     adapter.start({
-      artifact: { executablePath: symlink, buildId: 'build-19' },
+      artifact: {
+        executablePath: symlink,
+        runtimeVersion: '0.6.8',
+        buildId: 'build-19',
+      },
       endpoint: { kind: 'unix', address: '/tmp/runtime.sock', runtimeDirectory: root },
+    }),
+  ).rejects.toMatchObject({ code: 'start-failed' });
+  expect(spawn).not.toHaveBeenCalled();
+}
+
+async function rejectsWrongVersion(): Promise<void> {
+  const root = temporaryRoot('hariari-runtime-wrong-version-');
+  const executablePath = path.join(root, 'runtime');
+  const runtimeDirectory = path.join(root, 'state');
+  createExecutable(executablePath, runtimeDirectory);
+  const spawn = vi.fn();
+  const adapter = new DetachedRuntimeProcessAdapter({
+    runtimeVersion: '0.6.8',
+    platform: 'linux',
+    spawn,
+  });
+
+  await expect(
+    adapter.start({
+      artifact: { executablePath, runtimeVersion: '0.6.7', buildId: 'build-18' },
+      endpoint: { kind: 'unix', address: '/tmp/runtime.sock', runtimeDirectory },
     }),
   ).rejects.toMatchObject({ code: 'start-failed' });
   expect(spawn).not.toHaveBeenCalled();
@@ -184,7 +210,7 @@ async function filtersWindowsEnvironment(): Promise<void> {
     spawn,
   });
   await adapter.start({
-    artifact: { executablePath, buildId: 'build-19' },
+    artifact: { executablePath, runtimeVersion: '0.6.8', buildId: 'build-19' },
     endpoint: {
       kind: 'windows-pipe',
       address: '\\\\.\\pipe\\hariari-test',

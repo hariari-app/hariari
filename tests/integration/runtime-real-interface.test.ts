@@ -166,7 +166,11 @@ async function createRealRuntimeFixture(
     requestDeadlineMs: options.requestDeadlineMs,
   });
   const artifacts: RuntimeArtifactPort = {
-    resolve: async () => ({ executablePath: '/packaged/Hariari', buildId: 'build-19' }),
+    resolve: async () => ({
+      executablePath: '/packaged/Hariari',
+      runtimeVersion: '0.6.8',
+      buildId: 'build-19',
+    }),
   };
   const createInterface = (): RuntimeInterface =>
     createRuntimeConnector({

@@ -35,6 +35,7 @@ function registerArtifactResolutionTest(): void {
 
     const artifact = await port.resolve();
 
+    expect(artifact.runtimeVersion).toBe('0.6.8');
     expect(artifact.buildId).toBe('build-19');
     expect(artifact.executablePath).toBe(
       path.join(fixture.runtimeDirectory, 'bin', '0.6.8-linux-x64', EXECUTABLE_NAME),

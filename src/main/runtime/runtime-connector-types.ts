@@ -1,4 +1,5 @@
 import type {
+  RuntimeHealth,
   RuntimeConnectionState,
   RuntimeProtocolRange,
 } from '../../shared/runtime/runtime-interface';
@@ -7,6 +8,7 @@ import type {
   RuntimeArtifactPort,
   RuntimeClientIdentity,
   RuntimeClientPort,
+  RuntimeClientSession,
   RuntimeEndpointPort,
   RuntimeProcessPort,
   RuntimeStartupLeasePort,
@@ -32,11 +34,16 @@ export interface RuntimeConnectorDependencies {
   readonly schedule: RuntimeSupervisionSchedule;
 }
 
-type ConnectedState = Extract<RuntimeConnectionState, { state: 'connected' }>;
 type IncompatibleState = Extract<RuntimeConnectionState, { state: 'incompatible' }>;
 
 export type RuntimeConnectResult =
-  | { readonly kind: 'connected'; readonly state: ConnectedState }
+  | {
+      readonly kind: 'connected';
+      readonly candidate: {
+        readonly session: RuntimeClientSession;
+        readonly health: RuntimeHealth;
+      };
+    }
   | { readonly kind: 'incompatible'; readonly state: IncompatibleState }
   | {
       readonly kind: 'unavailable';

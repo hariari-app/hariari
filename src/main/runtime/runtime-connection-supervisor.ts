@@ -108,8 +108,7 @@ export class RuntimeConnectionSupervisor {
   }
 
   publishPortError(error: RuntimePortError): RuntimeUnavailableState {
-    const [reason, defaultRetryable] = PORT_ERROR_STATES[error.code];
-    return this.publishUnavailable(reason, error.retryable ?? defaultRetryable);
+    return this.publish(runtimeUnavailableFromPortError(error));
   }
 
   scheduleRetry(generation: number, task: () => void): void {
@@ -157,4 +156,9 @@ export class RuntimeConnectionSupervisor {
     this.cancelRetry = null;
     this.forceClearHealthPoll();
   }
+}
+
+export function runtimeUnavailableFromPortError(error: RuntimePortError): RuntimeUnavailableState {
+  const [reason, defaultRetryable] = PORT_ERROR_STATES[error.code];
+  return { state: 'unavailable', reason, retryable: error.retryable ?? defaultRetryable };
 }

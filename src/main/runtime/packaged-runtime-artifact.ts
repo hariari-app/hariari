@@ -32,18 +32,30 @@ interface RuntimeArtifactManifest {
 export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
   private readonly platform: NodeJS.Platform;
   private readonly arch: string;
+  private resolution: Promise<RuntimeArtifact> | null = null;
 
   constructor(private readonly options: PackagedRuntimeArtifactOptions) {
     this.platform = options.platform ?? process.platform;
     this.arch = options.arch ?? process.arch;
   }
 
-  async resolve(): Promise<RuntimeArtifact> {
+  resolve(): Promise<RuntimeArtifact> {
+    if (this.resolution) return this.resolution;
+    const resolution = this.resolveVerified().catch((error: unknown) => {
+      if (this.resolution === resolution) this.resolution = null;
+      throw error;
+    });
+    this.resolution = resolution;
+    return resolution;
+  }
+
+  private async resolveVerified(): Promise<RuntimeArtifact> {
     try {
       const source = await this.resolveSource();
       const executablePath = await this.materialize(source.manifest, source.executablePath);
       return {
         executablePath,
+        runtimeVersion: source.manifest.runtimeVersion,
         buildId: source.manifest.buildId,
       };
     } catch (error) {
