@@ -38,6 +38,22 @@ describe('Runtime health renderer model', () => {
     });
   });
 
+  it('does not offer Retry for a non-retryable unavailable state', () => {
+    expect(
+      createRuntimeHealthViewModel({
+        state: 'unavailable',
+        reason: 'authentication-rejected',
+        retryable: false,
+      }),
+    ).toEqual({
+      state: 'unavailable',
+      visibleText: 'Runtime: Unavailable',
+      detail: '',
+      announcement: 'Runtime unavailable.',
+      showRetry: false,
+    });
+  });
+
   it('shows incompatible health with safe version ranges and update context', () => {
     expect(
       createRuntimeHealthViewModel({
@@ -73,9 +89,7 @@ describe('Runtime health renderer model', () => {
     await Promise.resolve();
 
     expect(runtime.callOrder).toEqual(['onStatus', 'getStatus']);
-    expect(findByClass(container, 'runtime-health-text')?.textContent).toBe(
-      'Runtime: Unavailable',
-    );
+    expect(findByClass(container, 'runtime-health-text')?.textContent).toBe('Runtime: Unavailable');
     const status = findByClass(container, 'runtime-health-text');
     expect(status?.attributes.get('role')).toBe('status');
     expect(status?.attributes.get('aria-live')).toBe('polite');
@@ -112,9 +126,7 @@ describe('Runtime health renderer model', () => {
     await Promise.resolve();
 
     expect(runtime.retry).toHaveBeenCalledOnce();
-    expect(findByClass(container, 'runtime-health-text')?.textContent).toBe(
-      'Runtime: Connected',
-    );
+    expect(findByClass(container, 'runtime-health-text')?.textContent).toBe('Runtime: Connected');
     expect(findByClass(container, 'runtime-health-detail')?.textContent).toBe(
       'v0.6.8 · protocol 2',
     );

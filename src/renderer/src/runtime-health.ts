@@ -31,8 +31,10 @@ export function createRuntimeHealthViewModel(
         state: 'unavailable',
         visibleText: 'Runtime: Unavailable',
         detail: '',
-        announcement: 'Runtime unavailable. Retry is available.',
-        showRetry: true,
+        announcement: status.retryable
+          ? 'Runtime unavailable. Retry is available.'
+          : 'Runtime unavailable.',
+        showRetry: status.retryable,
       };
     case 'incompatible':
       return {
@@ -118,9 +120,7 @@ export function mountRuntimeHealth(
     void runtime
       .retry()
       .then(render)
-      .catch(() =>
-        render({ state: 'unavailable', reason: 'connection-failed', retryable: true }),
-      )
+      .catch(() => render({ state: 'unavailable', reason: 'connection-failed', retryable: true }))
       .finally(() => {
         retrying = false;
         retry.disabled = false;
