@@ -42,15 +42,11 @@ export interface RuntimeConnectorDependencies {
   readonly schedule: RuntimeSupervisionSchedule;
 }
 
+type ConnectedState = Extract<RuntimeConnectionState, { state: 'connected' }>;
+type IncompatibleState = Extract<RuntimeConnectionState, { state: 'incompatible' }>;
 type ConnectResult =
-  | {
-      readonly kind: 'connected';
-      readonly state: Extract<RuntimeConnectionState, { state: 'connected' }>;
-    }
-  | {
-      readonly kind: 'incompatible';
-      readonly state: Extract<RuntimeConnectionState, { state: 'incompatible' }>;
-    }
+  | { readonly kind: 'connected'; readonly state: ConnectedState }
+  | { readonly kind: 'incompatible'; readonly state: IncompatibleState }
   | { readonly kind: 'failed'; readonly error: RuntimePortError }
   | { readonly kind: 'cancelled' };
 
@@ -74,7 +70,6 @@ class RuntimeConnector implements RuntimeInterface {
   connectOrStart(): Promise<RuntimeConnectionState> {
     return this.startConnectAttempt(this.supervisor.start());
   }
-
   private startConnectAttempt(generation: number): Promise<RuntimeConnectionState> {
     if (!this.supervisor.isActive(generation)) {
       return Promise.resolve(this.supervisor.currentState());
@@ -96,7 +91,6 @@ class RuntimeConnector implements RuntimeInterface {
     this.connectInFlight = { generation, promise: attempt };
     return attempt;
   }
-
   async queryHealth(): Promise<RuntimeConnectionState> {
     const generation = this.supervisor.currentGeneration();
     const session = this.session;
@@ -105,11 +99,9 @@ class RuntimeConnector implements RuntimeInterface {
     this.supervise(state, generation);
     return state;
   }
-
   subscribeStatus(listener: (state: RuntimeConnectionState) => void): () => void {
     return this.supervisor.subscribe(listener);
   }
-
   async disconnect(): Promise<void> {
     this.supervisor.cancel();
     await this.releaseSession();
