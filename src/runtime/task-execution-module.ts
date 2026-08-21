@@ -11,6 +11,7 @@ import {
   type GenericCliExecutionAdapter,
 } from './generic-cli-execution-adapter';
 import { TaskModule } from './task-module';
+import { TaskOutputLog } from './task-output-log';
 
 const MAX_OUTPUT_CHARS = 4 * 1024;
 
@@ -38,12 +39,16 @@ export class TaskExecutionModule {
   private readonly active = new Map<string, GenericCliExecution>();
   private readonly subscribers = new Map<string, Set<(event: TaskOutputEvent) => void>>();
   private readonly outputSequences = new Map<string, number>();
+  private readonly outputPoisoned = new Set<string>();
+  private readonly outputLog: TaskOutputLog;
 
   constructor(
     private readonly tasks: TaskModule,
     private readonly adapter: GenericCliExecutionAdapter,
     private readonly randomId: () => string,
-  ) {}
+  ) {
+    this.outputLog = new TaskOutputLog(tasks.runtimeDirectory);
+  }
 
   start(request: StartTaskRequest): Promise<TaskExecutionView> {
     const inFlight = this.starts.get(request.taskId);
@@ -106,14 +111,20 @@ export class TaskExecutionModule {
     return this.tasks.execution(taskId);
   }
 
-  subscribe(taskId: string, listener: (event: TaskOutputEvent) => void): () => void {
+  subscribe(
+    taskId: string,
+    listener: (event: TaskOutputEvent) => void,
+  ): { readonly replay: readonly TaskOutputEvent[]; readonly unsubscribe: () => void } {
     this.tasks.execution(taskId);
     const listeners = this.subscribers.get(taskId) ?? new Set<(event: TaskOutputEvent) => void>();
     listeners.add(listener);
     this.subscribers.set(taskId, listeners);
-    return () => {
-      listeners.delete(listener);
-      if (listeners.size === 0) this.subscribers.delete(taskId);
+    return {
+      replay: this.outputLog.replay(taskId),
+      unsubscribe: () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) this.subscribers.delete(taskId);
+      },
     };
   }
 
@@ -249,15 +260,28 @@ export class TaskExecutionModule {
   }
 
   private publishOutput(taskId: string, attemptId: string, value: string): void {
+    if (this.outputPoisoned.has(taskId)) return;
     const data = sanitizeOutput(value);
     if (data.length === 0) return;
-    const sequence = (this.outputSequences.get(taskId) ?? 0) + 1;
-    this.outputSequences.set(taskId, sequence);
-    this.publish({ kind: 'data', taskId, attemptId, sequence, data });
+    const sequence = (this.outputSequences.get(taskId) ?? this.outputLog.lastSequence(taskId)) + 1;
+    const event = { kind: 'data' as const, taskId, attemptId, sequence, data };
+    if (!this.persistAndPublish(taskId, event)) return;
     if (data.length < value.length) {
       const droppedSequence = sequence + 1;
-      this.outputSequences.set(taskId, droppedSequence);
-      this.publish({ kind: 'dropped', taskId, attemptId, sequence: droppedSequence });
+      const dropped = { kind: 'dropped' as const, taskId, attemptId, sequence: droppedSequence };
+      this.persistAndPublish(taskId, dropped);
+    }
+  }
+
+  private persistAndPublish(taskId: string, event: TaskOutputEvent): boolean {
+    try {
+      this.outputLog.append(event);
+      this.outputSequences.set(taskId, event.sequence);
+      this.publish(event);
+      return true;
+    } catch {
+      this.outputPoisoned.add(taskId);
+      return false;
     }
   }
 

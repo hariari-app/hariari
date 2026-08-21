@@ -141,6 +141,7 @@ export interface ExecutionReservation {
 
 /** The sole serialized writer for durable Task and execution lifecycle evidence. */
 export class TaskModule {
+  readonly runtimeDirectory: string;
   private readonly directory: string;
   private readonly eventPath: string;
   private readonly projectionPath: string;
@@ -157,6 +158,7 @@ export class TaskModule {
     private readonly now: () => number,
     private readonly randomId: () => string,
   ) {
+    this.runtimeDirectory = runtimeDirectory;
     this.directory = path.join(runtimeDirectory, 'tasks');
     this.eventPath = path.join(this.directory, EVENT_FILE);
     this.projectionPath = path.join(this.directory, PROJECTION_FILE);

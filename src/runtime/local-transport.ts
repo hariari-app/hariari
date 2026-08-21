@@ -3,8 +3,6 @@ import net from 'node:net';
 import path from 'node:path';
 import { RuntimeFrameDecoder, RuntimeFrameError, encodeRuntimeFrame } from './frame-codec';
 
-const MAX_QUEUED_RUNTIME_FRAMES = 64;
-
 export interface RuntimeLocalEndpoint {
   readonly kind: 'unix' | 'windows-pipe';
   readonly address: string;
@@ -142,12 +140,6 @@ class NodeRuntimeFrameConnection implements RuntimeFrameConnection {
     }
     for (const frame of frames) {
       this.deliver(frame);
-      if (this.queued.length > MAX_QUEUED_RUNTIME_FRAMES) {
-        this.socket.destroy();
-        this.failPending(new RuntimeTransportError('protocol'));
-        this.finishClose();
-        return;
-      }
     }
   }
 
