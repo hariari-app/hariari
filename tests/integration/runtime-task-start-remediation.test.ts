@@ -41,6 +41,10 @@ function registerTaskStartTests(): void {
     'records adapter-discovered Claude provider-session identity through the authenticated Runtime seam',
     recordsClaudeProviderSession,
   );
+  it(
+    'projects immutable Claude attempt and provider-session histories through Runtime restart',
+    projectsClaudeExecutionHistories,
+  );
   it('resumes a matching Claude session without allocating another execution', resumesMatchingClaudeSession);
   it('records a scope-mismatched Claude resume rejection across restart', rejectsMismatchedClaudeResume);
   it('records an unsupported Claude resume rejection across restart', rejectsUnsupportedClaudeResume);
@@ -117,6 +121,32 @@ async function recordsClaudeProviderSession(): Promise<void> {
   await subject.restart();
   const restarted = await subject.connect();
   await expect(restarted.getTaskExecution(task.id)).resolves.toEqual(started);
+  await restarted.disconnect();
+}
+
+async function projectsClaudeExecutionHistories(): Promise<void> {
+  const subject = await createSubject(() => new FakeGenericCliExecutionAdapter());
+  const runtime = await subject.connect();
+  const task = await runtime.createTask({
+    objective: 'Retain this Claude execution history.',
+    project: 'Hariari',
+    repository: 'fake-checkout',
+    baseRef: 'main',
+    provider: 'claude',
+    idempotencyKey: 'history-create',
+  });
+
+  const started = await runtime.startTask({ taskId: task.id, idempotencyKey: 'history-start' });
+
+  expect(started.attempts).toEqual([started.attempt]);
+  expect(started.providerSessions).toEqual([started.providerSession]);
+  await runtime.disconnect();
+  await subject.restart();
+  const restarted = await subject.connect();
+  const replayed = await restarted.getTaskExecution(task.id);
+  expect(replayed).toEqual(started);
+  expect(replayed.attempts).toEqual([replayed.attempt]);
+  expect(replayed.providerSessions).toEqual([replayed.providerSession]);
   await restarted.disconnect();
 }
 

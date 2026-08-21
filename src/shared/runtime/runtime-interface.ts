@@ -72,17 +72,29 @@ export interface CancelTaskRequest {
 }
 export interface ResumeClaudeSessionRequest { readonly taskId: string; readonly providerSessionId: string; readonly repository: string; readonly worktreeId: string; readonly branchName: string; readonly idempotencyKey: string; }
 
+export interface TaskAttemptView {
+  readonly id: string;
+  readonly number: number;
+  readonly state: TaskExecutionState;
+  readonly exitCode?: number;
+}
+
+export interface ClaudeProviderSessionView {
+  readonly id: string;
+  readonly provider: 'claude';
+  readonly nativeSessionId: string;
+  readonly taskId: string;
+  readonly attemptId: string;
+  readonly executionContextId: string;
+  readonly capabilities: { readonly resume: boolean; readonly fork: boolean };
+  readonly parentId: string | null;
+}
+
 export interface TaskExecutionView {
   readonly task: TaskView & { readonly executionState: TaskExecutionState };
   readonly run: { readonly id: string; readonly number: number } | null;
-  readonly attempt:
-    | {
-        readonly id: string;
-        readonly number: number;
-        readonly state: TaskExecutionState;
-        readonly exitCode?: number;
-      }
-    | null;
+  readonly attempt: TaskAttemptView | null;
+  readonly attempts: readonly TaskAttemptView[];
   readonly context:
     | {
         readonly id: string;
@@ -93,18 +105,8 @@ export interface TaskExecutionView {
         readonly ptyId: string;
       }
     | null;
-  readonly providerSession?:
-    | {
-        readonly id: string;
-        readonly provider: 'claude';
-        readonly nativeSessionId: string;
-        readonly taskId: string;
-        readonly attemptId: string;
-        readonly executionContextId: string;
-        readonly capabilities: { readonly resume: boolean; readonly fork: boolean };
-        readonly parentId: string | null;
-      }
-    | null;
+  readonly providerSession?: ClaudeProviderSessionView | null;
+  readonly providerSessions: readonly ClaudeProviderSessionView[];
 }
 
 export type TaskOutputEvent =

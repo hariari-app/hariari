@@ -275,13 +275,17 @@ export function parseTaskExecutionView(value: Record<string, unknown>): TaskExec
   const executionState = executionStateValue(taskValue.executionState);
   const run = value.run === null ? null : parseRun(object(value.run));
   const attempt = value.attempt === null ? null : parseAttempt(object(value.attempt));
+  const attempts = array(value.attempts).map((entry) => parseAttempt(object(entry)));
   const context = value.context === null ? null : parseContext(object(value.context));
   const providerSession = value.providerSession === undefined || value.providerSession === null ? null : parseProviderSession(object(value.providerSession));
+  const providerSessions = array(value.providerSessions).map((entry) => parseProviderSession(object(entry)));
   if (executionState === 'ready' && (run !== null || attempt !== null || context !== null)) invalid();
   if (executionState !== 'ready' && run === null) invalid();
   if (executionState !== 'starting' && executionState !== 'ready' && attempt === null) invalid();
   if (providerSession && (!attempt || !context || providerSession.taskId !== task.id || providerSession.attemptId !== attempt.id || providerSession.executionContextId !== context.id)) invalid();
-  return { task: { ...task, executionState }, run, attempt, context, providerSession };
+  if ((attempt === null) !== (attempts.length === 0) || (attempt && !attempts.some((entry) => entry.id === attempt.id))) invalid();
+  if ((providerSession === null) !== (providerSessions.length === 0) || (providerSession && !providerSessions.some((entry) => entry.id === providerSession.id))) invalid();
+  return { task: { ...task, executionState }, run, attempt, attempts, context, providerSession, providerSessions };
 }
 
 export function parseOutputFrame(value: unknown, protocolVersion: number): RuntimeOutputFrame {
@@ -407,6 +411,11 @@ function protocolRange(value: unknown): RuntimeProtocolRange {
 function object(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) invalid();
   return value as Record<string, unknown>;
+}
+
+function array(value: unknown): readonly unknown[] {
+  if (!Array.isArray(value)) invalid();
+  return value;
 }
 
 function boundedString(value: unknown, maximum: number): string {

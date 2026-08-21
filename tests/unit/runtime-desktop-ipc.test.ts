@@ -434,6 +434,7 @@ function privateExecution(): TaskExecutionView {
       state: 'running',
       privatePid: 42,
     } as TaskExecutionView['attempt'],
+    attempts: [{ id: 'attempt-1', number: 1, state: 'running', privatePid: 42 } as NonNullable<TaskExecutionView['attempt']>],
     context: {
       id: 'context-1',
       worktreeId: 'worktree-1',
@@ -444,6 +445,7 @@ function privateExecution(): TaskExecutionView {
       command: 'private command',
       environment: 'private env',
     } as TaskExecutionView['context'],
+    providerSessions: [],
   };
 }
 
@@ -461,6 +463,7 @@ function publicExecution(): TaskExecutionView {
     },
     run: { id: 'run-1', number: 1 },
     attempt: { id: 'attempt-1', number: 1, state: 'running' },
+    attempts: [{ id: 'attempt-1', number: 1, state: 'running' }],
     context: {
       id: 'context-1',
       worktreeId: 'worktree-1',
@@ -469,5 +472,6 @@ function publicExecution(): TaskExecutionView {
       processId: 'process-1',
       ptyId: 'pty-1',
     },
+    providerSessions: [],
   };
 }

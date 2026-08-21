@@ -146,8 +146,10 @@ interface StoredExecution {
   readonly fingerprint: string;
   readonly run: StoredRun;
   readonly attempt: StoredAttempt | null;
+  readonly attempts: readonly StoredAttempt[];
   readonly context: StoredContext | null;
   readonly providerSession: StoredProviderSession | null;
+  readonly providerSessions: readonly StoredProviderSession[];
   readonly cancellation: { readonly idempotencyKey: string; readonly fingerprint: string } | null;
 }
 
@@ -474,8 +476,10 @@ export class TaskModule {
       fingerprint: event.fingerprint,
       run: event.run,
       attempt: null,
+      attempts: [],
       context: null,
       providerSession: null,
+      providerSessions: [],
       cancellation: null,
     };
     this.executions.set(event.taskId, execution);
@@ -485,7 +489,7 @@ export class TaskModule {
   private applyAttemptCreated(event: AttemptCreatedEvent): void {
     const execution = this.executionFor(event.taskId);
     if (execution.attempt) throw new TaskStorageError('internal');
-    this.replaceExecution(execution, { ...execution, attempt: event.attempt });
+    this.replaceExecution(execution, { ...execution, attempt: event.attempt, attempts: [...execution.attempts, event.attempt] });
   }
 
   private applyContextAllocated(event: ContextAllocatedEvent): void {
@@ -498,7 +502,14 @@ export class TaskModule {
       throw new TaskStorageError('internal');
     }
     if (event.providerSession && (event.providerSession.taskId !== event.taskId || event.providerSession.executionContextId !== event.context.id || event.providerSession.attemptId !== execution.attempt.id)) throw new TaskStorageError('internal');
-    this.replaceExecution(execution, { ...execution, context: event.context, providerSession: event.providerSession });
+    this.replaceExecution(execution, {
+      ...execution,
+      context: event.context,
+      providerSession: event.providerSession,
+      providerSessions: event.providerSession
+        ? [...execution.providerSessions, event.providerSession]
+        : execution.providerSessions,
+    });
   }
 
   private applyAttemptStarted(event: AttemptStartedEvent): void {
@@ -506,10 +517,7 @@ export class TaskModule {
     if (!execution.attempt || !execution.context || execution.attempt.state !== 'starting') {
       throw new TaskStorageError('internal');
     }
-    this.replaceExecution(execution, {
-      ...execution,
-      attempt: { ...execution.attempt, state: 'running' },
-    });
+    this.replaceAttempt(execution, { ...execution.attempt, state: 'running' });
   }
 
   private applyCancellationRequested(event: CancellationRequestedEvent): void {
@@ -518,12 +526,11 @@ export class TaskModule {
       throw new TaskStorageError('internal');
     }
     this.replaceExecution(execution, {
-      ...execution,
+      ...this.withAttempt(execution, { ...execution.attempt, state: 'cancelling' }),
       cancellation: {
         idempotencyKey: event.idempotencyKey,
         fingerprint: event.fingerprint,
       },
-      attempt: { ...execution.attempt, state: 'cancelling' },
     });
   }
 
@@ -534,13 +541,10 @@ export class TaskModule {
   ): void {
     const execution = this.executionFor(taskId);
     if (!execution.attempt || isTerminal(execution.attempt.state)) throw new TaskStorageError('internal');
-    this.replaceExecution(execution, {
-      ...execution,
-      attempt: {
-        ...execution.attempt,
-        state,
-        ...(exitCode === undefined ? {} : { exitCode }),
-      },
+    this.replaceAttempt(execution, {
+      ...execution.attempt,
+      state,
+      ...(exitCode === undefined ? {} : { exitCode }),
     });
   }
   private applyResumeRejected(event: ClaudeResumeRejectedEvent): void { const previous = this.resumeRejections.get(event.idempotencyKey); if (previous && (previous.fingerprint !== event.fingerprint || previous.code !== event.code)) throw new TaskStorageError('internal'); this.resumeRejections.set(event.idempotencyKey, { fingerprint: event.fingerprint, code: event.code }); }
@@ -554,6 +558,18 @@ export class TaskModule {
     }
     this.executions.set(replacement.taskId, replacement);
     this.executionKeys.set(replacement.idempotencyKey, replacement);
+  }
+
+  private replaceAttempt(execution: StoredExecution, attempt: StoredAttempt): void {
+    this.replaceExecution(execution, this.withAttempt(execution, attempt));
+  }
+
+  private withAttempt(execution: StoredExecution, attempt: StoredAttempt): StoredExecution {
+    return {
+      ...execution,
+      attempt,
+      attempts: execution.attempts.map((stored) => stored.id === attempt.id ? attempt : stored),
+    };
   }
 
   private taskById(taskId: string): TaskView {
@@ -574,8 +590,10 @@ export class TaskModule {
       task: { ...task, executionState: state },
       run: execution ? { ...execution.run } : null,
       attempt: execution?.attempt ? { ...execution.attempt } : null,
+      attempts: execution?.attempts.map((attempt) => ({ ...attempt })) ?? [],
       context: execution?.context ? { ...execution.context } : null,
       providerSession: execution?.providerSession ? { ...execution.providerSession, capabilities: { ...execution.providerSession.capabilities } } : null,
+      providerSessions: execution?.providerSessions.map((session) => ({ ...session, capabilities: { ...session.capabilities } })) ?? [],
     };
   }
 

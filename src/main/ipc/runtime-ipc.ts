@@ -127,6 +127,12 @@ function sanitizeTaskExecution(execution: TaskExecutionView): TaskExecutionView 
       state: execution.attempt.state,
       ...(execution.attempt.exitCode === undefined ? {} : { exitCode: execution.attempt.exitCode }),
     },
+    attempts: execution.attempts.map((attempt) => ({
+      id: attempt.id,
+      number: attempt.number,
+      state: attempt.state,
+      ...(attempt.exitCode === undefined ? {} : { exitCode: attempt.exitCode }),
+    })),
     context: execution.context && {
       id: execution.context.id,
       worktreeId: execution.context.worktreeId,
@@ -145,6 +151,16 @@ function sanitizeTaskExecution(execution: TaskExecutionView): TaskExecutionView 
       capabilities: { ...execution.providerSession.capabilities },
       parentId: execution.providerSession.parentId,
     },
+    providerSessions: execution.providerSessions.map((session) => ({
+      id: session.id,
+      provider: session.provider,
+      nativeSessionId: session.nativeSessionId,
+      taskId: session.taskId,
+      attemptId: session.attemptId,
+      executionContextId: session.executionContextId,
+      capabilities: { ...session.capabilities },
+      parentId: session.parentId,
+    })),
   };
 }
 

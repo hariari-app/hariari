@@ -436,6 +436,7 @@ class FakeRuntimeSession implements RuntimeClientSession {
       task: { ...task, executionState: 'running' },
       run: { id: 'run-1', number: 1 },
       attempt: { id: 'attempt-1', number: 1, state: 'running' },
+      attempts: [{ id: 'attempt-1', number: 1, state: 'running' }],
       context: {
         id: 'context-1',
         worktreeId: 'worktree-1',
@@ -444,6 +445,7 @@ class FakeRuntimeSession implements RuntimeClientSession {
         processId: 'process-1',
         ptyId: 'pty-1',
       },
+      providerSessions: [],
     };
     this.environment.executions.set(task.id, view);
     this.environment.executionKeys.set(request.idempotencyKey, { taskId: task.id, view });

@@ -58,6 +58,7 @@ function executionView(state: TaskExecutionView['task']['executionState']): Task
     },
     run: running ? { id: 'run-1', number: 1 } : null,
     attempt: running ? { id: 'attempt-1', number: 1, state } : null,
+    attempts: running ? [{ id: 'attempt-1', number: 1, state }] : [],
     context: running
       ? {
           id: 'context-1',
@@ -68,5 +69,6 @@ function executionView(state: TaskExecutionView['task']['executionState']): Task
           ptyId: 'pty-1',
         }
       : null,
+    providerSessions: [],
   };
 }
