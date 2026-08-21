@@ -132,7 +132,7 @@ class FakeGenericCliExecution implements GenericCliExecution {
     this.context = {
       id: request.identities.contextId,
       worktreeId: request.identities.worktreeId,
-      branchName: `hariari/task-${request.task.id}/run-${request.run.number}/attempt-${request.attempt.number}`,
+      branchName: request.inheritedScope?.branchName ?? `hariari/task-${request.task.id}/run-${request.run.number}/attempt-${request.attempt.number}`,
       baseCommit: 'fake-base-commit',
       processId: request.identities.processId,
       ptyId: request.identities.ptyId,

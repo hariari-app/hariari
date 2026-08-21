@@ -45,6 +45,7 @@ function registerTaskStartTests(): void {
     'projects immutable Claude attempt and provider-session histories through Runtime restart',
     projectsClaudeExecutionHistories,
   );
+  it('forks a Claude session through the authenticated Runtime seam', forksClaudeSession);
   it('resumes a matching Claude session without allocating another execution', resumesMatchingClaudeSession);
   it('records a scope-mismatched Claude resume rejection across restart', rejectsMismatchedClaudeResume);
   it('records an unsupported Claude resume rejection across restart', rejectsUnsupportedClaudeResume);
@@ -147,6 +148,44 @@ async function projectsClaudeExecutionHistories(): Promise<void> {
   expect(replayed).toEqual(started);
   expect(replayed.attempts).toEqual([replayed.attempt]);
   expect(replayed.providerSessions).toEqual([replayed.providerSession]);
+  await restarted.disconnect();
+}
+
+async function forksClaudeSession(): Promise<void> {
+  const adapter = new FakeGenericCliExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const task = await runtime.createTask({
+    objective: 'Fork this Claude task.',
+    project: 'Hariari',
+    repository: 'fake-checkout',
+    baseRef: 'main',
+    provider: 'claude',
+    idempotencyKey: 'fork-create',
+  });
+  const parent = await runtime.startTask({ taskId: task.id, idempotencyKey: 'fork-start' });
+  const child = await runtime.forkClaudeSession!({
+    taskId: task.id,
+    providerSessionId: parent.providerSession!.id,
+    idempotencyKey: 'fork-child',
+  });
+
+  expect(child.attempt).toMatchObject({ number: 2, state: 'running' });
+  expect(child.attempt?.id).not.toBe(parent.attempt?.id);
+  expect(child.providerSession).toMatchObject({ parentId: parent.providerSession!.id });
+  expect(child.providerSession?.id).not.toBe(parent.providerSession?.id);
+  expect(child.context).toMatchObject({
+    worktreeId: parent.context!.worktreeId,
+    branchName: parent.context!.branchName,
+  });
+  expect(child.attempts).toEqual([parent.attempt, child.attempt]);
+  expect(child.providerSessions).toEqual([parent.providerSession, child.providerSession]);
+  expect(adapter.startCount(task.id)).toBe(2);
+  await expect(runtime.forkClaudeSession!({ taskId: task.id, providerSessionId: parent.providerSession!.id, idempotencyKey: 'fork-child' })).resolves.toEqual(child);
+  await runtime.disconnect();
+  await subject.restart();
+  const restarted = await subject.connect();
+  await expect(restarted.getTaskExecution(task.id)).resolves.toEqual(child);
   await restarted.disconnect();
 }
 

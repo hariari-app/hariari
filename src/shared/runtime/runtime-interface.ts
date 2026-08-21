@@ -71,6 +71,7 @@ export interface CancelTaskRequest {
   readonly idempotencyKey: string;
 }
 export interface ResumeClaudeSessionRequest { readonly taskId: string; readonly providerSessionId: string; readonly repository: string; readonly worktreeId: string; readonly branchName: string; readonly idempotencyKey: string; }
+export interface ForkClaudeSessionRequest { readonly taskId: string; readonly providerSessionId: string; readonly idempotencyKey: string; }
 
 export interface TaskAttemptView {
   readonly id: string;
@@ -193,6 +194,7 @@ export interface RuntimeInterface {
   listTasks(): Promise<readonly TaskView[]>;
   startTask(request: StartTaskRequest): Promise<TaskExecutionView>;
   resumeClaudeSession?(request: ResumeClaudeSessionRequest): Promise<TaskExecutionView>;
+  forkClaudeSession?(request: ForkClaudeSessionRequest): Promise<TaskExecutionView>;
   cancelTask(request: CancelTaskRequest): Promise<TaskExecutionView>;
   getTaskExecution(taskId: string): Promise<TaskExecutionView>;
   subscribeTaskOutput(

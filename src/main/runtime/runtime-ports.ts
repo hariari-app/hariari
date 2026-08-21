@@ -8,6 +8,7 @@ import type {
   RuntimeShutdownResult,
   StartTaskRequest,
   ResumeClaudeSessionRequest,
+  ForkClaudeSessionRequest,
   TaskExecutionView,
   TaskOutputEvent,
   TaskView,
@@ -63,6 +64,7 @@ export interface RuntimeClientSession {
   listTasks(deadlineMs?: number): Promise<readonly TaskView[]>;
   startTask(request: StartTaskRequest, deadlineMs?: number): Promise<TaskExecutionView>;
   resumeClaudeSession?(request: ResumeClaudeSessionRequest, deadlineMs?: number): Promise<TaskExecutionView>;
+  forkClaudeSession?(request: ForkClaudeSessionRequest, deadlineMs?: number): Promise<TaskExecutionView>;
   cancelTask(request: CancelTaskRequest, deadlineMs?: number): Promise<TaskExecutionView>;
   getTaskExecution(taskId: string, deadlineMs?: number): Promise<TaskExecutionView>;
   subscribeTaskOutput(

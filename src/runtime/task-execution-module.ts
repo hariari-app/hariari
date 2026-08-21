@@ -1,6 +1,7 @@
 import type {
   CancelTaskRequest,
   StartTaskRequest,
+  ForkClaudeSessionRequest,
   TaskExecutionState,
   TaskExecutionView,
   TaskOutputEvent,
@@ -63,6 +64,10 @@ export class TaskExecutionModule {
     return promise;
   }
   resumeClaude(request: import('../shared/runtime/runtime-interface').ResumeClaudeSessionRequest): Promise<TaskExecutionView> { return this.tasks.resumeClaude(request); }
+  async forkClaude(request: ForkClaudeSessionRequest): Promise<TaskExecutionView> {
+    const reservation = await this.tasks.reserveClaudeFork(request);
+    return reservation.created ? this.startForkReserved(request.taskId, reservation) : reservation.execution;
+  }
 
   private async startOwned(request: StartTaskRequest): Promise<TaskExecutionView> {
     const reservation = await this.tasks.reserveExecution(request);
@@ -165,6 +170,34 @@ export class TaskExecutionModule {
     } catch (error) {
       return this.failStart(request.taskId, active, error);
     }
+  }
+
+  private async startForkReserved(
+    taskId: string,
+    reservation: import('./task-module').ClaudeForkReservation,
+  ): Promise<TaskExecutionView> {
+    const execution = reservation.execution;
+    if (!execution.run || !execution.attempt) throw new TaskExecutionError('internal');
+    let active: GenericCliExecution | null = null;
+    try {
+      active = await this.adapter.start({
+        task: execution.task,
+        run: execution.run,
+        attempt: execution.attempt,
+        identities: { contextId: this.randomId(), worktreeId: reservation.parentContext.worktreeId, processId: this.randomId(), ptyId: this.randomId() },
+        inheritedScope: { branchName: reservation.parentContext.branchName },
+        onOutput: (data) => this.publishOutput(taskId, execution.attempt!.id, data),
+        onExit: (exitCode) => void this.settle(taskId, exitCode),
+      });
+      this.active.set(taskId, active);
+      this.exitWaits.set(taskId, new ExitWait());
+      await this.tasks.allocateContext(taskId, active.context, active.providerSession
+        ? { id: this.randomId(), provider: 'claude', nativeSessionId: active.providerSession.nativeSessionId, taskId, attemptId: execution.attempt.id, executionContextId: active.context.id, capabilities: active.providerSession.capabilities, parentId: reservation.parentSession.id }
+        : null);
+      const started = await this.tasks.markStarted(taskId);
+      active.activateExit(); active.activateOutput();
+      return started;
+    } catch (error) { return this.failStart(taskId, active, error); }
   }
 
   private async failStart(

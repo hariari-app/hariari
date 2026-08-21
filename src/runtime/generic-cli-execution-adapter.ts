@@ -30,6 +30,7 @@ export interface GenericCliStartRequest {
     readonly processId: string;
     readonly ptyId: string;
   };
+  readonly inheritedScope?: { readonly branchName: string };
   readonly onOutput: (data: string) => void;
   readonly onExit: (exitCode: number) => void;
 }
@@ -228,7 +229,7 @@ function executionContext(
   return {
     id: request.identities.contextId,
     worktreeId: request.identities.worktreeId,
-    branchName,
+    branchName: request.inheritedScope?.branchName ?? branchName,
     baseCommit,
     processId: request.identities.processId,
     ptyId: request.identities.ptyId,

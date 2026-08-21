@@ -18,6 +18,7 @@ import {
   TASK_OUTPUT_SUBSCRIBE_OPERATION,
   TASK_START_OPERATION,
   CLAUDE_RESUME_OPERATION,
+  CLAUDE_FORK_OPERATION,
   createAuthenticatedReplyEnvelope,
   createServerProof,
   selectHighestMutualVersion,
@@ -36,6 +37,7 @@ import {
   parseCancelTaskRequest,
   parseStartTaskRequest,
   parseResumeClaudeSessionRequest,
+  parseForkClaudeSessionRequest,
   parseTaskExecutionId,
   parseShutdownRequest,
 } from './protocol-validation';
@@ -273,6 +275,7 @@ export class RuntimeServer {
       );
     }
     if (request.operation.name === CLAUDE_RESUME_OPERATION) return this.handleClaudeResume(request, protocolVersion);
+    if (request.operation.name === CLAUDE_FORK_OPERATION) return this.handleClaudeFork(request, protocolVersion);
     if (request.operation.name === TASK_CANCEL_OPERATION) {
       return this.handleExecutionRequest(request, protocolVersion, (parsed) =>
         this.executions.cancel(parsed),
@@ -286,6 +289,9 @@ export class RuntimeServer {
 
   private async handleClaudeResume(request: RuntimeRequestFrame, protocolVersion: number): Promise<RuntimeResponseFrame> {
     try { return success(request, protocolVersion, (await this.executions.resumeClaude(parseResumeClaudeSessionRequest(request))) as unknown as Record<string, unknown>); } catch (error) { return executionFailure(request, protocolVersion, error); }
+  }
+  private async handleClaudeFork(request: RuntimeRequestFrame, protocolVersion: number): Promise<RuntimeResponseFrame> {
+    try { return success(request, protocolVersion, (await this.executions.forkClaude(parseForkClaudeSessionRequest(request))) as unknown as Record<string, unknown>); } catch (error) { return executionFailure(request, protocolVersion, error); }
   }
 
   private handleHealth(request: RuntimeRequestFrame, protocolVersion: number): RuntimeResponseFrame {

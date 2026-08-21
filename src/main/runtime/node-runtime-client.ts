@@ -6,6 +6,7 @@ import type {
   RuntimeShutdownResult,
   StartTaskRequest,
   ResumeClaudeSessionRequest,
+  ForkClaudeSessionRequest,
   TaskExecutionView,
   TaskOutputEvent,
   TaskView,
@@ -27,6 +28,7 @@ import {
   TASK_OUTPUT_SUBSCRIBE_OPERATION,
   TASK_START_OPERATION,
   CLAUDE_RESUME_OPERATION,
+  CLAUDE_FORK_OPERATION,
   createClientProof,
   selectHighestMutualVersion,
   verifyServerProof,
@@ -375,6 +377,9 @@ class NodeRuntimeClientSession implements RuntimeClientSession {
   }
   resumeClaudeSession(request: ResumeClaudeSessionRequest, deadlineMs = 2_000): Promise<TaskExecutionView> {
     return this.enqueue(async () => parseTaskExecutionView(await this.request(CLAUDE_RESUME_OPERATION, { taskId: request.taskId, providerSessionId: request.providerSessionId, repository: request.repository, worktreeId: request.worktreeId, branchName: request.branchName }, request.idempotencyKey, deadlineMs)));
+  }
+  forkClaudeSession(request: ForkClaudeSessionRequest, deadlineMs = 2_000): Promise<TaskExecutionView> {
+    return this.enqueue(async () => parseTaskExecutionView(await this.request(CLAUDE_FORK_OPERATION, { taskId: request.taskId, providerSessionId: request.providerSessionId }, request.idempotencyKey, deadlineMs)));
   }
 
   cancelTask(request: CancelTaskRequest, deadlineMs = 2_000): Promise<TaskExecutionView> {

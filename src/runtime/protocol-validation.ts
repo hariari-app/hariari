@@ -9,6 +9,7 @@ import {
   type RuntimeShutdownRequest,
   type StartTaskRequest,
   type ResumeClaudeSessionRequest,
+  type ForkClaudeSessionRequest,
   type TaskExecutionState,
   type TaskExecutionView,
   type TaskOutputEvent,
@@ -25,6 +26,7 @@ import {
   TASK_OUTPUT_SUBSCRIBE_OPERATION,
   TASK_START_OPERATION,
   CLAUDE_RESUME_OPERATION,
+  CLAUDE_FORK_OPERATION,
   type RuntimeAuthenticateFrame,
   type RuntimeAuthenticatedReplyEnvelope,
   type RuntimeChallengeFrame,
@@ -218,6 +220,10 @@ export function parseResumeClaudeSessionRequest(request: RuntimeRequestFrame): R
   if (request.operation.name !== CLAUDE_RESUME_OPERATION || !request.idempotencyKey) invalid();
   return { taskId: identifier(request.payload.taskId), providerSessionId: identifier(request.payload.providerSessionId), repository: requiredTaskField(request.payload.repository), worktreeId: identifier(request.payload.worktreeId), branchName: requiredTaskField(request.payload.branchName), idempotencyKey: request.idempotencyKey };
 }
+export function parseForkClaudeSessionRequest(request: RuntimeRequestFrame): ForkClaudeSessionRequest {
+  if (request.operation.name !== CLAUDE_FORK_OPERATION || !request.idempotencyKey) invalid();
+  return { taskId: identifier(request.payload.taskId), providerSessionId: identifier(request.payload.providerSessionId), idempotencyKey: request.idempotencyKey };
+}
 
 export function parseTaskLifecycleRequest(value: unknown): StartTaskRequest {
   const request = object(value);
@@ -284,7 +290,7 @@ export function parseTaskExecutionView(value: Record<string, unknown>): TaskExec
   if (executionState !== 'starting' && executionState !== 'ready' && attempt === null) invalid();
   if (providerSession && (!attempt || !context || providerSession.taskId !== task.id || providerSession.attemptId !== attempt.id || providerSession.executionContextId !== context.id)) invalid();
   if ((attempt === null) !== (attempts.length === 0) || (attempt && !attempts.some((entry) => entry.id === attempt.id))) invalid();
-  if ((providerSession === null) !== (providerSessions.length === 0) || (providerSession && !providerSessions.some((entry) => entry.id === providerSession.id))) invalid();
+  if (providerSession && !providerSessions.some((entry) => entry.id === providerSession.id)) invalid();
   return { task: { ...task, executionState }, run, attempt, attempts, context, providerSession, providerSessions };
 }
 
@@ -340,6 +346,7 @@ function operation(value: unknown): RuntimeOperationFrame {
     name !== TASK_LIST_OPERATION &&
     name !== TASK_START_OPERATION &&
     name !== CLAUDE_RESUME_OPERATION &&
+    name !== CLAUDE_FORK_OPERATION &&
     name !== TASK_CANCEL_OPERATION &&
     name !== TASK_EXECUTION_OPERATION &&
     name !== TASK_OUTPUT_SUBSCRIBE_OPERATION
