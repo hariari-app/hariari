@@ -9,10 +9,10 @@ import type {
   TaskOutputEvent,
   TaskView,
 } from '../../shared/runtime/runtime-interface';
-import type {
-  RuntimeFrameConnection,
-  RuntimeLocalTransport,
+import {
   RuntimeTransportError,
+  type RuntimeFrameConnection,
+  type RuntimeLocalTransport,
 } from '../../runtime/local-transport';
 import {
   RUNTIME_HANDSHAKE_VERSION,
@@ -218,14 +218,16 @@ export class NodeRuntimeClient implements RuntimeClientPort {
     deadlineMs: number,
     close: () => void,
   ): Promise<void> {
-    try {
-      while (true) {
+    while (true) {
+      try {
         const frame = parseOutputFrame(await connection.readFrame(deadlineMs), protocolVersion);
         if (frame.taskId !== taskId) throw new RuntimePortError('protocol-error');
         listener(frame.event);
+      } catch (error) {
+        if (error instanceof RuntimeTransportError && error.code === 'deadline') continue;
+        close();
+        return;
       }
-    } catch {
-      close();
     }
   }
 }
