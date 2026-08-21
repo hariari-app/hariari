@@ -17,6 +17,7 @@ import {
   TASK_LIST_OPERATION,
   TASK_OUTPUT_SUBSCRIBE_OPERATION,
   TASK_START_OPERATION,
+  CLAUDE_RESUME_OPERATION,
   createAuthenticatedReplyEnvelope,
   createServerProof,
   selectHighestMutualVersion,
@@ -34,6 +35,7 @@ import {
   parseCreateTaskRequest,
   parseCancelTaskRequest,
   parseStartTaskRequest,
+  parseResumeClaudeSessionRequest,
   parseTaskExecutionId,
   parseShutdownRequest,
 } from './protocol-validation';
@@ -270,6 +272,7 @@ export class RuntimeServer {
         this.executions.start(parsed),
       );
     }
+    if (request.operation.name === CLAUDE_RESUME_OPERATION) return this.handleClaudeResume(request, protocolVersion);
     if (request.operation.name === TASK_CANCEL_OPERATION) {
       return this.handleExecutionRequest(request, protocolVersion, (parsed) =>
         this.executions.cancel(parsed),
@@ -279,6 +282,10 @@ export class RuntimeServer {
       return this.handleTaskExecutionLookup(request, protocolVersion);
     }
     return this.handleShutdown(request, protocolVersion);
+  }
+
+  private async handleClaudeResume(request: RuntimeRequestFrame, protocolVersion: number): Promise<RuntimeResponseFrame> {
+    try { return success(request, protocolVersion, (await this.executions.resumeClaude(parseResumeClaudeSessionRequest(request))) as unknown as Record<string, unknown>); } catch (error) { return executionFailure(request, protocolVersion, error); }
   }
 
   private handleHealth(request: RuntimeRequestFrame, protocolVersion: number): RuntimeResponseFrame {

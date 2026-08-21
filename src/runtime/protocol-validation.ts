@@ -8,6 +8,7 @@ import {
   type RuntimeProtocolRange,
   type RuntimeShutdownRequest,
   type StartTaskRequest,
+  type ResumeClaudeSessionRequest,
   type TaskExecutionState,
   type TaskExecutionView,
   type TaskOutputEvent,
@@ -23,6 +24,7 @@ import {
   TASK_LIST_OPERATION,
   TASK_OUTPUT_SUBSCRIBE_OPERATION,
   TASK_START_OPERATION,
+  CLAUDE_RESUME_OPERATION,
   type RuntimeAuthenticateFrame,
   type RuntimeAuthenticatedReplyEnvelope,
   type RuntimeChallengeFrame,
@@ -212,6 +214,10 @@ export function parseCancelTaskRequest(request: RuntimeRequestFrame): CancelTask
   if (request.operation.name !== TASK_CANCEL_OPERATION || !request.idempotencyKey) invalid();
   return { taskId: identifier(request.payload.taskId), idempotencyKey: request.idempotencyKey };
 }
+export function parseResumeClaudeSessionRequest(request: RuntimeRequestFrame): ResumeClaudeSessionRequest {
+  if (request.operation.name !== CLAUDE_RESUME_OPERATION || !request.idempotencyKey) invalid();
+  return { taskId: identifier(request.payload.taskId), providerSessionId: identifier(request.payload.providerSessionId), repository: requiredTaskField(request.payload.repository), worktreeId: identifier(request.payload.worktreeId), branchName: requiredTaskField(request.payload.branchName), idempotencyKey: request.idempotencyKey };
+}
 
 export function parseTaskLifecycleRequest(value: unknown): StartTaskRequest {
   const request = object(value);
@@ -329,6 +335,7 @@ function operation(value: unknown): RuntimeOperationFrame {
     name !== TASK_CREATE_OPERATION &&
     name !== TASK_LIST_OPERATION &&
     name !== TASK_START_OPERATION &&
+    name !== CLAUDE_RESUME_OPERATION &&
     name !== TASK_CANCEL_OPERATION &&
     name !== TASK_EXECUTION_OPERATION &&
     name !== TASK_OUTPUT_SUBSCRIBE_OPERATION

@@ -70,6 +70,7 @@ export interface CancelTaskRequest {
   readonly taskId: string;
   readonly idempotencyKey: string;
 }
+export interface ResumeClaudeSessionRequest { readonly taskId: string; readonly providerSessionId: string; readonly repository: string; readonly worktreeId: string; readonly branchName: string; readonly idempotencyKey: string; }
 
 export interface TaskExecutionView {
   readonly task: TaskView & { readonly executionState: TaskExecutionState };
@@ -189,6 +190,7 @@ export interface RuntimeInterface {
   createTask(request: CreateTaskRequest): Promise<TaskView>;
   listTasks(): Promise<readonly TaskView[]>;
   startTask(request: StartTaskRequest): Promise<TaskExecutionView>;
+  resumeClaudeSession?(request: ResumeClaudeSessionRequest): Promise<TaskExecutionView>;
   cancelTask(request: CancelTaskRequest): Promise<TaskExecutionView>;
   getTaskExecution(taskId: string): Promise<TaskExecutionView>;
   subscribeTaskOutput(

@@ -44,6 +44,7 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
       readonly autoExitOnStop?: boolean;
       readonly beforeStart?: Promise<void>;
       readonly startError?: (request: GenericCliStartRequest) => Error;
+      readonly claudeCapabilities?: { readonly resume: boolean; readonly fork: boolean };
     } = {},
   ) {}
 
@@ -57,6 +58,7 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
       request,
       this.options.autoExitOnStop ?? true,
       () => this.signalFor(this.stops, request.task.id).resolve(),
+      this.options.claudeCapabilities ?? { resume: true, fork: true },
     );
     this.executions.set(request.task.id, execution);
     return execution;
@@ -125,6 +127,7 @@ class FakeGenericCliExecution implements GenericCliExecution {
     private readonly request: GenericCliStartRequest,
     private readonly autoExitOnStop: boolean,
     private readonly onStop: () => void,
+    private readonly claudeCapabilities: { readonly resume: boolean; readonly fork: boolean },
   ) {
     this.context = {
       id: request.identities.contextId,
@@ -135,7 +138,7 @@ class FakeGenericCliExecution implements GenericCliExecution {
       ptyId: request.identities.ptyId,
     };
     this.providerSession = request.task.provider === 'claude'
-      ? { nativeSessionId: `claude-${request.attempt.id}`, capabilities: { resume: true, fork: true } }
+      ? { nativeSessionId: `claude-${request.attempt.id}`, capabilities: this.claudeCapabilities }
       : null;
   }
 

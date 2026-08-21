@@ -5,6 +5,7 @@ import type {
   CancelTaskRequest,
   CreateTaskRequest,
   StartTaskRequest,
+  ResumeClaudeSessionRequest,
   TaskExecutionState,
   TaskExecutionView,
   TaskView,
@@ -19,6 +20,7 @@ type TaskFailureCode =
   | 'idempotency-conflict'
   | 'not-found'
   | 'task-not-ready'
+  | 'unsupported-operation'
   | 'internal';
 
 export class TaskStorageError extends Error {
@@ -92,6 +94,7 @@ interface AttemptCancelledEvent {
   readonly version: 1;
   readonly taskId: string;
 }
+interface ClaudeResumeRejectedEvent { readonly type: 'ClaudeResumeRejected'; readonly version: 1; readonly taskId: string; readonly providerSessionId: string; readonly idempotencyKey: string; readonly fingerprint: string; readonly code: 'not-found' | 'unsupported-operation'; }
 
 type TaskEvent =
   | TaskCreatedEvent
@@ -102,7 +105,8 @@ type TaskEvent =
   | AttemptCompletedEvent
   | AttemptFailedEvent
   | CancellationRequestedEvent
-  | AttemptCancelledEvent;
+  | AttemptCancelledEvent
+  | ClaudeResumeRejectedEvent;
 
 interface StoredRun {
   readonly id: string;
@@ -163,6 +167,7 @@ export class TaskModule {
   private readonly fingerprints = new Map<string, string>();
   private readonly executions = new Map<string, StoredExecution>();
   private readonly executionKeys = new Map<string, StoredExecution>();
+  private readonly resumeRejections = new Map<string, { readonly fingerprint: string; readonly code: 'not-found' | 'unsupported-operation' }>();
   private mutation: Promise<void> = Promise.resolve();
   private poisoned = false;
 
@@ -263,6 +268,20 @@ export class TaskModule {
 
   allocateContext(taskId: string, context: StoredContext, providerSession: StoredProviderSession | null): Promise<TaskExecutionView> {
     return this.transition(taskId, { type: 'ContextAllocated', version: 1, taskId, context, providerSession });
+  }
+
+  resumeClaude(request: ResumeClaudeSessionRequest): Promise<TaskExecutionView> {
+    return this.enqueue(async () => {
+      this.throwIfPoisoned();
+      const fingerprint = JSON.stringify([request.taskId, request.providerSessionId, request.repository, request.worktreeId, request.branchName]);
+      const prior = this.resumeRejections.get(request.idempotencyKey);
+      if (prior) { if (prior.fingerprint !== fingerprint) throw new TaskStorageError('idempotency-conflict'); throw new TaskStorageError(prior.code); }
+      const task = this.taskById(request.taskId); const execution = this.executionFor(task.id); const session = execution.providerSession;
+      const code = !session || session.id !== request.providerSessionId || task.provider !== 'claude' || task.repository !== request.repository || execution.context?.worktreeId !== request.worktreeId || execution.context.branchName !== request.branchName
+        ? 'not-found' as const : !session.capabilities.resume ? 'unsupported-operation' as const : null;
+      if (code) { await this.appendVisible({ type: 'ClaudeResumeRejected', version: 1, taskId: task.id, providerSessionId: request.providerSessionId, idempotencyKey: request.idempotencyKey, fingerprint, code }); throw new TaskStorageError(code); }
+      return this.viewFor(task, execution);
+    });
   }
 
   markStarted(taskId: string): Promise<TaskExecutionView> {
@@ -425,6 +444,8 @@ export class TaskModule {
         return;
       case 'AttemptCancelled':
         this.applyTerminal(event.taskId, 'cancelled');
+        return;
+      case 'ClaudeResumeRejected': this.applyResumeRejected(event); return;
     }
   }
 
@@ -522,6 +543,7 @@ export class TaskModule {
       },
     });
   }
+  private applyResumeRejected(event: ClaudeResumeRejectedEvent): void { const previous = this.resumeRejections.get(event.idempotencyKey); if (previous && (previous.fingerprint !== event.fingerprint || previous.code !== event.code)) throw new TaskStorageError('internal'); this.resumeRejections.set(event.idempotencyKey, { fingerprint: event.fingerprint, code: event.code }); }
 
   private replaceExecution(current: StoredExecution, replacement: StoredExecution): void {
     if (
@@ -680,6 +702,7 @@ function parseExecutionEvent(value: Record<string, unknown>, type: string): Task
     return { type, version: 1, taskId };
   }
   if (type === 'AttemptCompleted') return { type, version: 1, taskId, exitCode: integer(value.exitCode) };
+  if (type === 'ClaudeResumeRejected') { const code = string(value.code); if (code !== 'not-found' && code !== 'unsupported-operation') throw new Error('invalid event'); return { type, version: 1, taskId, providerSessionId: string(value.providerSessionId), idempotencyKey: string(value.idempotencyKey), fingerprint: string(value.fingerprint), code }; }
   if (type === 'CancellationRequested') {
     return {
       type,

@@ -41,10 +41,49 @@ function registerTaskStartTests(): void {
     'records adapter-discovered Claude provider-session identity through the authenticated Runtime seam',
     recordsClaudeProviderSession,
   );
+  it('resumes a matching Claude session without allocating another execution', resumesMatchingClaudeSession);
+  it('records a scope-mismatched Claude resume rejection across restart', rejectsMismatchedClaudeResume);
+  it('records an unsupported Claude resume rejection across restart', rejectsUnsupportedClaudeResume);
   it.each(FAILED_ALLOCATION_APPEND_CASES)(
     'preserves an allocated Git context across $name $mode append repair',
     async ({ writeCall, mode }) => preservesFailedContext(writeCall, mode),
   );
+}
+
+async function rejectsMismatchedClaudeResume(): Promise<void> {
+  const subject = await createSubject(() => new FakeGenericCliExecutionAdapter());
+  const runtime = await subject.connect();
+  const task = await runtime.createTask({ objective: 'Resume Claude.', project: 'Hariari', repository: 'fake-checkout', baseRef: 'main', provider: 'claude', idempotencyKey: 'resume-mismatch-create' });
+  const started = await runtime.startTask({ taskId: task.id, idempotencyKey: 'resume-mismatch-start' });
+  const request = { taskId: task.id, providerSessionId: started.providerSession!.id, repository: 'other-checkout', worktreeId: started.context!.worktreeId, branchName: started.context!.branchName, idempotencyKey: 'resume-mismatch' };
+  await expect(runtime.resumeClaudeSession!(request)).rejects.toEqual(new RuntimePortError('not-found', false));
+  await runtime.disconnect(); await subject.restart(); const restarted = await subject.connect();
+  await expect(restarted.resumeClaudeSession!(request)).rejects.toEqual(new RuntimePortError('not-found', false));
+  await restarted.disconnect();
+}
+
+async function rejectsUnsupportedClaudeResume(): Promise<void> {
+  const subject = await createSubject(() => new FakeGenericCliExecutionAdapter({ claudeCapabilities: { resume: false, fork: true } }));
+  const runtime = await subject.connect();
+  const task = await runtime.createTask({ objective: 'Resume Claude.', project: 'Hariari', repository: 'fake-checkout', baseRef: 'main', provider: 'claude', idempotencyKey: 'resume-unsupported-create' });
+  const started = await runtime.startTask({ taskId: task.id, idempotencyKey: 'resume-unsupported-start' });
+  const request = { taskId: task.id, providerSessionId: started.providerSession!.id, repository: task.repository, worktreeId: started.context!.worktreeId, branchName: started.context!.branchName, idempotencyKey: 'resume-unsupported' };
+  await expect(runtime.resumeClaudeSession!(request)).rejects.toEqual(new RuntimePortError('unsupported-operation', false));
+  await runtime.disconnect(); await subject.restart(); const restarted = await subject.connect();
+  await expect(restarted.resumeClaudeSession!(request)).rejects.toEqual(new RuntimePortError('unsupported-operation', false));
+  await restarted.disconnect();
+}
+
+async function resumesMatchingClaudeSession(): Promise<void> {
+  const adapter = new FakeGenericCliExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const task = await runtime.createTask({ objective: 'Resume Claude.', project: 'Hariari', repository: 'fake-checkout', baseRef: 'main', provider: 'claude', idempotencyKey: 'resume-create' });
+  const started = await runtime.startTask({ taskId: task.id, idempotencyKey: 'resume-start' });
+  const resumed = await runtime.resumeClaudeSession!({ taskId: task.id, providerSessionId: started.providerSession!.id, repository: task.repository, worktreeId: started.context!.worktreeId, branchName: started.context!.branchName, idempotencyKey: 'resume-match' });
+  expect(resumed).toEqual(started);
+  expect(adapter.startCount(task.id)).toBe(1);
+  await runtime.disconnect();
 }
 
 async function recordsClaudeProviderSession(): Promise<void> {

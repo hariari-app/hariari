@@ -62,6 +62,7 @@ export class TaskExecutionModule {
     );
     return promise;
   }
+  resumeClaude(request: import('../shared/runtime/runtime-interface').ResumeClaudeSessionRequest): Promise<TaskExecutionView> { return this.tasks.resumeClaude(request); }
 
   private async startOwned(request: StartTaskRequest): Promise<TaskExecutionView> {
     const reservation = await this.tasks.reserveExecution(request);
