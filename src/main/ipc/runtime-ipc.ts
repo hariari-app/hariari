@@ -135,6 +135,16 @@ function sanitizeTaskExecution(execution: TaskExecutionView): TaskExecutionView 
       processId: execution.context.processId,
       ptyId: execution.context.ptyId,
     },
+    providerSession: execution.providerSession && {
+      id: execution.providerSession.id,
+      provider: execution.providerSession.provider,
+      nativeSessionId: execution.providerSession.nativeSessionId,
+      taskId: execution.providerSession.taskId,
+      attemptId: execution.providerSession.attemptId,
+      executionContextId: execution.providerSession.executionContextId,
+      capabilities: { ...execution.providerSession.capabilities },
+      parentId: execution.providerSession.parentId,
+    },
   };
 }
 

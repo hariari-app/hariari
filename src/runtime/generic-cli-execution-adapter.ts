@@ -43,6 +43,7 @@ export interface GenericCliExecution {
     readonly processId: string;
     readonly ptyId: string;
   };
+  readonly providerSession: { readonly nativeSessionId: string; readonly capabilities: { readonly resume: boolean; readonly fork: boolean } } | null;
   activateOutput(): void;
   activateExit(): void;
   stop(): Promise<void>;
@@ -140,6 +141,9 @@ function bufferedPtyExecution(
   const lifecycle = new BufferedPtyLifecycle(pty, request);
   return {
     context,
+    providerSession: request.task.provider === 'claude'
+      ? { nativeSessionId: request.attempt.id, capabilities: { resume: true, fork: true } }
+      : null,
     activateOutput: () => lifecycle.activateOutput(),
     activateExit: () => lifecycle.activateExit(),
     stop: () => lifecycle.stop(),

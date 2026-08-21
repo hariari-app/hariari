@@ -150,7 +150,9 @@ export class TaskExecutionModule {
       });
       this.active.set(request.taskId, active);
       this.exitWaits.set(request.taskId, new ExitWait());
-      await this.tasks.allocateContext(request.taskId, active.context);
+      await this.tasks.allocateContext(request.taskId, active.context, active.providerSession && execution.task.provider === 'claude'
+        ? { id: this.randomId(), provider: 'claude', nativeSessionId: active.providerSession.nativeSessionId, taskId: request.taskId, attemptId: execution.attempt.id, executionContextId: active.context.id, capabilities: active.providerSession.capabilities, parentId: null }
+        : null);
       const started = await this.tasks.markStarted(request.taskId);
       active.activateExit();
       if (started.attempt?.state === 'cancelling') {
@@ -193,7 +195,7 @@ export class TaskExecutionModule {
     await this.persistWithOneShotRepair(
       taskId,
       (view) => view.context !== null,
-      () => this.tasks.allocateContext(taskId, context),
+      () => this.tasks.allocateContext(taskId, context, null),
     );
   }
 

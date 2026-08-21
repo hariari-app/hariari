@@ -57,6 +57,7 @@ interface ContextAllocatedEvent {
   readonly version: 1;
   readonly taskId: string;
   readonly context: StoredContext;
+  readonly providerSession: StoredProviderSession | null;
 }
 
 interface AttemptStartedEvent {
@@ -124,6 +125,17 @@ interface StoredContext {
   readonly ptyId: string;
 }
 
+interface StoredProviderSession {
+  readonly id: string;
+  readonly provider: 'claude';
+  readonly nativeSessionId: string;
+  readonly taskId: string;
+  readonly attemptId: string;
+  readonly executionContextId: string;
+  readonly capabilities: { readonly resume: boolean; readonly fork: boolean };
+  readonly parentId: string | null;
+}
+
 interface StoredExecution {
   readonly taskId: string;
   readonly idempotencyKey: string;
@@ -131,6 +143,7 @@ interface StoredExecution {
   readonly run: StoredRun;
   readonly attempt: StoredAttempt | null;
   readonly context: StoredContext | null;
+  readonly providerSession: StoredProviderSession | null;
   readonly cancellation: { readonly idempotencyKey: string; readonly fingerprint: string } | null;
 }
 
@@ -248,8 +261,8 @@ export class TaskModule {
     });
   }
 
-  allocateContext(taskId: string, context: StoredContext): Promise<TaskExecutionView> {
-    return this.transition(taskId, { type: 'ContextAllocated', version: 1, taskId, context });
+  allocateContext(taskId: string, context: StoredContext, providerSession: StoredProviderSession | null): Promise<TaskExecutionView> {
+    return this.transition(taskId, { type: 'ContextAllocated', version: 1, taskId, context, providerSession });
   }
 
   markStarted(taskId: string): Promise<TaskExecutionView> {
@@ -441,6 +454,7 @@ export class TaskModule {
       run: event.run,
       attempt: null,
       context: null,
+      providerSession: null,
       cancellation: null,
     };
     this.executions.set(event.taskId, execution);
@@ -462,7 +476,8 @@ export class TaskModule {
     ) {
       throw new TaskStorageError('internal');
     }
-    this.replaceExecution(execution, { ...execution, context: event.context });
+    if (event.providerSession && (event.providerSession.taskId !== event.taskId || event.providerSession.executionContextId !== event.context.id || event.providerSession.attemptId !== execution.attempt.id)) throw new TaskStorageError('internal');
+    this.replaceExecution(execution, { ...execution, context: event.context, providerSession: event.providerSession });
   }
 
   private applyAttemptStarted(event: AttemptStartedEvent): void {
@@ -538,6 +553,7 @@ export class TaskModule {
       run: execution ? { ...execution.run } : null,
       attempt: execution?.attempt ? { ...execution.attempt } : null,
       context: execution?.context ? { ...execution.context } : null,
+      providerSession: execution?.providerSession ? { ...execution.providerSession, capabilities: { ...execution.providerSession.capabilities } } : null,
     };
   }
 
@@ -659,7 +675,7 @@ function parseExecutionEvent(value: Record<string, unknown>, type: string): Task
     };
   }
   if (type === 'AttemptCreated') return { type, version: 1, taskId, attempt: parseAttempt(object(value.attempt)) };
-  if (type === 'ContextAllocated') return { type, version: 1, taskId, context: parseContext(object(value.context)) };
+  if (type === 'ContextAllocated') return { type, version: 1, taskId, context: parseContext(object(value.context)), providerSession: value.providerSession === undefined || value.providerSession === null ? null : parseProviderSession(object(value.providerSession)) };
   if (type === 'AttemptStarted' || type === 'AttemptFailed' || type === 'AttemptCancelled') {
     return { type, version: 1, taskId };
   }
@@ -714,6 +730,20 @@ function parseContext(value: Record<string, unknown>): StoredContext {
     baseCommit: string(value.baseCommit),
     processId: string(value.processId),
     ptyId: string(value.ptyId),
+  };
+}
+
+function parseProviderSession(value: Record<string, unknown>): StoredProviderSession {
+  const capabilities = object(value.capabilities);
+  if (value.provider !== 'claude' || typeof capabilities.resume !== 'boolean' || typeof capabilities.fork !== 'boolean') {
+    throw new Error('invalid provider session');
+  }
+  const parentId = value.parentId;
+  if (parentId !== null && typeof parentId !== 'string') throw new Error('invalid provider session');
+  return {
+    id: string(value.id), provider: 'claude', nativeSessionId: string(value.nativeSessionId),
+    taskId: string(value.taskId), attemptId: string(value.attemptId), executionContextId: string(value.executionContextId),
+    capabilities: { resume: capabilities.resume, fork: capabilities.fork }, parentId,
   };
 }
 

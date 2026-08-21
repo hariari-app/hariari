@@ -110,6 +110,7 @@ class DeferredSignal {
 
 class FakeGenericCliExecution implements GenericCliExecution {
   readonly context: GenericCliExecution['context'];
+  readonly providerSession: GenericCliExecution['providerSession'];
   private active = false;
   private exitActive = false;
   private exitDelivered = false;
@@ -133,6 +134,9 @@ class FakeGenericCliExecution implements GenericCliExecution {
       processId: request.identities.processId,
       ptyId: request.identities.ptyId,
     };
+    this.providerSession = request.task.provider === 'claude'
+      ? { nativeSessionId: `claude-${request.attempt.id}`, capabilities: { resume: true, fork: true } }
+      : null;
   }
 
   activateOutput(): void {

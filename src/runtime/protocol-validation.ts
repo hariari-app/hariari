@@ -270,10 +270,12 @@ export function parseTaskExecutionView(value: Record<string, unknown>): TaskExec
   const run = value.run === null ? null : parseRun(object(value.run));
   const attempt = value.attempt === null ? null : parseAttempt(object(value.attempt));
   const context = value.context === null ? null : parseContext(object(value.context));
+  const providerSession = value.providerSession === undefined || value.providerSession === null ? null : parseProviderSession(object(value.providerSession));
   if (executionState === 'ready' && (run !== null || attempt !== null || context !== null)) invalid();
   if (executionState !== 'ready' && run === null) invalid();
   if (executionState !== 'starting' && executionState !== 'ready' && attempt === null) invalid();
-  return { task: { ...task, executionState }, run, attempt, context };
+  if (providerSession && (!attempt || !context || providerSession.taskId !== task.id || providerSession.attemptId !== attempt.id || providerSession.executionContextId !== context.id)) invalid();
+  return { task: { ...task, executionState }, run, attempt, context, providerSession };
 }
 
 export function parseOutputFrame(value: unknown, protocolVersion: number): RuntimeOutputFrame {
@@ -359,6 +361,12 @@ function parseContext(value: Record<string, unknown>): NonNullable<TaskExecution
     processId: identifier(value.processId),
     ptyId: identifier(value.ptyId),
   };
+}
+
+function parseProviderSession(value: Record<string, unknown>): NonNullable<TaskExecutionView['providerSession']> {
+  const capabilities = object(value.capabilities);
+  if (value.provider !== 'claude' || typeof capabilities.resume !== 'boolean' || typeof capabilities.fork !== 'boolean') invalid();
+  return { id: identifier(value.id), provider: 'claude', nativeSessionId: identifier(value.nativeSessionId), taskId: identifier(value.taskId), attemptId: identifier(value.attemptId), executionContextId: identifier(value.executionContextId), capabilities: { resume: capabilities.resume, fork: capabilities.fork }, parentId: optionalIdentifier(value.parentId) };
 }
 
 function executionStateValue(value: unknown): TaskExecutionState {

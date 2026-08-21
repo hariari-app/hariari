@@ -92,6 +92,18 @@ export interface TaskExecutionView {
         readonly ptyId: string;
       }
     | null;
+  readonly providerSession?:
+    | {
+        readonly id: string;
+        readonly provider: 'claude';
+        readonly nativeSessionId: string;
+        readonly taskId: string;
+        readonly attemptId: string;
+        readonly executionContextId: string;
+        readonly capabilities: { readonly resume: boolean; readonly fork: boolean };
+        readonly parentId: string | null;
+      }
+    | null;
 }
 
 export type TaskOutputEvent =

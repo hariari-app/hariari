@@ -37,10 +37,48 @@ function registerTaskStartTests(): void {
     for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   });
   it('coalesces concurrent same-key starts from independent sessions', coalescesConcurrentStarts);
+  it(
+    'records adapter-discovered Claude provider-session identity through the authenticated Runtime seam',
+    recordsClaudeProviderSession,
+  );
   it.each(FAILED_ALLOCATION_APPEND_CASES)(
     'preserves an allocated Git context across $name $mode append repair',
     async ({ writeCall, mode }) => preservesFailedContext(writeCall, mode),
   );
+}
+
+async function recordsClaudeProviderSession(): Promise<void> {
+  const subject = await createSubject(() => new FakeGenericCliExecutionAdapter());
+  const runtime = await subject.connect();
+  const task = await runtime.createTask({
+    objective: 'Resume this Claude task only in its allocated context.',
+    project: 'Hariari',
+    repository: 'fake-checkout',
+    baseRef: 'main',
+    provider: 'claude',
+    idempotencyKey: 'claude-provider-session-create',
+  });
+
+  const started = await runtime.startTask({
+    taskId: task.id,
+    idempotencyKey: 'claude-provider-session-start',
+  });
+
+  expect(started.providerSession).toMatchObject({
+    id: expect.stringMatching(/^start-remediation-/),
+    provider: 'claude',
+    nativeSessionId: expect.stringMatching(/^claude-/),
+    taskId: task.id,
+    attemptId: started.attempt?.id,
+    executionContextId: started.context?.id,
+    capabilities: { resume: true, fork: true },
+    parentId: null,
+  });
+  await runtime.disconnect();
+  await subject.restart();
+  const restarted = await subject.connect();
+  await expect(restarted.getTaskExecution(task.id)).resolves.toEqual(started);
+  await restarted.disconnect();
 }
 
 async function coalescesConcurrentStarts(): Promise<void> {
