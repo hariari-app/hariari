@@ -7,6 +7,8 @@ import type {
 export const RUNTIME_HANDSHAKE_VERSION = 1 as const;
 export const RUNTIME_HEALTH_OPERATION = 'runtime.health' as const;
 export const RUNTIME_SHUTDOWN_OPERATION = 'runtime.shutdown' as const;
+export const TASK_CREATE_OPERATION = 'task.create' as const;
+export const TASK_LIST_OPERATION = 'task.list' as const;
 export const RUNTIME_OPERATION_VERSION = 1 as const;
 
 export interface RuntimeChallengeFrame {
@@ -73,7 +75,9 @@ export interface RuntimeUnauthorizedFrame {
 
 export type RuntimeOperationName =
   | typeof RUNTIME_HEALTH_OPERATION
-  | typeof RUNTIME_SHUTDOWN_OPERATION;
+  | typeof RUNTIME_SHUTDOWN_OPERATION
+  | typeof TASK_CREATE_OPERATION
+  | typeof TASK_LIST_OPERATION;
 
 export interface RuntimeOperationFrame {
   readonly name: RuntimeOperationName;

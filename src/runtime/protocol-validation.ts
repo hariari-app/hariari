@@ -1,4 +1,5 @@
 import type {
+  CreateTaskRequest,
   RuntimeHealth,
   RuntimeProtocolRange,
   RuntimeShutdownRequest,
@@ -8,6 +9,8 @@ import {
   RUNTIME_HEALTH_OPERATION,
   RUNTIME_OPERATION_VERSION,
   RUNTIME_SHUTDOWN_OPERATION,
+  TASK_CREATE_OPERATION,
+  TASK_LIST_OPERATION,
   type RuntimeAuthenticateFrame,
   type RuntimeAuthenticatedReplyEnvelope,
   type RuntimeChallengeFrame,
@@ -22,6 +25,22 @@ import {
 const MAX_ID_LENGTH = 128;
 const MAX_VERSION_LENGTH = 128;
 const MAX_PROOF_LENGTH = 128;
+const MAX_TASK_FIELD_LENGTH = 512;
+const TASK_PROVIDERS = new Set([
+  'claude',
+  'gemini',
+  'codex',
+  'pi',
+  'opencode',
+  'cline',
+  'copilot',
+  'amp',
+  'continue',
+  'cursor',
+  'crush',
+  'qwen',
+  'shell',
+]);
 
 export class RuntimeProtocolValidationError extends Error {
   constructor() {
@@ -186,6 +205,50 @@ export function parseShutdownRequest(request: RuntimeRequestFrame): RuntimeShutd
   };
 }
 
+export function parseCreateTaskRequest(request: RuntimeRequestFrame): CreateTaskRequest {
+  if (request.operation.name !== TASK_CREATE_OPERATION || !request.idempotencyKey) invalid();
+  return parseTaskRequest({ ...request.payload, idempotencyKey: request.idempotencyKey });
+}
+
+export function parseTaskRequest(value: unknown): CreateTaskRequest {
+  const request = object(value);
+  const provider = boundedString(request.provider, MAX_TASK_FIELD_LENGTH);
+  if (!TASK_PROVIDERS.has(provider)) invalid();
+  return {
+    objective: requiredTaskField(request.objective),
+    project: requiredTaskField(request.project),
+    repository: requiredTaskField(request.repository),
+    baseRef: requiredTaskField(request.baseRef),
+    provider: provider as CreateTaskRequest['provider'],
+    idempotencyKey: requiredTaskField(request.idempotencyKey),
+  };
+}
+
+export function parseTaskView(value: Record<string, unknown>) {
+  const provider = boundedString(value.provider, MAX_TASK_FIELD_LENGTH);
+  if (!TASK_PROVIDERS.has(provider)) invalid();
+  return {
+    id: identifier(value.id),
+    objective: requiredTaskField(value.objective),
+    project: requiredTaskField(value.project),
+    repository: requiredTaskField(value.repository),
+    baseRef: requiredTaskField(value.baseRef),
+    provider: provider as CreateTaskRequest['provider'],
+    createdAt: timestamp(value.createdAt),
+  };
+}
+
+export function parseTaskList(value: Record<string, unknown>) {
+  if (!Array.isArray(value.tasks)) invalid();
+  return value.tasks.map((task) => parseTaskView(object(task)));
+}
+
+function requiredTaskField(value: unknown): string {
+  const field = boundedString(value, MAX_TASK_FIELD_LENGTH);
+  if (field.trim().length === 0) invalid();
+  return field;
+}
+
 export function parseStoppedResult(value: Record<string, unknown>): {
   readonly state: 'stopped';
   readonly instanceId: string;
@@ -198,7 +261,13 @@ function operation(value: unknown): RuntimeOperationFrame {
   const candidate = object(value);
   if (candidate.version !== RUNTIME_OPERATION_VERSION) invalid();
   const name = candidate.name;
-  if (name !== RUNTIME_HEALTH_OPERATION && name !== RUNTIME_SHUTDOWN_OPERATION) invalid();
+  if (
+    name !== RUNTIME_HEALTH_OPERATION &&
+    name !== RUNTIME_SHUTDOWN_OPERATION &&
+    name !== TASK_CREATE_OPERATION &&
+    name !== TASK_LIST_OPERATION
+  )
+    invalid();
   return { name, version: RUNTIME_OPERATION_VERSION };
 }
 

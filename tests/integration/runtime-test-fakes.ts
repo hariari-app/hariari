@@ -1,8 +1,10 @@
 import type {
+  CreateTaskRequest,
   RuntimeHealth,
   RuntimeProtocolRange,
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
+  TaskView,
 } from '../../src/shared/runtime/runtime-interface';
 import {
   RuntimePortError,
@@ -101,6 +103,7 @@ export class FakeRuntimeEnvironment {
     connect: async (_endpoint, token, options) => this.connect(token, options),
   };
   readonly shutdownResults = new Map<string, RuntimeShutdownResult>();
+  readonly tasks = new Map<string, TaskView>();
   readonly launchRequests: unknown[] = [];
   serverRange: RuntimeProtocolRange = { min: 1, max: 2 };
   running = false;
@@ -233,6 +236,28 @@ class FakeRuntimeSession implements RuntimeClientSession {
     this.environment.shutdownCount += 1;
     if (!this.environment.shutdownLeavesRunning) this.environment.exitLaunchedProcess();
     return result;
+  }
+
+  async createTask(request: CreateTaskRequest): Promise<TaskView> {
+    if (this.disconnected) throw new RuntimePortError('transport-lost');
+    const existing = this.environment.tasks.get(request.idempotencyKey);
+    if (existing) return existing;
+    const task: TaskView = {
+      id: `task-${this.environment.tasks.size + 1}`,
+      objective: request.objective,
+      project: request.project,
+      repository: request.repository,
+      baseRef: request.baseRef,
+      provider: request.provider,
+      createdAt: this.environment.health.checkedAt,
+    };
+    this.environment.tasks.set(request.idempotencyKey, task);
+    return task;
+  }
+
+  async listTasks(): Promise<readonly TaskView[]> {
+    if (this.disconnected) throw new RuntimePortError('transport-lost');
+    return [...this.environment.tasks.values()];
   }
 
   async disconnect(): Promise<void> {

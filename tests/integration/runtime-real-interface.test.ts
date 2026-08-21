@@ -11,6 +11,7 @@ import type {
   RuntimeEndpoint,
   RuntimeProcessPort,
 } from '../../src/main/runtime/runtime-ports';
+import { RuntimePortError } from '../../src/main/runtime/runtime-ports';
 import type { RuntimeInterface } from '../../src/shared/runtime/runtime-interface';
 import {
   NodeLocalRuntimeTransport,
@@ -35,7 +36,42 @@ describe('real local Runtime Interface vertical', () => {
     'keeps a healthy idle session connected across multiple server request deadlines',
     verifiesIdleHealthSupervision,
   );
+  it(
+    'creates, lists, idempotently replays, and rebuilds durable Tasks through RuntimeInterface',
+    verifiesDurableTasks,
+  );
 });
+
+async function verifiesDurableTasks(): Promise<void> {
+  const fixture = await createRealRuntimeFixture();
+  const runtime = fixture.createInterface();
+  await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  const request = {
+    objective: 'Make durable task creation observable.',
+    project: 'Hariari',
+    repository: 'hariari-app/hariari',
+    baseRef: 'main',
+    provider: 'codex',
+    idempotencyKey: 'task-create-one',
+  } as const;
+
+  const created = await runtime.createTask(request);
+  await expect(
+    Promise.all([runtime.createTask(request), runtime.createTask(request)]),
+  ).resolves.toEqual([created, created]);
+  await expect(
+    runtime.createTask({ ...request, objective: 'A different task with the same key' }),
+  ).rejects.toEqual(new RuntimePortError('idempotency-conflict', false));
+  await expect(runtime.listTasks()).resolves.toEqual([created]);
+  await runtime.disconnect();
+
+  await servers[0]?.stop();
+  fs.rmSync(path.join(fixture.runtimeDirectory, 'tasks', 'projection.json'));
+  const restarted = fixture.createInterface();
+  await expect(restarted.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  await expect(restarted.listTasks()).resolves.toEqual([created]);
+  await restarted.disconnect();
+}
 
 async function verifiesIdleHealthSupervision(): Promise<void> {
   const fixture = await createRealRuntimeFixture({
@@ -130,6 +166,7 @@ interface RealRuntimeFixture {
   readonly launches: { value: number };
   readonly createInterface: () => RuntimeInterface;
   readonly endpoint: RuntimeEndpoint;
+  readonly runtimeDirectory: string;
   readonly transport: GatedCloseTransport;
 }
 
@@ -190,7 +227,7 @@ async function createRealRuntimeFixture(
       now: Date.now,
       delay: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
     });
-  return { launches, createInterface, endpoint, transport };
+  return { launches, createInterface, endpoint, runtimeDirectory, transport };
 }
 
 interface ProcessFixtureOptions {

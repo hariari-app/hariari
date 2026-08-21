@@ -91,6 +91,8 @@ export const IPC_CHANNELS = {
   UPDATE_STATUS: 'update:status',
   RUNTIME_GET_STATUS: 'runtime:get-status',
   RUNTIME_STATUS: 'runtime:status',
+  TASKS_CREATE: 'tasks:create',
+  TASKS_LIST: 'tasks:list',
   OPEN_EXTERNAL: 'shell:open-external',
 } as const;
 

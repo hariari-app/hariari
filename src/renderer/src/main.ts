@@ -1,7 +1,9 @@
 import '@xterm/xterm/css/xterm.css';
 import './styles/global.css';
 import './styles/runtime-health.css';
+import './styles/tasks-view.css';
 import { mountRuntimeHealth } from './runtime-health';
+import { mountTasksView } from './tasks-view';
 import './styles/terminal.css';
 import './styles/tab-bar.css';
 import './styles/source-control.css';
@@ -14,7 +16,12 @@ import { WorkspaceSwitcher } from './project/workspace-switcher';
 import { CommandPalette } from './ui/command-palette';
 import { KeybindingManager } from './ui/keybindings';
 import { KeybindingEditor } from './ui/keybinding-editor';
-import { KEYBINDING_DEFAULTS, loadUserKeybindings, loadUserKeybindingsAsync, getEffectiveKey } from './ui/keybinding-defaults';
+import {
+  KEYBINDING_DEFAULTS,
+  loadUserKeybindings,
+  loadUserKeybindingsAsync,
+  getEffectiveKey,
+} from './ui/keybinding-defaults';
 import { applyTheme, loadSavedTheme } from './terminal/terminal-theme';
 import { LAYOUT_PRESETS } from './layout/layout-presets';
 import { FileViewer } from './file/file-viewer';
@@ -105,7 +112,9 @@ function main(): void {
           return s === 'running' || s === 'starting' || s === 'needs-input';
         });
         if (running.length > 0) {
-          const confirmed = confirm(`${running.length} agent(s) still running. Close this project?`);
+          const confirmed = confirm(
+            `${running.length} agent(s) still running. Close this project?`,
+          );
           if (!confirmed) return;
         }
       }
@@ -226,24 +235,27 @@ function main(): void {
   let sidebarAutoHide = false;
 
   // Load font/sidebar/worktree settings
-  window.api.settings.load().then((s) => {
-    if (s.terminalFontSize && typeof s.terminalFontSize === 'number') {
-      terminalFontSize = s.terminalFontSize as number;
-    }
-    if (s.uiFontSize && typeof s.uiFontSize === 'number') {
-      uiFontSize = s.uiFontSize as number;
-      document.documentElement.style.setProperty('--font-base', `${uiFontSize}px`);
-    }
-    if (s.sidebarWidth && typeof s.sidebarWidth === 'number') {
-      sidebarEl.style.width = `${s.sidebarWidth}px`;
-    }
-    if (typeof s.worktreeIsolation === 'boolean') {
-      worktreeIsolation = s.worktreeIsolation;
-    }
-    if (typeof s.sidebarAutoHide === 'boolean') {
-      sidebarAutoHide = s.sidebarAutoHide;
-    }
-  }).catch(() => {});
+  window.api.settings
+    .load()
+    .then((s) => {
+      if (s.terminalFontSize && typeof s.terminalFontSize === 'number') {
+        terminalFontSize = s.terminalFontSize as number;
+      }
+      if (s.uiFontSize && typeof s.uiFontSize === 'number') {
+        uiFontSize = s.uiFontSize as number;
+        document.documentElement.style.setProperty('--font-base', `${uiFontSize}px`);
+      }
+      if (s.sidebarWidth && typeof s.sidebarWidth === 'number') {
+        sidebarEl.style.width = `${s.sidebarWidth}px`;
+      }
+      if (typeof s.worktreeIsolation === 'boolean') {
+        worktreeIsolation = s.worktreeIsolation;
+      }
+      if (typeof s.sidebarAutoHide === 'boolean') {
+        sidebarAutoHide = s.sidebarAutoHide;
+      }
+    })
+    .catch(() => {});
 
   // Create sidebar
   const sidebarEl = document.createElement('div');
@@ -274,9 +286,12 @@ function main(): void {
       document.body.style.userSelect = '';
       // Persist sidebar width
       const width = sidebarEl.offsetWidth;
-      window.api.settings.load().then((s) => {
-        window.api.settings.save({ ...s, sidebarWidth: width });
-      }).catch(() => {});
+      window.api.settings
+        .load()
+        .then((s) => {
+          window.api.settings.save({ ...s, sidebarWidth: width });
+        })
+        .catch(() => {});
       // Refit terminals
       const ws = workspaceSwitcher.getActiveWorkspace();
       if (ws) ws.terminalManager.fitAll();
@@ -346,10 +361,10 @@ function main(): void {
   function announceStatus(agentName: string, status: string): void {
     const messages: Record<string, string> = {
       'needs-input': `${agentName} needs your input`,
-      'complete': `${agentName} completed`,
-      'error': `${agentName} encountered an error`,
-      'running': `${agentName} is running`,
-      'starting': `${agentName} is starting`,
+      complete: `${agentName} completed`,
+      error: `${agentName} encountered an error`,
+      running: `${agentName} is running`,
+      starting: `${agentName} is starting`,
     };
     const text = messages[status] ?? `${agentName} status: ${status}`;
     pendingAnnouncement = text;
@@ -368,7 +383,7 @@ function main(): void {
 
   // Workspace switcher
   const workspaceSwitcher = new WorkspaceSwitcher(workspaceHost, (projectId) => {
-    emptyState.style.display = (projectId || workspaceSwitcher.isInSinglePreview()) ? 'none' : '';
+    emptyState.style.display = projectId || workspaceSwitcher.isInSinglePreview() ? 'none' : '';
     store.setActiveProject(projectId);
     if (projectId) {
       store.clearNotifications(projectId);
@@ -532,6 +547,10 @@ function main(): void {
       });
     },
   });
+  const tasksHost = document.createElement('div');
+  tasksHost.className = 'tasks-view-host';
+  sidebarEl.querySelector('.sidebar-expanded-content')?.appendChild(tasksHost);
+  const disposeTasksView = mountTasksView(tasksHost, window.api.tasks);
 
   // Store subscription — fan out state changes to both sidebar and tab bar
   store.subscribe((state, prev) => {
@@ -577,7 +596,9 @@ function main(): void {
           projectSidebar.updateGitChanges(project.id, status.changes.length, files);
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   // Refresh git badges on startup and every 15 seconds
@@ -724,7 +745,10 @@ function main(): void {
         event: exitStatus as 'complete' | 'error',
         agentName: agentInfo.config.label || agentInfo.config.type,
         agentType: agentInfo.config.type,
-        message: event.exitCode === 0 ? 'Completed successfully' : `Exited with error (code ${event.exitCode})`,
+        message:
+          event.exitCode === 0
+            ? 'Completed successfully'
+            : `Exited with error (code ${event.exitCode})`,
         onClick: () => focusAgentTerminal(agentInfo.id),
       });
     }
@@ -850,9 +874,12 @@ function main(): void {
         'toggle-worktree-isolation',
         worktreeIsolation ? 'Git: Disable Worktree Isolation' : 'Git: Enable Worktree Isolation',
       );
-      window.api.settings.load().then((s) => {
-        window.api.settings.save({ ...s, worktreeIsolation });
-      }).catch(() => {});
+      window.api.settings
+        .load()
+        .then((s) => {
+          window.api.settings.save({ ...s, worktreeIsolation });
+        })
+        .catch(() => {});
     },
   });
   commandPalette.register({
@@ -884,7 +911,12 @@ function main(): void {
     id: 'toggle-single-preview',
     label: 'Toggle Single Preview',
     category: 'View',
-    action: () => { workspaceSwitcher.toggleSinglePreview(); const inPreview = workspaceSwitcher.isInSinglePreview(); store.setInSinglePreview(inPreview); ariaLive.textContent = inPreview ? 'Entering Single Preview' : 'Exiting Single Preview'; },
+    action: () => {
+      workspaceSwitcher.toggleSinglePreview();
+      const inPreview = workspaceSwitcher.isInSinglePreview();
+      store.setInSinglePreview(inPreview);
+      ariaLive.textContent = inPreview ? 'Entering Single Preview' : 'Exiting Single Preview';
+    },
   });
 
   commandPalette.register({
@@ -1012,50 +1044,278 @@ function main(): void {
   });
 
   // Register voice commands for app actions
-  voiceRouter.registerCommand({ id: 'split-vertical', aliases: ['split vertical', 'split vertically', 'vertical split'], action: () => spawnInActiveProject('shell', 'vertical') });
-  voiceRouter.registerCommand({ id: 'split-horizontal', aliases: ['split horizontal', 'split horizontally', 'horizontal split'], action: () => spawnInActiveProject('shell', 'horizontal') });
-  voiceRouter.registerCommand({ id: 'new-shell', aliases: ['new shell', 'new terminal', 'open shell', 'open terminal'], action: () => spawnInActiveProject('shell') });
-  voiceRouter.registerCommand({ id: 'new-claude', aliases: ['new claude', 'open claude', 'start claude', 'claude agent', 'new cloud', 'open cloud'], action: () => spawnInActiveProject('claude') });
-  voiceRouter.registerCommand({ id: 'new-gemini', aliases: ['new gemini', 'open gemini', 'start gemini', 'gemini agent'], action: () => spawnInActiveProject('gemini') });
-  voiceRouter.registerCommand({ id: 'new-codex', aliases: ['new codex', 'open codex', 'start codex', 'codex agent'], action: () => spawnInActiveProject('codex') });
-  voiceRouter.registerCommand({ id: 'new-pi', aliases: ['new pi', 'open pi', 'start pi', 'pi agent', 'new pie', 'open pie'], action: () => spawnInActiveProject('pi') });
-  voiceRouter.registerCommand({ id: 'new-opencode', aliases: ['new opencode', 'open opencode', 'start opencode', 'opencode agent', 'new open code', 'open open code'], action: () => spawnInActiveProject('opencode') });
-  voiceRouter.registerCommand({ id: 'new-cline', aliases: ['new cline', 'open cline', 'start cline', 'cline agent', 'new Klein', 'open Klein'], action: () => spawnInActiveProject('cline') });
-  voiceRouter.registerCommand({ id: 'new-copilot', aliases: ['new copilot', 'open copilot', 'start copilot', 'copilot agent'], action: () => spawnInActiveProject('copilot') });
-  voiceRouter.registerCommand({ id: 'new-amp', aliases: ['new amp', 'open amp', 'start amp', 'amp agent'], action: () => spawnInActiveProject('amp') });
-  voiceRouter.registerCommand({ id: 'new-continue', aliases: ['new continue', 'open continue', 'start continue', 'continue agent'], action: () => spawnInActiveProject('continue') });
-  voiceRouter.registerCommand({ id: 'new-cursor', aliases: ['new cursor', 'open cursor', 'start cursor', 'cursor agent'], action: () => spawnInActiveProject('cursor') });
-  voiceRouter.registerCommand({ id: 'new-crush', aliases: ['new crush', 'open crush', 'start crush', 'crush agent'], action: () => spawnInActiveProject('crush') });
-  voiceRouter.registerCommand({ id: 'new-qwen', aliases: ['new qwen', 'open qwen', 'start qwen', 'qwen agent', 'new when', 'open when'], action: () => spawnInActiveProject('qwen') });
-  voiceRouter.registerCommand({ id: 'close-pane', aliases: ['close pane', 'close terminal', 'close this', 'close tab'], action: () => closeFocused() });
-  voiceRouter.registerCommand({ id: 'equalize-panes', aliases: ['equalize panes', 'equal size', 'auto arrange', 'reset layout', 'equal panes'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) ws.layoutManager.equalizeAll(); } });
-  voiceRouter.registerCommand({ id: 'toggle-single-preview', aliases: ['single preview', 'preview all', 'show all agents', 'all agents', 'overview'], action: () => { workspaceSwitcher.toggleSinglePreview(); const inPreview = workspaceSwitcher.isInSinglePreview(); store.setInSinglePreview(inPreview); ariaLive.textContent = inPreview ? 'Entering Single Preview' : 'Exiting Single Preview'; } });
-  voiceRouter.registerCommand({ id: 'launch-workspace', aliases: ['launch workspace', 'setup workspace', 'new workspace', 'workspace setup'], action: () => { launchWorkspaceDialog.show(async (result) => { await workspaceSwitcher.switchTo(result.project); store.setActiveProject(result.project.id); await refreshProjectList(); const preset = buildDynamicPreset(result.agents, result.layout); const workspace = workspaceSwitcher.getActiveWorkspace(); if (workspace) { const success = await workspace.applyPreset(preset); if (success) { const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info); store.updateAgents(result.project.id, agents); } } }); } });
-  voiceRouter.registerCommand({ id: 'toggle-sidebar', aliases: ['toggle sidebar', 'hide sidebar', 'show sidebar', 'sidebar'], action: () => projectSidebar.toggleCollapse() });
-  voiceRouter.registerCommand({ id: 'command-palette', aliases: ['command palette', 'commands', 'open commands', 'show commands'], action: () => commandPalette.toggle() });
-  voiceRouter.registerCommand({ id: 'file-finder', aliases: ['open file', 'quick open', 'find file', 'go to file'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) fileFinder.toggle(ws.projectPath); } });
-  voiceRouter.registerCommand({ id: 'git-changes', aliases: ['show changes', 'git status', 'git diff', 'show diff', 'view changes'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) fileViewer.showChanges(ws.projectPath); } });
-  voiceRouter.registerCommand({ id: 'editor-window', aliases: ['open editor', 'editor window', 'open files', 'file viewer', 'show files', 'browse files', 'file browser'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) window.api.window.popoutEditor(ws.projectPath).catch(() => {}); } });
-  voiceRouter.registerCommand({ id: 'file-viewer-popout', aliases: ['pop out files', 'pop out file viewer', 'file viewer new window', 'open files new window'], action: () => { const ws = workspaceSwitcher.getActiveWorkspace(); if (ws) window.api.window.popoutFile(ws.projectPath); } });
-  voiceRouter.registerCommand({ id: 'search', aliases: ['search', 'find', 'search terminal', 'find in terminal'], action: () => toggleSearchOnFocused() });
-  voiceRouter.registerCommand({ id: 'zoom-in', aliases: ['zoom in', 'make bigger', 'increase size'], action: () => window.api.window.zoomIn() });
-  voiceRouter.registerCommand({ id: 'zoom-out', aliases: ['zoom out', 'make smaller', 'decrease size'], action: () => window.api.window.zoomOut() });
-  voiceRouter.registerCommand({ id: 'zoom-reset', aliases: ['reset zoom', 'normal size', 'default size'], action: () => window.api.window.zoomReset() });
-  voiceRouter.registerCommand({ id: 'font-increase', aliases: ['bigger font', 'increase font', 'larger font', 'font bigger'], action: () => changeTerminalFontSize(1) });
-  voiceRouter.registerCommand({ id: 'font-decrease', aliases: ['smaller font', 'decrease font', 'font smaller'], action: () => changeTerminalFontSize(-1) });
-  voiceRouter.registerCommand({ id: 'notification-prefs', aliases: ['notification settings', 'notification preferences', 'sound settings'], action: () => notificationPrefs.toggle() });
+  voiceRouter.registerCommand({
+    id: 'split-vertical',
+    aliases: ['split vertical', 'split vertically', 'vertical split'],
+    action: () => spawnInActiveProject('shell', 'vertical'),
+  });
+  voiceRouter.registerCommand({
+    id: 'split-horizontal',
+    aliases: ['split horizontal', 'split horizontally', 'horizontal split'],
+    action: () => spawnInActiveProject('shell', 'horizontal'),
+  });
+  voiceRouter.registerCommand({
+    id: 'new-shell',
+    aliases: ['new shell', 'new terminal', 'open shell', 'open terminal'],
+    action: () => spawnInActiveProject('shell'),
+  });
+  voiceRouter.registerCommand({
+    id: 'new-claude',
+    aliases: [
+      'new claude',
+      'open claude',
+      'start claude',
+      'claude agent',
+      'new cloud',
+      'open cloud',
+    ],
+    action: () => spawnInActiveProject('claude'),
+  });
+  voiceRouter.registerCommand({
+    id: 'new-gemini',
+    aliases: ['new gemini', 'open gemini', 'start gemini', 'gemini agent'],
+    action: () => spawnInActiveProject('gemini'),
+  });
+  voiceRouter.registerCommand({
+    id: 'new-codex',
+    aliases: ['new codex', 'open codex', 'start codex', 'codex agent'],
+    action: () => spawnInActiveProject('codex'),
+  });
+  voiceRouter.registerCommand({
+    id: 'new-pi',
+    aliases: ['new pi', 'open pi', 'start pi', 'pi agent', 'new pie', 'open pie'],
+    action: () => spawnInActiveProject('pi'),
+  });
+  voiceRouter.registerCommand({
+    id: 'new-opencode',
+    aliases: [
+      'new opencode',
+      'open opencode',
+      'start opencode',
+      'opencode agent',
+      'new open code',
+      'open open code',
+    ],
+    action: () => spawnInActiveProject('opencode'),
+  });
+  voiceRouter.registerCommand({
+    id: 'new-cline',
+    aliases: ['new cline', 'open cline', 'start cline', 'cline agent', 'new Klein', 'open Klein'],
+    action: () => spawnInActiveProject('cline'),
+  });
+  voiceRouter.registerCommand({
+    id: 'new-copilot',
+    aliases: ['new copilot', 'open copilot', 'start copilot', 'copilot agent'],
+    action: () => spawnInActiveProject('copilot'),
+  });
+  voiceRouter.registerCommand({
+    id: 'new-amp',
+    aliases: ['new amp', 'open amp', 'start amp', 'amp agent'],
+    action: () => spawnInActiveProject('amp'),
+  });
+  voiceRouter.registerCommand({
+    id: 'new-continue',
+    aliases: ['new continue', 'open continue', 'start continue', 'continue agent'],
+    action: () => spawnInActiveProject('continue'),
+  });
+  voiceRouter.registerCommand({
+    id: 'new-cursor',
+    aliases: ['new cursor', 'open cursor', 'start cursor', 'cursor agent'],
+    action: () => spawnInActiveProject('cursor'),
+  });
+  voiceRouter.registerCommand({
+    id: 'new-crush',
+    aliases: ['new crush', 'open crush', 'start crush', 'crush agent'],
+    action: () => spawnInActiveProject('crush'),
+  });
+  voiceRouter.registerCommand({
+    id: 'new-qwen',
+    aliases: ['new qwen', 'open qwen', 'start qwen', 'qwen agent', 'new when', 'open when'],
+    action: () => spawnInActiveProject('qwen'),
+  });
+  voiceRouter.registerCommand({
+    id: 'close-pane',
+    aliases: ['close pane', 'close terminal', 'close this', 'close tab'],
+    action: () => closeFocused(),
+  });
+  voiceRouter.registerCommand({
+    id: 'equalize-panes',
+    aliases: ['equalize panes', 'equal size', 'auto arrange', 'reset layout', 'equal panes'],
+    action: () => {
+      const ws = workspaceSwitcher.getActiveWorkspace();
+      if (ws) ws.layoutManager.equalizeAll();
+    },
+  });
+  voiceRouter.registerCommand({
+    id: 'toggle-single-preview',
+    aliases: ['single preview', 'preview all', 'show all agents', 'all agents', 'overview'],
+    action: () => {
+      workspaceSwitcher.toggleSinglePreview();
+      const inPreview = workspaceSwitcher.isInSinglePreview();
+      store.setInSinglePreview(inPreview);
+      ariaLive.textContent = inPreview ? 'Entering Single Preview' : 'Exiting Single Preview';
+    },
+  });
+  voiceRouter.registerCommand({
+    id: 'launch-workspace',
+    aliases: ['launch workspace', 'setup workspace', 'new workspace', 'workspace setup'],
+    action: () => {
+      launchWorkspaceDialog.show(async (result) => {
+        await workspaceSwitcher.switchTo(result.project);
+        store.setActiveProject(result.project.id);
+        await refreshProjectList();
+        const preset = buildDynamicPreset(result.agents, result.layout);
+        const workspace = workspaceSwitcher.getActiveWorkspace();
+        if (workspace) {
+          const success = await workspace.applyPreset(preset);
+          if (success) {
+            const agents = Array.from(workspace.getTrackedAgents().values()).map((t) => t.info);
+            store.updateAgents(result.project.id, agents);
+          }
+        }
+      });
+    },
+  });
+  voiceRouter.registerCommand({
+    id: 'toggle-sidebar',
+    aliases: ['toggle sidebar', 'hide sidebar', 'show sidebar', 'sidebar'],
+    action: () => projectSidebar.toggleCollapse(),
+  });
+  voiceRouter.registerCommand({
+    id: 'command-palette',
+    aliases: ['command palette', 'commands', 'open commands', 'show commands'],
+    action: () => commandPalette.toggle(),
+  });
+  voiceRouter.registerCommand({
+    id: 'file-finder',
+    aliases: ['open file', 'quick open', 'find file', 'go to file'],
+    action: () => {
+      const ws = workspaceSwitcher.getActiveWorkspace();
+      if (ws) fileFinder.toggle(ws.projectPath);
+    },
+  });
+  voiceRouter.registerCommand({
+    id: 'git-changes',
+    aliases: ['show changes', 'git status', 'git diff', 'show diff', 'view changes'],
+    action: () => {
+      const ws = workspaceSwitcher.getActiveWorkspace();
+      if (ws) fileViewer.showChanges(ws.projectPath);
+    },
+  });
+  voiceRouter.registerCommand({
+    id: 'editor-window',
+    aliases: [
+      'open editor',
+      'editor window',
+      'open files',
+      'file viewer',
+      'show files',
+      'browse files',
+      'file browser',
+    ],
+    action: () => {
+      const ws = workspaceSwitcher.getActiveWorkspace();
+      if (ws) window.api.window.popoutEditor(ws.projectPath).catch(() => {});
+    },
+  });
+  voiceRouter.registerCommand({
+    id: 'file-viewer-popout',
+    aliases: [
+      'pop out files',
+      'pop out file viewer',
+      'file viewer new window',
+      'open files new window',
+    ],
+    action: () => {
+      const ws = workspaceSwitcher.getActiveWorkspace();
+      if (ws) window.api.window.popoutFile(ws.projectPath);
+    },
+  });
+  voiceRouter.registerCommand({
+    id: 'search',
+    aliases: ['search', 'find', 'search terminal', 'find in terminal'],
+    action: () => toggleSearchOnFocused(),
+  });
+  voiceRouter.registerCommand({
+    id: 'zoom-in',
+    aliases: ['zoom in', 'make bigger', 'increase size'],
+    action: () => window.api.window.zoomIn(),
+  });
+  voiceRouter.registerCommand({
+    id: 'zoom-out',
+    aliases: ['zoom out', 'make smaller', 'decrease size'],
+    action: () => window.api.window.zoomOut(),
+  });
+  voiceRouter.registerCommand({
+    id: 'zoom-reset',
+    aliases: ['reset zoom', 'normal size', 'default size'],
+    action: () => window.api.window.zoomReset(),
+  });
+  voiceRouter.registerCommand({
+    id: 'font-increase',
+    aliases: ['bigger font', 'increase font', 'larger font', 'font bigger'],
+    action: () => changeTerminalFontSize(1),
+  });
+  voiceRouter.registerCommand({
+    id: 'font-decrease',
+    aliases: ['smaller font', 'decrease font', 'font smaller'],
+    action: () => changeTerminalFontSize(-1),
+  });
+  voiceRouter.registerCommand({
+    id: 'notification-prefs',
+    aliases: ['notification settings', 'notification preferences', 'sound settings'],
+    action: () => notificationPrefs.toggle(),
+  });
 
   // Theme commands
-  const themeNames = ['tokyo night', 'tokyo night light', 'solarized dark', 'dracula', 'nord', 'gruvbox dark', 'one dark', 'catppuccin mocha', 'monokai', 'brutalist', 'brutalist light', 'caffeine dark', 'caffeine light'];
-  const themeIds = ['tokyoNight', 'tokyoNightLight', 'solarizedDark', 'dracula', 'nord', 'gruvboxDark', 'oneDark', 'catppuccinMocha', 'monokai', 'brutalist', 'brutalistLight', 'caffeineDark', 'caffeineLight'];
+  const themeNames = [
+    'tokyo night',
+    'tokyo night light',
+    'solarized dark',
+    'dracula',
+    'nord',
+    'gruvbox dark',
+    'one dark',
+    'catppuccin mocha',
+    'monokai',
+    'brutalist',
+    'brutalist light',
+    'caffeine dark',
+    'caffeine light',
+  ];
+  const themeIds = [
+    'tokyoNight',
+    'tokyoNightLight',
+    'solarizedDark',
+    'dracula',
+    'nord',
+    'gruvboxDark',
+    'oneDark',
+    'catppuccinMocha',
+    'monokai',
+    'brutalist',
+    'brutalistLight',
+    'caffeineDark',
+    'caffeineLight',
+  ];
   for (let i = 0; i < themeNames.length; i++) {
     const id = themeIds[i];
-    voiceRouter.registerCommand({ id: `theme-${id}`, aliases: [`theme ${themeNames[i]}`, themeNames[i], `switch to ${themeNames[i]}`], action: () => switchTheme(id) });
+    voiceRouter.registerCommand({
+      id: `theme-${id}`,
+      aliases: [`theme ${themeNames[i]}`, themeNames[i], `switch to ${themeNames[i]}`],
+      action: () => switchTheme(id),
+    });
   }
 
   // Layout presets
   for (const preset of LAYOUT_PRESETS) {
-    voiceRouter.registerCommand({ id: `preset-${preset.id}`, aliases: [`layout ${preset.label.toLowerCase()}`, preset.label.toLowerCase()], action: () => { applyPresetToActive(preset.id).catch(() => {}); } });
+    voiceRouter.registerCommand({
+      id: `preset-${preset.id}`,
+      aliases: [`layout ${preset.label.toLowerCase()}`, preset.label.toLowerCase()],
+      action: () => {
+        applyPresetToActive(preset.id).catch(() => {});
+      },
+    });
   }
 
   // Voice mode: 'dictation' types into terminal, 'command' matches app commands
@@ -1094,28 +1354,33 @@ function main(): void {
   });
 
   commandPalette.register({
-    id: 'voice-toggle', category: 'Voice',
+    id: 'voice-toggle',
+    category: 'Voice',
     label: 'Voice Dictation (hold to talk)',
     shortcut: 'Ctrl+Shift+M (hold)',
     action: () => voiceCapture.toggle(),
   });
   commandPalette.register({
-    id: 'voice-setup', category: 'Voice',
+    id: 'voice-setup',
+    category: 'Voice',
     label: 'Voice Input: Configure',
     action: () => voiceCapture.showSetup(),
   });
   commandPalette.register({
-    id: 'voice-mode-command', category: 'Voice',
+    id: 'voice-mode-command',
+    category: 'Voice',
     label: 'Voice Mode: Command (symbols + case conversion)',
     action: () => voiceCapture.setPostProcessMode('command'),
   });
   commandPalette.register({
-    id: 'voice-mode-natural', category: 'Voice',
+    id: 'voice-mode-natural',
+    category: 'Voice',
     label: 'Voice Mode: Natural (raw transcription)',
     action: () => voiceCapture.setPostProcessMode('natural'),
   });
   commandPalette.register({
-    id: 'voice-mode-code', category: 'Voice',
+    id: 'voice-mode-code',
+    category: 'Voice',
     label: 'Voice Mode: Code (symbols + abbreviations)',
     action: () => voiceCapture.setPostProcessMode('code'),
   });
@@ -1136,13 +1401,15 @@ function main(): void {
   }
 
   commandPalette.register({
-    id: 'toggle-sidebar', category: 'View',
+    id: 'toggle-sidebar',
+    category: 'View',
     label: 'Toggle Sidebar',
     shortcut: 'Ctrl+B',
     action: () => projectSidebar.toggleCollapse(),
   });
   commandPalette.register({
-    id: 'toggle-sidebar-auto-hide', category: 'View',
+    id: 'toggle-sidebar-auto-hide',
+    category: 'View',
     label: sidebarAutoHide ? 'Sidebar: Disable Auto-Hide' : 'Sidebar: Enable Auto-Hide',
     action: () => {
       sidebarAutoHide = !sidebarAutoHide;
@@ -1151,13 +1418,17 @@ function main(): void {
         'toggle-sidebar-auto-hide',
         sidebarAutoHide ? 'Sidebar: Disable Auto-Hide' : 'Sidebar: Enable Auto-Hide',
       );
-      window.api.settings.load().then((s) => {
-        window.api.settings.save({ ...s, sidebarAutoHide });
-      }).catch(() => {});
+      window.api.settings
+        .load()
+        .then((s) => {
+          window.api.settings.save({ ...s, sidebarAutoHide });
+        })
+        .catch(() => {});
     },
   });
   commandPalette.register({
-    id: 'check-for-updates', category: 'General',
+    id: 'check-for-updates',
+    category: 'General',
     label: 'Check for Updates',
     action: () => {
       window.api.update.check();
@@ -1168,13 +1439,15 @@ function main(): void {
     },
   });
   commandPalette.register({
-    id: 'close-pane', category: 'Layout',
+    id: 'close-pane',
+    category: 'Layout',
     label: 'Close Pane',
     shortcut: 'Ctrl+Shift+W',
     action: () => closeFocused(),
   });
   commandPalette.register({
-    id: 'search-terminal', category: 'General',
+    id: 'search-terminal',
+    category: 'General',
     label: 'Search in Terminal',
     shortcut: 'Ctrl+Shift+F',
     action: () => toggleSearchOnFocused(),
@@ -1213,9 +1486,12 @@ function main(): void {
       ws.terminalManager.setDefaultFontSize(terminalFontSize);
       ws.terminalManager.setFontSizeAll(terminalFontSize);
     }
-    window.api.settings.load().then((s) => {
-      window.api.settings.save({ ...s, terminalFontSize });
-    }).catch(() => {});
+    window.api.settings
+      .load()
+      .then((s) => {
+        window.api.settings.save({ ...s, terminalFontSize });
+      })
+      .catch(() => {});
   }
 
   function changeUIFontSize(delta: number): void {
@@ -1224,35 +1500,43 @@ function main(): void {
     document.documentElement.style.setProperty('--font-sm', `${uiFontSize - 2}px`);
     document.documentElement.style.setProperty('--font-md', `${uiFontSize + 1}px`);
     document.documentElement.style.setProperty('--font-xs', `${uiFontSize - 3}px`);
-    window.api.settings.load().then((s) => {
-      window.api.settings.save({ ...s, uiFontSize });
-    }).catch(() => {});
+    window.api.settings
+      .load()
+      .then((s) => {
+        window.api.settings.save({ ...s, uiFontSize });
+      })
+      .catch(() => {});
   }
 
   commandPalette.register({
-    id: 'terminal-font-increase', category: 'View',
+    id: 'terminal-font-increase',
+    category: 'View',
     label: 'Terminal: Increase Font Size',
     shortcut: 'Ctrl++',
     action: () => changeTerminalFontSize(1),
   });
   commandPalette.register({
-    id: 'terminal-font-decrease', category: 'View',
+    id: 'terminal-font-decrease',
+    category: 'View',
     label: 'Terminal: Decrease Font Size',
     shortcut: 'Ctrl+-',
     action: () => changeTerminalFontSize(-1),
   });
   commandPalette.register({
-    id: 'ui-font-increase', category: 'View',
+    id: 'ui-font-increase',
+    category: 'View',
     label: 'UI: Increase Font Size',
     action: () => changeUIFontSize(1),
   });
   commandPalette.register({
-    id: 'ui-font-decrease', category: 'View',
+    id: 'ui-font-decrease',
+    category: 'View',
     label: 'UI: Decrease Font Size',
     action: () => changeUIFontSize(-1),
   });
   commandPalette.register({
-    id: 'font-reset', category: 'View',
+    id: 'font-reset',
+    category: 'View',
     label: 'Reset All Font Sizes',
     action: () => {
       terminalFontSize = 14;
@@ -1264,7 +1548,12 @@ function main(): void {
 
   // Keybinding action map — maps definition IDs to actions
   const keybindingActions: Record<string, { action: () => void; holdUp?: () => void }> = {
-    'command-palette': { action: () => { updatePaletteContext(); commandPalette.toggle(); } },
+    'command-palette': {
+      action: () => {
+        updatePaletteContext();
+        commandPalette.toggle();
+      },
+    },
     'toggle-sidebar': { action: () => projectSidebar.toggleCollapse() },
     'git-changes': {
       action: () => {
@@ -1309,11 +1598,17 @@ function main(): void {
     'close-pane': { action: () => closeFocused() },
     'search-terminal': { action: () => toggleSearchOnFocused() },
     'voice-push-to-talk': {
-      action: () => { voiceMode = 'dictation'; voiceCapture.startListening(); },
+      action: () => {
+        voiceMode = 'dictation';
+        voiceCapture.startListening();
+      },
       holdUp: () => voiceCapture.stopListening(),
     },
     'voice-command': {
-      action: () => { voiceMode = 'command'; voiceCapture.startListening(); },
+      action: () => {
+        voiceMode = 'command';
+        voiceCapture.startListening();
+      },
       holdUp: () => voiceCapture.stopListening(),
     },
     'font-increase': { action: () => changeTerminalFontSize(1) },
@@ -1321,7 +1616,14 @@ function main(): void {
     'zoom-in': { action: () => window.api.window.zoomIn() },
     'zoom-out': { action: () => window.api.window.zoomOut() },
     'zoom-reset': { action: () => window.api.window.zoomReset() },
-    'toggle-single-preview': { action: () => { workspaceSwitcher.toggleSinglePreview(); const inPreview = workspaceSwitcher.isInSinglePreview(); store.setInSinglePreview(inPreview); ariaLive.textContent = inPreview ? 'Entering Single Preview' : 'Exiting Single Preview'; } },
+    'toggle-single-preview': {
+      action: () => {
+        workspaceSwitcher.toggleSinglePreview();
+        const inPreview = workspaceSwitcher.isInSinglePreview();
+        store.setInSinglePreview(inPreview);
+        ariaLive.textContent = inPreview ? 'Entering Single Preview' : 'Exiting Single Preview';
+      },
+    },
   };
 
   // Keybinding manager — registers from config, re-registers on change
@@ -1384,7 +1686,8 @@ function main(): void {
   });
 
   commandPalette.register({
-    id: 'keybinding-editor', category: 'General',
+    id: 'keybinding-editor',
+    category: 'General',
     label: 'Keyboard Shortcuts',
     shortcut: 'Ctrl+K Ctrl+S',
     action: () => keybindingEditor.toggle(),
@@ -1466,54 +1769,210 @@ function main(): void {
 
   // Register agent-specific commands (context-aware)
   commandPalette.registerDynamic('claude', [
-    { id: 'claude-accept', label: 'Claude: Accept Changes', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('y\n') },
-    { id: 'claude-reject', label: 'Claude: Reject Changes', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('n\n') },
-    { id: 'claude-plan', label: 'Claude: Show Plan', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('/plan\n') },
-    { id: 'claude-compact', label: 'Claude: Compact Context', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('/compact\n') },
+    {
+      id: 'claude-accept',
+      label: 'Claude: Accept Changes',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('y\n'),
+    },
+    {
+      id: 'claude-reject',
+      label: 'Claude: Reject Changes',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('n\n'),
+    },
+    {
+      id: 'claude-plan',
+      label: 'Claude: Show Plan',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('/plan\n'),
+    },
+    {
+      id: 'claude-compact',
+      label: 'Claude: Compact Context',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('/compact\n'),
+    },
   ]);
   commandPalette.registerDynamic('gemini', [
-    { id: 'gemini-accept', label: 'Gemini: Accept', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('y\n') },
-    { id: 'gemini-reject', label: 'Gemini: Reject', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('n\n') },
+    {
+      id: 'gemini-accept',
+      label: 'Gemini: Accept',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('y\n'),
+    },
+    {
+      id: 'gemini-reject',
+      label: 'Gemini: Reject',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('n\n'),
+    },
   ]);
   commandPalette.registerDynamic('codex', [
-    { id: 'codex-approve', label: 'Codex: Approve', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('y\n') },
-    { id: 'codex-reject', label: 'Codex: Reject', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('n\n') },
+    {
+      id: 'codex-approve',
+      label: 'Codex: Approve',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('y\n'),
+    },
+    {
+      id: 'codex-reject',
+      label: 'Codex: Reject',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('n\n'),
+    },
   ]);
   commandPalette.registerDynamic('pi', [
-    { id: 'pi-approve', label: 'Pi: Approve', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('y\n') },
-    { id: 'pi-reject', label: 'Pi: Reject', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('n\n') },
+    {
+      id: 'pi-approve',
+      label: 'Pi: Approve',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('y\n'),
+    },
+    {
+      id: 'pi-reject',
+      label: 'Pi: Reject',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('n\n'),
+    },
   ]);
   commandPalette.registerDynamic('opencode', [
-    { id: 'opencode-approve', label: 'OpenCode: Approve', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('y\n') },
-    { id: 'opencode-reject', label: 'OpenCode: Reject', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('n\n') },
+    {
+      id: 'opencode-approve',
+      label: 'OpenCode: Approve',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('y\n'),
+    },
+    {
+      id: 'opencode-reject',
+      label: 'OpenCode: Reject',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('n\n'),
+    },
   ]);
   commandPalette.registerDynamic('cline', [
-    { id: 'cline-approve', label: 'Cline: Approve', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('y\n') },
-    { id: 'cline-reject', label: 'Cline: Reject', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('n\n') },
+    {
+      id: 'cline-approve',
+      label: 'Cline: Approve',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('y\n'),
+    },
+    {
+      id: 'cline-reject',
+      label: 'Cline: Reject',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('n\n'),
+    },
   ]);
   commandPalette.registerDynamic('copilot', [
-    { id: 'copilot-approve', label: 'Copilot: Approve', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('y\n') },
-    { id: 'copilot-reject', label: 'Copilot: Reject', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('n\n') },
+    {
+      id: 'copilot-approve',
+      label: 'Copilot: Approve',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('y\n'),
+    },
+    {
+      id: 'copilot-reject',
+      label: 'Copilot: Reject',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('n\n'),
+    },
   ]);
   commandPalette.registerDynamic('amp', [
-    { id: 'amp-approve', label: 'Amp: Approve', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('y\n') },
-    { id: 'amp-reject', label: 'Amp: Reject', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('n\n') },
+    {
+      id: 'amp-approve',
+      label: 'Amp: Approve',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('y\n'),
+    },
+    {
+      id: 'amp-reject',
+      label: 'Amp: Reject',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('n\n'),
+    },
   ]);
   commandPalette.registerDynamic('continue', [
-    { id: 'continue-approve', label: 'Continue: Approve', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('y\n') },
-    { id: 'continue-reject', label: 'Continue: Reject', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('n\n') },
+    {
+      id: 'continue-approve',
+      label: 'Continue: Approve',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('y\n'),
+    },
+    {
+      id: 'continue-reject',
+      label: 'Continue: Reject',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('n\n'),
+    },
   ]);
   commandPalette.registerDynamic('cursor', [
-    { id: 'cursor-approve', label: 'Cursor: Approve', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('y\n') },
-    { id: 'cursor-reject', label: 'Cursor: Reject', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('n\n') },
+    {
+      id: 'cursor-approve',
+      label: 'Cursor: Approve',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('y\n'),
+    },
+    {
+      id: 'cursor-reject',
+      label: 'Cursor: Reject',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('n\n'),
+    },
   ]);
   commandPalette.registerDynamic('crush', [
-    { id: 'crush-approve', label: 'Crush: Approve', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('y\n') },
-    { id: 'crush-reject', label: 'Crush: Reject', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('n\n') },
+    {
+      id: 'crush-approve',
+      label: 'Crush: Approve',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('y\n'),
+    },
+    {
+      id: 'crush-reject',
+      label: 'Crush: Reject',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('n\n'),
+    },
   ]);
   commandPalette.registerDynamic('qwen', [
-    { id: 'qwen-approve', label: 'Qwen: Approve', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('y\n') },
-    { id: 'qwen-reject', label: 'Qwen: Reject', category: 'Agent', context: 'agent', action: () => sendToFocusedTerminal('n\n') },
+    {
+      id: 'qwen-approve',
+      label: 'Qwen: Approve',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('y\n'),
+    },
+    {
+      id: 'qwen-reject',
+      label: 'Qwen: Reject',
+      category: 'Agent',
+      context: 'agent',
+      action: () => sendToFocusedTerminal('n\n'),
+    },
   ]);
 
   // Tag terminal-specific commands with context
@@ -1555,7 +2014,10 @@ function main(): void {
     }
   }
 
-  async function spawnInActiveProject(type: AgentType, direction?: 'horizontal' | 'vertical'): Promise<void> {
+  async function spawnInActiveProject(
+    type: AgentType,
+    direction?: 'horizontal' | 'vertical',
+  ): Promise<void> {
     const workspace = workspaceSwitcher.getActiveWorkspace();
     if (!workspace) return;
     await workspace.spawnAgent(type, direction);
@@ -1612,7 +2074,13 @@ function main(): void {
       }
 
       const state: AppState = {
-        window: existingState?.window ?? { x: 0, y: 0, width: 1400, height: 900, isMaximized: false },
+        window: existingState?.window ?? {
+          x: 0,
+          y: 0,
+          width: 1400,
+          height: 900,
+          isMaximized: false,
+        },
         activeProjectId: workspaceSwitcher.getActiveProjectId(),
         sidebarCollapsed: projectSidebar.isCollapsed(),
         layout: null,
@@ -1625,18 +2093,21 @@ function main(): void {
   }
 
   // Check if onboarding is needed
-  window.api.settings.load().then(async (settings) => {
-    await window.api.project.list();
-    if (!settings.onboardingComplete) {
-      const { OnboardingWizard } = await import('./onboarding/onboarding-wizard');
-      const wizard = new OnboardingWizard(appEl, {
-        initialStep: typeof settings.onboardingStep === 'number' ? settings.onboardingStep : 0,
-        onComplete: () => refreshProjectList(),
-        onSkip: () => refreshProjectList(),
-      });
-      wizard.show();
-    }
-  }).catch(() => {});
+  window.api.settings
+    .load()
+    .then(async (settings) => {
+      await window.api.project.list();
+      if (!settings.onboardingComplete) {
+        const { OnboardingWizard } = await import('./onboarding/onboarding-wizard');
+        const wizard = new OnboardingWizard(appEl, {
+          initialStep: typeof settings.onboardingStep === 'number' ? settings.onboardingStep : 0,
+          onComplete: () => refreshProjectList(),
+          onSkip: () => refreshProjectList(),
+        });
+        wizard.show();
+      }
+    })
+    .catch(() => {});
 
   // Initialize
   initializeFromState(workspaceSwitcher, projectSidebar, refreshProjectList, store).then(() => {
@@ -1671,6 +2142,7 @@ function main(): void {
   window.addEventListener('beforeunload', () => {
     clearInterval(autoSaveTimer);
     disposeRuntimeHealth();
+    disposeTasksView();
     saveGlobalState();
   });
 }

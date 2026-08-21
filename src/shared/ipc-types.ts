@@ -2,8 +2,10 @@ import type { AgentConfig, AgentInfo, AgentStatus, AgentType } from './agent-typ
 import type { LayoutNode } from './layout-types';
 import type { SessionRecording } from './session-types';
 import type {
+  CreateTaskRequest,
   RuntimeProtocolRange,
   RuntimeUnavailableReason,
+  TaskView,
 } from './runtime/runtime-interface';
 
 export type RuntimeRendererStatus =
@@ -141,7 +143,14 @@ export interface FileSearchResult {
 }
 
 export interface UpdateStatus {
-  readonly state: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'manual-available' | 'error';
+  readonly state:
+    | 'checking'
+    | 'available'
+    | 'not-available'
+    | 'downloading'
+    | 'downloaded'
+    | 'manual-available'
+    | 'error';
   readonly version?: string;
   readonly progress?: number;
   readonly error?: string;
@@ -198,27 +207,69 @@ export interface HariariApi {
     save(overrides: Record<string, string>): Promise<void>;
   };
   voice: {
-    loadConfig(): Promise<{ provider: string; postProcessMode: string; deviceId: string; hasApiKey: boolean }>;
-    saveConfig(config: { provider: string; postProcessMode: string; deviceId: string }): Promise<void>;
+    loadConfig(): Promise<{
+      provider: string;
+      postProcessMode: string;
+      deviceId: string;
+      hasApiKey: boolean;
+    }>;
+    saveConfig(config: {
+      provider: string;
+      postProcessMode: string;
+      deviceId: string;
+    }): Promise<void>;
     setApiKey(apiKey: string): Promise<{ success: boolean; error?: string }>;
     clearApiKey(): Promise<void>;
-    transcribe(request: { provider: string; audioBase64: string }): Promise<{ text?: string; error?: string }>;
-    formatLLM(request: { provider: string; messages: Array<{ role: string; content: string }> }): Promise<{ text?: string; error?: string }>;
+    transcribe(request: {
+      provider: string;
+      audioBase64: string;
+    }): Promise<{ text?: string; error?: string }>;
+    formatLLM(request: {
+      provider: string;
+      messages: Array<{ role: string; content: string }>;
+    }): Promise<{ text?: string; error?: string }>;
   };
   git: {
     status(projectPath: string): Promise<import('./git-types').GitStatusResult>;
-    diff(request: { projectPath: string; filePath: string; group: string }): Promise<import('./git-types').GitDiffResult>;
-    show(request: { projectPath: string; filePath: string; ref: string }): Promise<{ content: string }>;
-    discard(request: { projectPath: string; filePath: string }): Promise<{ success?: boolean; error?: string }>;
-    stage(request: { projectPath: string; filePath: string }): Promise<{ success?: boolean; error?: string }>;
-    unstage(request: { projectPath: string; filePath: string }): Promise<{ success?: boolean; error?: string }>;
+    diff(request: {
+      projectPath: string;
+      filePath: string;
+      group: string;
+    }): Promise<import('./git-types').GitDiffResult>;
+    show(request: {
+      projectPath: string;
+      filePath: string;
+      ref: string;
+    }): Promise<{ content: string }>;
+    discard(request: {
+      projectPath: string;
+      filePath: string;
+    }): Promise<{ success?: boolean; error?: string }>;
+    stage(request: {
+      projectPath: string;
+      filePath: string;
+    }): Promise<{ success?: boolean; error?: string }>;
+    unstage(request: {
+      projectPath: string;
+      filePath: string;
+    }): Promise<{ success?: boolean; error?: string }>;
     stageAll(projectPath: string): Promise<{ success?: boolean; error?: string }>;
     unstageAll(projectPath: string): Promise<{ success?: boolean; error?: string }>;
     discardAll(projectPath: string): Promise<{ success?: boolean; error?: string }>;
-    commit(request: { projectPath: string; message: string; amend?: boolean }): Promise<{ success?: boolean; hash?: string; error?: string }>;
-    log(request: { projectPath: string; maxCount?: number }): Promise<import('./git-types').GitLogResult>;
+    commit(request: {
+      projectPath: string;
+      message: string;
+      amend?: boolean;
+    }): Promise<{ success?: boolean; hash?: string; error?: string }>;
+    log(request: {
+      projectPath: string;
+      maxCount?: number;
+    }): Promise<import('./git-types').GitLogResult>;
     pull(projectPath: string): Promise<{ success?: boolean; output?: string; error?: string }>;
-    push(request: { projectPath: string; setUpstream?: boolean }): Promise<{ success?: boolean; error?: string }>;
+    push(request: {
+      projectPath: string;
+      setUpstream?: boolean;
+    }): Promise<{ success?: boolean; error?: string }>;
     aheadBehind(projectPath: string): Promise<import('./git-types').GitAheadBehind>;
   };
   file: {
@@ -229,10 +280,18 @@ export interface HariariApi {
     mkdir(dirPath: string): Promise<{ success?: boolean; error?: string }>;
     rename(oldPath: string, newPath: string): Promise<{ success?: boolean; error?: string }>;
     delete(filePath: string): Promise<{ success?: boolean; error?: string }>;
-    search(request: { projectPath: string; query: string; maxResults?: number }): Promise<FileSearchResult[]>;
+    search(request: {
+      projectPath: string;
+      query: string;
+      maxResults?: number;
+    }): Promise<FileSearchResult[]>;
   };
   notify: {
-    show(request: { title: string; body: string; urgency?: 'low' | 'normal' | 'critical' }): Promise<void>;
+    show(request: {
+      title: string;
+      body: string;
+      urgency?: 'low' | 'normal' | 'critical';
+    }): Promise<void>;
     setEnabled(enabled: boolean): Promise<void>;
   };
   session: {
@@ -258,14 +317,19 @@ export interface HariariApi {
   };
   skills: {
     manifest(): Promise<import('./skills-types').SkillManifest>;
-    install(request: import('./skills-types').SkillInstallRequest): Promise<import('./skills-types').SkillsInstallResponse>;
+    install(
+      request: import('./skills-types').SkillInstallRequest,
+    ): Promise<import('./skills-types').SkillsInstallResponse>;
     installed(): Promise<readonly import('./skills-types').InstalledSkillRecord[]>;
     uninstall(skillId: string): Promise<{ success?: boolean; error?: string }>;
     detectLanguages(projectPath: string): Promise<readonly string[]>;
   };
   worktree: {
     diff(agentId: string): Promise<import('./worktree-types').WorktreeDiffSummary | null>;
-    diffFile(request: { agentId: string; filePath: string }): Promise<{ original: string; modified: string } | null>;
+    diffFile(request: {
+      agentId: string;
+      filePath: string;
+    }): Promise<{ original: string; modified: string } | null>;
     merge(agentId: string): Promise<import('./worktree-types').WorktreeMergeResult>;
     cleanup(agentId: string): Promise<void>;
     info(agentId: string): Promise<import('./worktree-types').WorktreeInfo | null>;
@@ -279,6 +343,10 @@ export interface HariariApi {
   runtime: {
     getStatus(): Promise<RuntimeRendererStatus>;
     onStatus(callback: (status: RuntimeRendererStatus) => void): () => void;
+  };
+  tasks: {
+    create(request: CreateTaskRequest): Promise<TaskView>;
+    list(): Promise<readonly TaskView[]>;
   };
   shell: {
     openExternal(url: string): Promise<void>;

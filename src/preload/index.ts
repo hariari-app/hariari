@@ -12,8 +12,10 @@ contextBridge.exposeInMainWorld('api', {
     resize: (request: unknown) => ipcRenderer.invoke(IPC_CHANNELS.PTY_RESIZE, request),
     kill: (request: unknown) => ipcRenderer.invoke(IPC_CHANNELS.PTY_KILL, request),
     onData: (callback: (event: { sessionId: string; data: string }) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: { sessionId: string; data: string }) =>
-        callback(data);
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { sessionId: string; data: string },
+      ) => callback(data);
       ipcRenderer.on(IPC_CHANNELS.PTY_DATA, handler);
       return () => {
         ipcRenderer.removeListener(IPC_CHANNELS.PTY_DATA, handler);
@@ -21,11 +23,14 @@ contextBridge.exposeInMainWorld('api', {
     },
   },
   agent: {
-    checkInstalled: (command: string) => ipcRenderer.invoke(IPC_CHANNELS.AGENT_CHECK_INSTALLED, command),
+    checkInstalled: (command: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.AGENT_CHECK_INSTALLED, command),
     install: (agentType: string) => ipcRenderer.invoke(IPC_CHANNELS.AGENT_INSTALL, agentType),
     onInstallOutput: (callback: (event: { agentType: string; data: string }) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: { agentType: string; data: string }) =>
-        callback(data);
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { agentType: string; data: string },
+      ) => callback(data);
       ipcRenderer.on(IPC_CHANNELS.AGENT_INSTALL_OUTPUT, handler);
       return () => {
         ipcRenderer.removeListener(IPC_CHANNELS.AGENT_INSTALL_OUTPUT, handler);
@@ -35,32 +40,42 @@ contextBridge.exposeInMainWorld('api', {
     kill: (agentId: string) => ipcRenderer.invoke(IPC_CHANNELS.AGENT_KILL, agentId),
     list: () => ipcRenderer.invoke(IPC_CHANNELS.AGENT_LIST),
     onStatus: (callback: (event: { agentId: string; status: AgentStatus }) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: { agentId: string; status: AgentStatus }) =>
-        callback(data);
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { agentId: string; status: AgentStatus },
+      ) => callback(data);
       ipcRenderer.on(IPC_CHANNELS.AGENT_STATUS, handler);
       return () => {
         ipcRenderer.removeListener(IPC_CHANNELS.AGENT_STATUS, handler);
       };
     },
     onExit: (callback: (event: { agentId: string; exitCode: number }) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: { agentId: string; exitCode: number }) =>
-        callback(data);
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { agentId: string; exitCode: number },
+      ) => callback(data);
       ipcRenderer.on(IPC_CHANNELS.AGENT_EXIT, handler);
       return () => {
         ipcRenderer.removeListener(IPC_CHANNELS.AGENT_EXIT, handler);
       };
     },
     onVersion: (callback: (event: { agentId: string; version: string }) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: { agentId: string; version: string }) =>
-        callback(data);
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { agentId: string; version: string },
+      ) => callback(data);
       ipcRenderer.on(IPC_CHANNELS.AGENT_VERSION, handler);
-      return () => { ipcRenderer.removeListener(IPC_CHANNELS.AGENT_VERSION, handler); };
+      return () => {
+        ipcRenderer.removeListener(IPC_CHANNELS.AGENT_VERSION, handler);
+      };
     },
     onAvailabilityChanged: (callback: (availability: Record<string, boolean>) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: Record<string, boolean>) =>
         callback(data);
       ipcRenderer.on(IPC_CHANNELS.AGENT_AVAILABILITY_CHANGED, handler);
-      return () => { ipcRenderer.removeListener(IPC_CHANNELS.AGENT_AVAILABILITY_CHANGED, handler); };
+      return () => {
+        ipcRenderer.removeListener(IPC_CHANNELS.AGENT_AVAILABILITY_CHANGED, handler);
+      };
     },
   },
   project: {
@@ -69,7 +84,8 @@ contextBridge.exposeInMainWorld('api', {
     remove: (projectId: string) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_REMOVE, projectId),
     update: (request: unknown) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_UPDATE, request),
     pickDirectory: () => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_PICK_DIR),
-    loadState: (projectId: string) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_STATE_LOAD, projectId),
+    loadState: (projectId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.PROJECT_STATE_LOAD, projectId),
     saveState: (state: unknown) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_STATE_SAVE, state),
   },
   window: {
@@ -100,8 +116,10 @@ contextBridge.exposeInMainWorld('api', {
     clearApiKey: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_API_KEY_CLEAR),
     transcribe: (request: { provider: string; audioBase64: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.VOICE_TRANSCRIBE, request),
-    formatLLM: (request: { provider: string; messages: Array<{ role: string; content: string }> }) =>
-      ipcRenderer.invoke(IPC_CHANNELS.VOICE_FORMAT_LLM, request),
+    formatLLM: (request: {
+      provider: string;
+      messages: Array<{ role: string; content: string }>;
+    }) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_FORMAT_LLM, request),
   },
   git: {
     status: (projectPath: string) => ipcRenderer.invoke(IPC_CHANNELS.GIT_STATUS, projectPath),
@@ -116,8 +134,10 @@ contextBridge.exposeInMainWorld('api', {
     unstage: (request: { projectPath: string; filePath: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_UNSTAGE, request),
     stageAll: (projectPath: string) => ipcRenderer.invoke(IPC_CHANNELS.GIT_STAGE_ALL, projectPath),
-    unstageAll: (projectPath: string) => ipcRenderer.invoke(IPC_CHANNELS.GIT_UNSTAGE_ALL, projectPath),
-    discardAll: (projectPath: string) => ipcRenderer.invoke(IPC_CHANNELS.GIT_DISCARD_ALL, projectPath),
+    unstageAll: (projectPath: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_UNSTAGE_ALL, projectPath),
+    discardAll: (projectPath: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_DISCARD_ALL, projectPath),
     commit: (request: { projectPath: string; message: string; amend?: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_COMMIT, request),
     log: (request: { projectPath: string; maxCount?: number }) =>
@@ -125,15 +145,18 @@ contextBridge.exposeInMainWorld('api', {
     pull: (projectPath: string) => ipcRenderer.invoke(IPC_CHANNELS.GIT_PULL, projectPath),
     push: (request: { projectPath: string; setUpstream?: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_PUSH, request),
-    aheadBehind: (projectPath: string) => ipcRenderer.invoke(IPC_CHANNELS.GIT_AHEAD_BEHIND, projectPath),
+    aheadBehind: (projectPath: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_AHEAD_BEHIND, projectPath),
   },
   file: {
     listDir: (dirPath: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_LIST_DIR, dirPath),
     listAll: (rootPath: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_LIST_ALL, rootPath),
     read: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_READ, filePath),
-    write: (filePath: string, content: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_WRITE, { path: filePath, content }),
+    write: (filePath: string, content: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.FILE_WRITE, { path: filePath, content }),
     mkdir: (dirPath: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_MKDIR, dirPath),
-    rename: (oldPath: string, newPath: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_RENAME, { oldPath, newPath }),
+    rename: (oldPath: string, newPath: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.FILE_RENAME, { oldPath, newPath }),
     delete: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_DELETE, filePath),
     search: (request: { projectPath: string; query: string; maxResults?: number }) =>
       ipcRenderer.invoke(IPC_CHANNELS.FILE_SEARCH, request),
@@ -141,8 +164,7 @@ contextBridge.exposeInMainWorld('api', {
   notify: {
     show: (request: { title: string; body: string; urgency?: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.NOTIFY, request),
-    setEnabled: (enabled: boolean) =>
-      ipcRenderer.invoke(IPC_CHANNELS.NOTIFY_SET_ENABLED, enabled),
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke(IPC_CHANNELS.NOTIFY_SET_ENABLED, enabled),
   },
   session: {
     list: (agentId?: string) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_LIST, agentId),
@@ -153,11 +175,14 @@ contextBridge.exposeInMainWorld('api', {
   },
   clipboard: {
     read: () => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_READ),
-    readImage: () => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_READ_IMAGE) as Promise<string | null>,
+    readImage: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_READ_IMAGE) as Promise<string | null>,
     write: (text: string) => ipcRenderer.invoke(IPC_CHANNELS.CLIPBOARD_WRITE, text),
     onTriggerPaste: (handler: () => void) => {
       ipcRenderer.on(IPC_CHANNELS.CLIPBOARD_TRIGGER_PASTE, handler);
-      return () => { ipcRenderer.removeListener(IPC_CHANNELS.CLIPBOARD_TRIGGER_PASTE, handler); };
+      return () => {
+        ipcRenderer.removeListener(IPC_CHANNELS.CLIPBOARD_TRIGGER_PASTE, handler);
+      };
     },
   },
   onboarding: {
@@ -168,7 +193,8 @@ contextBridge.exposeInMainWorld('api', {
     install: (request: unknown) => ipcRenderer.invoke(IPC_CHANNELS.SKILLS_INSTALL, request),
     installed: () => ipcRenderer.invoke(IPC_CHANNELS.SKILLS_INSTALLED),
     uninstall: (skillId: string) => ipcRenderer.invoke(IPC_CHANNELS.SKILLS_UNINSTALL, skillId),
-    detectLanguages: (projectPath: string) => ipcRenderer.invoke(IPC_CHANNELS.SKILLS_DETECT_LANGS, projectPath),
+    detectLanguages: (projectPath: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SKILLS_DETECT_LANGS, projectPath),
   },
   worktree: {
     diff: (agentId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_DIFF, agentId),
@@ -179,7 +205,8 @@ contextBridge.exposeInMainWorld('api', {
     info: (agentId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_INFO, agentId),
   },
   scrollback: {
-    save: (sessionId: string, data: string) => ipcRenderer.invoke(IPC_CHANNELS.SCROLLBACK_SAVE, { sessionId, data }),
+    save: (sessionId: string, data: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SCROLLBACK_SAVE, { sessionId, data }),
     load: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.SCROLLBACK_LOAD, sessionId),
     delete: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.SCROLLBACK_DELETE, sessionId),
   },
@@ -187,9 +214,25 @@ contextBridge.exposeInMainWorld('api', {
     check: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CHECK),
     download: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_DOWNLOAD),
     install: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_INSTALL),
-    onStatus: (callback: (status: { state: string; version?: string; progress?: number; error?: string; downloadUrl?: string }) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, status: { state: string; version?: string; progress?: number; error?: string; downloadUrl?: string }) =>
-        callback(status);
+    onStatus: (
+      callback: (status: {
+        state: string;
+        version?: string;
+        progress?: number;
+        error?: string;
+        downloadUrl?: string;
+      }) => void,
+    ) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        status: {
+          state: string;
+          version?: string;
+          progress?: number;
+          error?: string;
+          downloadUrl?: string;
+        },
+      ) => callback(status);
       ipcRenderer.on(IPC_CHANNELS.UPDATE_STATUS, handler);
       return () => {
         ipcRenderer.removeListener(IPC_CHANNELS.UPDATE_STATUS, handler);
@@ -199,15 +242,17 @@ contextBridge.exposeInMainWorld('api', {
   runtime: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_GET_STATUS),
     onStatus: (callback: (status: RuntimeRendererStatus) => void) => {
-      const handler = (
-        _event: Electron.IpcRendererEvent,
-        status: RuntimeRendererStatus,
-      ) => callback(status);
+      const handler = (_event: Electron.IpcRendererEvent, status: RuntimeRendererStatus) =>
+        callback(status);
       ipcRenderer.on(IPC_CHANNELS.RUNTIME_STATUS, handler);
       return () => {
         ipcRenderer.removeListener(IPC_CHANNELS.RUNTIME_STATUS, handler);
       };
     },
+  },
+  tasks: {
+    create: (request: unknown) => ipcRenderer.invoke(IPC_CHANNELS.TASKS_CREATE, request),
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.TASKS_LIST),
   },
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_EXTERNAL, url),

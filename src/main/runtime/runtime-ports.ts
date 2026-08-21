@@ -1,9 +1,11 @@
 import type {
+  CreateTaskRequest,
   RuntimeHealth,
   RuntimeOperationFailureCode,
   RuntimeProtocolRange,
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
+  TaskView,
 } from '../../shared/runtime/runtime-interface';
 
 export type RuntimePortErrorCode =
@@ -52,6 +54,8 @@ export interface RuntimeClientConnectOptions {
 export interface RuntimeClientSession {
   queryHealth(deadlineMs?: number): Promise<RuntimeHealth>;
   shutdown(request: RuntimeShutdownRequest, deadlineMs?: number): Promise<RuntimeShutdownResult>;
+  createTask(request: CreateTaskRequest, deadlineMs?: number): Promise<TaskView>;
+  listTasks(deadlineMs?: number): Promise<readonly TaskView[]>;
   disconnect(): Promise<void>;
   onDisconnect(listener: () => void): () => void;
 }

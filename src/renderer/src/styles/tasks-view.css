@@ -1,0 +1,43 @@
+.tasks-view {
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+}
+.tasks-view h2 {
+  font-size: var(--font-sm);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+}
+.tasks-list {
+  list-style: none;
+  margin: var(--space-2) 0;
+  display: grid;
+  gap: var(--space-1);
+}
+.tasks-item {
+  color: var(--fg-dim);
+  font-size: var(--font-xs);
+  overflow-wrap: anywhere;
+}
+.tasks-form {
+  display: grid;
+  gap: var(--space-1);
+}
+.tasks-form input,
+.tasks-form select,
+.tasks-form button {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font: inherit;
+  padding: var(--space-1);
+}
+.tasks-form button {
+  cursor: pointer;
+}
+.tasks-message {
+  color: var(--error);
+  font-size: var(--font-xs);
+  min-height: 1em;
+}
