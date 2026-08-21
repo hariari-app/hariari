@@ -39,6 +39,7 @@ export class TaskExecutionModule {
   private readonly active = new Map<string, GenericCliExecution>();
   private readonly subscribers = new Map<string, Set<(event: TaskOutputEvent) => void>>();
   private readonly outputSequences = new Map<string, number>();
+  private readonly outputPoisoned = new Set<string>();
   private readonly outputLog: TaskOutputLog;
 
   constructor(
@@ -259,19 +260,28 @@ export class TaskExecutionModule {
   }
 
   private publishOutput(taskId: string, attemptId: string, value: string): void {
+    if (this.outputPoisoned.has(taskId)) return;
     const data = sanitizeOutput(value);
     if (data.length === 0) return;
-    const sequence = (this.outputSequences.get(taskId) ?? 0) + 1;
-    this.outputSequences.set(taskId, sequence);
+    const sequence = (this.outputSequences.get(taskId) ?? this.outputLog.lastSequence(taskId)) + 1;
     const event = { kind: 'data' as const, taskId, attemptId, sequence, data };
-    this.outputLog.append(event);
-    this.publish(event);
+    if (!this.persistAndPublish(taskId, event)) return;
     if (data.length < value.length) {
       const droppedSequence = sequence + 1;
-      this.outputSequences.set(taskId, droppedSequence);
       const dropped = { kind: 'dropped' as const, taskId, attemptId, sequence: droppedSequence };
-      this.outputLog.append(dropped);
-      this.publish(dropped);
+      this.persistAndPublish(taskId, dropped);
+    }
+  }
+
+  private persistAndPublish(taskId: string, event: TaskOutputEvent): boolean {
+    try {
+      this.outputLog.append(event);
+      this.outputSequences.set(taskId, event.sequence);
+      this.publish(event);
+      return true;
+    } catch {
+      this.outputPoisoned.add(taskId);
+      return false;
     }
   }
 

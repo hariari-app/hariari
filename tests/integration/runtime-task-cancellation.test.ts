@@ -18,6 +18,7 @@ const CANCELLATION_TRANSITIONS = [
   { name: 'CancellationRequested', write: 1 },
   { name: 'AttemptCancelled', write: 2 },
 ] as const;
+const OUTPUT_APPEND_FAILURES = ['zero-write', 'partial-then-error'] as const;
 
 describe('Runtime Task cancellation', registerCancellationTests);
 
@@ -29,11 +30,46 @@ function registerCancellationTests(): void {
   });
   registerDurableCancellationTest();
   registerDurablePtyReattachTest();
+  registerOutputAppendDurabilityTests();
   registerTaskNotReadyTest();
   registerExitRaceTest();
   registerInFlightAllocationTest();
   registerFailedAllocationCancellationTest();
   registerCancellationAppendRepairTests();
+}
+
+function registerOutputAppendDurabilityTests(): void {
+  it.each(OUTPUT_APPEND_FAILURES)(
+    'poisons output after a $ failure and replays only committed scrollback after restart',
+    async (failure) => {
+      const subject = await createSubject(new FakeGenericCliExecutionAdapter());
+      const task = await createShellTask(subject.control, `output-${failure}-create`);
+      const started = await subject.control.startTask({
+        taskId: task.id,
+        idempotencyKey: `output-${failure}-start`,
+      });
+      const output: TaskOutputEvent[] = [];
+      const unsubscribe = await subject.control.subscribeTaskOutput(task.id, (event) => output.push(event));
+      subject.adapter.emit(task.id, 'committed\n');
+      await waitForOutput(output, 1);
+      injectOutputWriteFailure(failure);
+
+      expect(() => subject.adapter.emit(task.id, 'failed\n')).not.toThrow();
+      expect(() => subject.adapter.emit(task.id, 'must-not-follow\n')).not.toThrow();
+      await waitForRuntimeUpdate();
+      expect(output).toEqual([
+        { kind: 'data', taskId: task.id, attemptId: started.attempt?.id, sequence: 1, data: 'committed\n' },
+      ]);
+      unsubscribe();
+      await subject.restart();
+
+      const replayed: TaskOutputEvent[] = [];
+      const unsubscribeReplay = await subject.control.subscribeTaskOutput(task.id, (event) => replayed.push(event));
+      await waitForOutput(replayed, 1);
+      expect(replayed).toEqual(output);
+      unsubscribeReplay();
+    },
+  );
 }
 
 function registerDurablePtyReattachTest(): void {
@@ -370,6 +406,18 @@ async function expectExecution(
 
 function waitForRuntimeUpdate(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 5));
+}
+
+function injectOutputWriteFailure(failure: (typeof OUTPUT_APPEND_FAILURES)[number]): void {
+  const writeFileSync = fs.writeFileSync.bind(fs);
+  let writes = 0;
+  vi.spyOn(fs, 'writeFileSync').mockImplementation((file, data, options) => {
+    writes += 1;
+    if (writes !== 1) return writeFileSync(file, data, options);
+    if (failure === 'zero-write') return;
+    writeFileSync(file, String(data).slice(0, 1), options);
+    throw new Error('injected partial output write');
+  });
 }
 
 async function waitForOutput(output: readonly TaskOutputEvent[], count: number): Promise<void> {

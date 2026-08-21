@@ -28,4 +28,8 @@ export class TaskOutputLog {
       .map((name) => JSON.parse(fs.readFileSync(path.join(taskDirectory, name), 'utf8')) as TaskOutputEvent)
       .sort((left, right) => left.sequence - right.sequence);
   }
+
+  lastSequence(taskId: string): number {
+    return this.replay(taskId).at(-1)?.sequence ?? 0;
+  }
 }
