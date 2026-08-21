@@ -1,8 +1,9 @@
-import type {
-  CreateTaskRequest,
-  RuntimeHealth,
-  RuntimeProtocolRange,
-  RuntimeShutdownRequest,
+import {
+  TASK_PROVIDERS,
+  type CreateTaskRequest,
+  type RuntimeHealth,
+  type RuntimeProtocolRange,
+  type RuntimeShutdownRequest,
 } from '../shared/runtime/runtime-interface';
 import {
   RUNTIME_HANDSHAKE_VERSION,
@@ -26,21 +27,7 @@ const MAX_ID_LENGTH = 128;
 const MAX_VERSION_LENGTH = 128;
 const MAX_PROOF_LENGTH = 128;
 const MAX_TASK_FIELD_LENGTH = 512;
-const TASK_PROVIDERS = new Set([
-  'claude',
-  'gemini',
-  'codex',
-  'pi',
-  'opencode',
-  'cline',
-  'copilot',
-  'amp',
-  'continue',
-  'cursor',
-  'crush',
-  'qwen',
-  'shell',
-]);
+const TASK_PROVIDER_SET = new Set<string>(TASK_PROVIDERS);
 
 export class RuntimeProtocolValidationError extends Error {
   constructor() {
@@ -213,7 +200,7 @@ export function parseCreateTaskRequest(request: RuntimeRequestFrame): CreateTask
 export function parseTaskRequest(value: unknown): CreateTaskRequest {
   const request = object(value);
   const provider = boundedString(request.provider, MAX_TASK_FIELD_LENGTH);
-  if (!TASK_PROVIDERS.has(provider)) invalid();
+  if (!TASK_PROVIDER_SET.has(provider)) invalid();
   return {
     objective: requiredTaskField(request.objective),
     project: requiredTaskField(request.project),
@@ -226,7 +213,7 @@ export function parseTaskRequest(value: unknown): CreateTaskRequest {
 
 export function parseTaskView(value: Record<string, unknown>) {
   const provider = boundedString(value.provider, MAX_TASK_FIELD_LENGTH);
-  if (!TASK_PROVIDERS.has(provider)) invalid();
+  if (!TASK_PROVIDER_SET.has(provider)) invalid();
   return {
     id: identifier(value.id),
     objective: requiredTaskField(value.objective),

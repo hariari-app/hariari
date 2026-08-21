@@ -13,20 +13,23 @@ export interface RuntimeHealth {
   readonly checkedAt: string;
 }
 
-export type TaskProvider =
-  | 'claude'
-  | 'gemini'
-  | 'codex'
-  | 'pi'
-  | 'opencode'
-  | 'cline'
-  | 'copilot'
-  | 'amp'
-  | 'continue'
-  | 'cursor'
-  | 'crush'
-  | 'qwen'
-  | 'shell';
+export const TASK_PROVIDERS = [
+  'claude',
+  'gemini',
+  'codex',
+  'pi',
+  'opencode',
+  'cline',
+  'copilot',
+  'amp',
+  'continue',
+  'cursor',
+  'crush',
+  'qwen',
+  'shell',
+] as const;
+
+export type TaskProvider = (typeof TASK_PROVIDERS)[number];
 
 export interface CreateTaskRequest {
   readonly objective: string;

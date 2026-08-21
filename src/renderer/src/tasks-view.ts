@@ -1,29 +1,13 @@
-import type {
-  CreateTaskRequest,
-  TaskProvider,
-  TaskView,
+import {
+  TASK_PROVIDERS,
+  type CreateTaskRequest,
+  type TaskView,
 } from '../../shared/runtime/runtime-interface';
 
-interface TasksApi {
+export interface TasksApi {
   create(request: CreateTaskRequest): Promise<TaskView>;
   list(): Promise<readonly TaskView[]>;
 }
-
-const PROVIDERS: readonly TaskProvider[] = [
-  'claude',
-  'gemini',
-  'codex',
-  'pi',
-  'opencode',
-  'cline',
-  'copilot',
-  'amp',
-  'continue',
-  'cursor',
-  'crush',
-  'qwen',
-  'shell',
-];
 
 /** A thin renderer: Runtime remains the sole source of Task state. */
 export function mountTasksView(container: HTMLElement, tasks: TasksApi): () => void {
@@ -45,7 +29,7 @@ export function mountTasksView(container: HTMLElement, tasks: TasksApi): () => v
   const provider = document.createElement('select');
   provider.name = 'provider';
   provider.setAttribute('aria-label', 'Provider');
-  for (const value of PROVIDERS) {
+  for (const value of TASK_PROVIDERS) {
     const option = document.createElement('option');
     option.value = value;
     option.textContent = value;
@@ -78,7 +62,7 @@ export function mountTasksView(container: HTMLElement, tasks: TasksApi): () => v
       project: fields.project.value,
       repository: fields.repository.value,
       baseRef: fields.baseRef.value,
-      provider: provider.value as TaskProvider,
+      provider: provider.value as CreateTaskRequest['provider'],
       idempotencyKey: crypto.randomUUID(),
     };
     submit.disabled = true;

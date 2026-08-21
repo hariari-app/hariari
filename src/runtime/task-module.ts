@@ -150,9 +150,15 @@ export class TaskModule {
     const header = Buffer.alloc(EVENT_HEADER_BYTES);
     header.writeUInt32BE(payload.length, 0);
     createHash('sha256').update(payload).digest().copy(header, 4);
+    const frame = Buffer.concat([header, payload]);
     const handle = await fs.promises.open(this.eventPath, 'a', 0o600);
     try {
-      await handle.write(Buffer.concat([header, payload]));
+      let offset = 0;
+      while (offset < frame.length) {
+        const { bytesWritten } = await handle.write(frame.subarray(offset));
+        if (bytesWritten === 0) throw new TaskStorageError('internal');
+        offset += bytesWritten;
+      }
       await handle.sync();
     } finally {
       await handle.close();

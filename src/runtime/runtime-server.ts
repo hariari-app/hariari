@@ -240,14 +240,17 @@ export class RuntimeServer {
       return success(request, protocolVersion, { tasks: this.tasks.list() });
     }
     if (request.operation.name === TASK_CREATE_OPERATION) {
+      let taskRequest;
+      try {
+        taskRequest = parseCreateTaskRequest(request);
+      } catch {
+        return failure(request, protocolVersion, 'invalid-request', false);
+      }
       try {
         return success(
           request,
           protocolVersion,
-          (await this.tasks.create(parseCreateTaskRequest(request))) as unknown as Record<
-            string,
-            unknown
-          >,
+          (await this.tasks.create(taskRequest)) as unknown as Record<string, unknown>,
         );
       } catch (error) {
         if (error instanceof TaskStorageError) {

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,7 +26,10 @@ const directories: string[] = [];
 const servers: RuntimeServer[] = [];
 
 describe('real local Runtime Interface vertical', () => {
-  afterEach(cleanRuntimeFixtures);
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await cleanRuntimeFixtures();
+  });
   it(
     'starts, reconnects, queries health, disconnects, and shuts down through the public seam',
     verifiesRealRuntimeLifecycle,
@@ -40,20 +43,79 @@ describe('real local Runtime Interface vertical', () => {
     'creates, lists, idempotently replays, and rebuilds durable Tasks through RuntimeInterface',
     verifiesDurableTasks,
   );
+  it('replays a Task after a forced short event write', replaysTaskAfterShortWrite);
+  it('reports malformed Task creates as non-retryable invalid requests', rejectsMalformedTasks);
 });
+
+async function replaysTaskAfterShortWrite(): Promise<void> {
+  const fixture = await createRealRuntimeFixture();
+  const runtime = fixture.createInterface();
+  await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  const eventPath = path.join(fixture.runtimeDirectory, 'tasks', 'events.log');
+  const open = fs.promises.open.bind(fs.promises);
+  vi.spyOn(fs.promises, 'open').mockImplementation(async (file, flags, mode) => {
+    const handle = await open(file, flags, mode);
+    if (file !== eventPath || flags !== 'a') return handle;
+    return new Proxy(handle, {
+      get(target, property, receiver) {
+        if (property !== 'write') return Reflect.get(target, property, receiver);
+        return async (data: Buffer) =>
+          target.write(data.subarray(0, data.length === 1 ? 1 : data.length - 1));
+      },
+    });
+  });
+  const created = await runtime.createTask(taskRequest('short-write'));
+  await runtime.disconnect();
+
+  await servers[0]?.stop();
+  const restarted = fixture.createInterface();
+  await expect(restarted.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  await expect(restarted.listTasks()).resolves.toEqual([created]);
+  await restarted.disconnect();
+}
+
+async function rejectsMalformedTasks(): Promise<void> {
+  const fixture = await createRealRuntimeFixture();
+  const runtime = fixture.createInterface();
+  await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  await runtime.disconnect();
+  const client = new NodeRuntimeClient({
+    transport: fixture.transport,
+    randomId: () => crypto.randomUUID(),
+    randomNonce: () => crypto.randomUUID(),
+  });
+  const connected = await client.connect(fixture.endpoint, new Uint8Array(32).fill(91), {
+    clientIdentity: { name: 'hariari-desktop', version: '0.6.8' },
+    supportedProtocolRange: { min: 1, max: 2 },
+    deadlineMs: 500,
+  });
+  if (connected.kind !== 'connected') throw new Error('expected connected Runtime');
+
+  await expect(
+    connected.session.createTask({ ...taskRequest('missing-objective'), objective: ' ' }),
+  ).rejects.toEqual(new RuntimePortError('invalid-request', false));
+  await expect(
+    connected.session.createTask({ ...taskRequest('bad-provider'), provider: 'invalid' } as never),
+  ).rejects.toEqual(new RuntimePortError('invalid-request', false));
+  await connected.session.disconnect();
+}
+
+function taskRequest(idempotencyKey: string) {
+  return {
+    objective: 'Make durable task creation observable.',
+    project: 'Hariari',
+    repository: 'hariari-app/hariari',
+    baseRef: 'main',
+    provider: 'codex' as const,
+    idempotencyKey,
+  };
+}
 
 async function verifiesDurableTasks(): Promise<void> {
   const fixture = await createRealRuntimeFixture();
   const runtime = fixture.createInterface();
   await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
-  const request = {
-    objective: 'Make durable task creation observable.',
-    project: 'Hariari',
-    repository: 'hariari-app/hariari',
-    baseRef: 'main',
-    provider: 'codex',
-    idempotencyKey: 'task-create-one',
-  } as const;
+  const request = taskRequest('task-create-one');
 
   const created = await runtime.createTask(request);
   await expect(
