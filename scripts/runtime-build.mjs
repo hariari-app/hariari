@@ -5,6 +5,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import {
+  nodePtyAssetMode,
+  nodePtyNativeAssetPlan,
+  nodePtyPrebuildAssetSelector,
+  selectNodePtyNativeAssets,
+} from './runtime-node-pty-assets.mjs';
 
 const require = createRequire(import.meta.url);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -104,43 +110,59 @@ function copyNodePtyAssets(destinationRoot) {
     name.endsWith('.js') && !name.includes('.test.'),
   );
   const prebuildRoot = path.join('prebuilds', platformKey);
-  if (fs.existsSync(path.join(nodePtyRoot, prebuildRoot))) {
-    copyNodePtyDirectory(nodePtyRoot, destinationRoot, prebuildRoot, assets, (name) =>
-      /\.(node|dll|exe)$/.test(name),
+  const hasPrebuild = fs.existsSync(path.join(nodePtyRoot, prebuildRoot));
+  const plan = nodePtyNativeAssetPlan({
+    platform: process.platform,
+    arch: process.arch,
+    hasPrebuild,
+  });
+  if (hasPrebuild) {
+    const rootEntries = fs.readdirSync(path.join(nodePtyRoot, prebuildRoot), { withFileTypes: true });
+    const rootNames = rootEntries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+    const include = nodePtyPrebuildAssetSelector(plan, rootNames);
+    copyNodePtyDirectory(
+      nodePtyRoot,
+      destinationRoot,
+      prebuildRoot,
+      assets,
+      include,
+      plan,
     );
   } else {
-    copyNodePtyFile(nodePtyRoot, destinationRoot, path.join('build', 'Release', 'pty.node'), assets);
-    const helper = path.join('build', 'Release', 'spawn-helper');
-    if (fs.existsSync(path.join(nodePtyRoot, helper))) {
-      copyNodePtyFile(nodePtyRoot, destinationRoot, helper, assets);
+    const releaseRoot = path.join(nodePtyRoot, plan.directory);
+    const names = fs.readdirSync(releaseRoot);
+    for (const name of selectNodePtyNativeAssets(plan, names)) {
+      copyNodePtyFile(nodePtyRoot, destinationRoot, path.join(plan.directory, name), assets, plan);
     }
   }
   if (assets.length < 3) throw new Error('node-pty assets are unavailable for this Runtime platform');
   return assets;
 }
 
-function copyNodePtyDirectory(nodePtyRoot, destinationRoot, relativeDirectory, assets, include) {
+function copyNodePtyDirectory(nodePtyRoot, destinationRoot, relativeDirectory, assets, include, plan) {
   const sourceDirectory = path.join(nodePtyRoot, relativeDirectory);
-  for (const entry of fs.readdirSync(sourceDirectory, { withFileTypes: true })) {
+  const entries = fs.readdirSync(sourceDirectory, { withFileTypes: true });
+  for (const entry of entries) {
     const relativePath = path.join(relativeDirectory, entry.name);
     if (entry.isDirectory()) {
-      copyNodePtyDirectory(nodePtyRoot, destinationRoot, relativePath, assets, include);
+      copyNodePtyDirectory(nodePtyRoot, destinationRoot, relativePath, assets, include, plan);
     } else if (entry.isFile() && include(entry.name)) {
-      copyNodePtyFile(nodePtyRoot, destinationRoot, relativePath, assets);
+      copyNodePtyFile(nodePtyRoot, destinationRoot, relativePath, assets, plan);
     } else if (entry.isSymbolicLink()) {
       throw new Error('node-pty asset cannot be a symbolic link');
     }
   }
 }
 
-function copyNodePtyFile(nodePtyRoot, destinationRoot, relativePath, assets) {
+function copyNodePtyFile(nodePtyRoot, destinationRoot, relativePath, assets, plan) {
   const sourcePath = path.join(nodePtyRoot, relativePath);
   const destinationPath = path.join(destinationRoot, 'node_modules', 'node-pty', relativePath);
   const stats = fs.lstatSync(sourcePath);
   if (!stats.isFile() || stats.isSymbolicLink()) throw new Error('node-pty asset is not a regular file');
   fs.mkdirSync(path.dirname(destinationPath), { recursive: true, mode: 0o700 });
   fs.copyFileSync(sourcePath, destinationPath);
-  fs.chmodSync(destinationPath, stats.mode & 0o777);
+  const sourceMode = stats.mode & 0o777;
+  fs.chmodSync(destinationPath, plan ? nodePtyAssetMode(plan, path.basename(relativePath), sourceMode) : sourceMode);
   const bytes = fs.readFileSync(destinationPath);
   assets.push({
     path: path.posix.join('node_modules', 'node-pty', ...relativePath.split(path.sep)),

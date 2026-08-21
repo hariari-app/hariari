@@ -213,6 +213,18 @@ export function parseCancelTaskRequest(request: RuntimeRequestFrame): CancelTask
   return { taskId: identifier(request.payload.taskId), idempotencyKey: request.idempotencyKey };
 }
 
+export function parseTaskLifecycleRequest(value: unknown): StartTaskRequest {
+  const request = object(value);
+  return {
+    taskId: identifier(request.taskId),
+    idempotencyKey: requiredTaskIdentifier(request.idempotencyKey),
+  };
+}
+
+export function parseTaskExecutionTaskId(value: unknown): string {
+  return identifier(value);
+}
+
 export function parseTaskExecutionId(request: RuntimeRequestFrame, operationName: string): string {
   if (request.operation.name !== operationName || request.idempotencyKey !== null) invalid();
   return identifier(request.payload.taskId);

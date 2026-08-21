@@ -8,9 +8,11 @@ import { PackagedRuntimeArtifactPort } from '../../src/main/runtime/packaged-run
 import { RuntimePortError } from '../../src/main/runtime/runtime-ports';
 
 const require = createRequire(import.meta.url);
-const { refreshRuntimeManifest } = require('../../scripts/runtime-after-pack.js') as {
-  readonly refreshRuntimeManifest: (manifestPath: string) => void;
-};
+const { refreshRuntimeManifest, isMacNativeCode } =
+  require('../../scripts/runtime-after-pack.js') as {
+    readonly refreshRuntimeManifest: (manifestPath: string) => void;
+    readonly isMacNativeCode: (assetPath: string) => boolean;
+  };
 
 const PLATFORM = 'linux' as const;
 const ARCH = 'x64';
@@ -33,6 +35,8 @@ function registerPackagedArtifactTests(): void {
   registerWindowsMaterializationSyncTest();
   registerWindowsBuildMaterializationTest();
   registerWindowsSignedArtifactMaterializationTest();
+  registerDarwinNodePtyCompanionTests();
+  registerDarwinNodePtySigningTest();
 }
 
 function registerArtifactFailureCauseTest(): void {
@@ -312,6 +316,82 @@ function registerWindowsSignedArtifactMaterializationTest(): void {
   });
 }
 
+function registerDarwinNodePtyCompanionTests(): void {
+  registerDarwinMissingHelperTest();
+  registerDarwinMissingClosureTest();
+  registerDarwinHelperMaterializationTest();
+}
+
+function registerDarwinMissingHelperTest(): void {
+  it('fails packaged Darwin preflight when node-pty omits its spawn-helper companion', async () => {
+    const fixture = createFixture('darwin-pty-helper-missing', {
+      platform: 'darwin',
+      arch: 'arm64',
+    });
+    addNativeAsset(fixture, 'node_modules/node-pty/prebuilds/darwin-arm64/pty.node', 'pty');
+
+    const failure = await createPort(fixture)
+      .resolve()
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      code: 'artifact-unavailable',
+    });
+    expect((failure as Error).cause).toMatchObject({
+      message: 'Runtime node-pty asset closure is missing: spawn-helper',
+    });
+  });
+}
+
+function registerDarwinMissingClosureTest(): void {
+  it('fails packaged Darwin preflight when the complete node-pty closure is absent', async () => {
+    const fixture = createFixture('darwin-pty-closure-missing', {
+      platform: 'darwin',
+      arch: 'arm64',
+    });
+
+    const failure = await createPort(fixture)
+      .resolve()
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'artifact-unavailable' });
+    expect((failure as Error).cause).toMatchObject({
+      message: 'Runtime node-pty asset closure is missing: pty.node',
+    });
+  });
+}
+
+function registerDarwinHelperMaterializationTest(): void {
+  it('materializes the verified executable Darwin helper with its node-pty module', async () => {
+    const fixture = createFixture('darwin-pty-helper-present', {
+      platform: 'darwin',
+      arch: 'arm64',
+    });
+    addNativeAsset(fixture, 'node_modules/node-pty/prebuilds/darwin-arm64/pty.node', 'pty');
+    addNativeAsset(fixture, 'node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper', 'helper');
+
+    const artifact = await createPort(fixture).resolve();
+    const materializedRoot = path.dirname(artifact.executablePath);
+    const helper = path.join(
+      materializedRoot,
+      'node_modules',
+      'node-pty',
+      'prebuilds',
+      'darwin-arm64',
+      'spawn-helper',
+    );
+
+    expect(fs.readFileSync(helper, 'utf8')).toBe('helper');
+    expect(fs.statSync(helper).mode & 0o111).not.toBe(0);
+  });
+}
+
+function registerDarwinNodePtySigningTest(): void {
+  it('marks the Darwin node-pty spawn helper as code that must be signed', () => {
+    expect(isMacNativeCode('node_modules/node-pty/prebuilds/darwin-arm64/pty.node')).toBe(true);
+    expect(isMacNativeCode('node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper')).toBe(true);
+    expect(isMacNativeCode('node_modules/node-pty/lib/unixTerminal.js')).toBe(false);
+  });
+}
+
 interface FixtureOptions {
   readonly platform?: NodeJS.Platform;
   readonly arch?: string;
@@ -407,6 +487,21 @@ function readManifest(fixture: Fixture): Record<string, unknown> {
 
 function writeManifest(fixture: Fixture, manifest: Record<string, unknown>): void {
   fs.writeFileSync(fixture.manifestPath, `${JSON.stringify(manifest)}\n`);
+}
+
+function addNativeAsset(fixture: Fixture, relativePath: string, contents: string): void {
+  const assetPath = path.join(path.dirname(fixture.manifestPath), relativePath);
+  fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+  fs.writeFileSync(assetPath, contents, { mode: 0o755 });
+  const manifest = readManifest(fixture);
+  const assets = (manifest.nativeAssets as Array<Record<string, unknown>> | undefined) ?? [];
+  assets.push({
+    path: relativePath,
+    sha256: createHash('sha256').update(contents).digest('hex'),
+    size: Buffer.byteLength(contents),
+  });
+  manifest.nativeAssets = assets;
+  writeManifest(fixture, manifest);
 }
 
 function cleanRoots(): void {

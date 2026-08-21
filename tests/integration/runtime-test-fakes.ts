@@ -35,11 +35,34 @@ const DEFAULT_TOKEN = new Uint8Array(32).fill(7);
 /** Deterministic execution Adapter for public-seam Runtime lifecycle tests. */
 export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapter {
   private readonly executions = new Map<string, FakeGenericCliExecution>();
+  private readonly starts = new Map<string, DeferredSignal>();
+  private readonly stops = new Map<string, DeferredSignal>();
+
+  constructor(
+    private readonly options: {
+      readonly autoExitOnStop?: boolean;
+      readonly beforeStart?: Promise<void>;
+    } = {},
+  ) {}
 
   async start(request: GenericCliStartRequest): Promise<GenericCliExecution> {
-    const execution = new FakeGenericCliExecution(request);
+    this.signalFor(this.starts, request.task.id).resolve();
+    await this.options.beforeStart;
+    const execution = new FakeGenericCliExecution(
+      request,
+      this.options.autoExitOnStop ?? true,
+      () => this.signalFor(this.stops, request.task.id).resolve(),
+    );
     this.executions.set(request.task.id, execution);
     return execution;
+  }
+
+  waitForStart(taskId: string): Promise<void> {
+    return this.signalFor(this.starts, taskId).promise;
+  }
+
+  waitForStop(taskId: string): Promise<void> {
+    return this.signalFor(this.stops, taskId).promise;
   }
 
   emit(taskId: string, data: string): void {
@@ -55,14 +78,44 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
     if (!execution) throw new Error(`No fake execution for ${taskId}`);
     return execution;
   }
+
+  private signalFor(signals: Map<string, DeferredSignal>, taskId: string): DeferredSignal {
+    const existing = signals.get(taskId);
+    if (existing) return existing;
+    const signal = new DeferredSignal();
+    signals.set(taskId, signal);
+    return signal;
+  }
+}
+
+class DeferredSignal {
+  private resolvePromise: () => void = () => undefined;
+  readonly promise = new Promise<void>((resolve) => {
+    this.resolvePromise = resolve;
+  });
+
+  resolve(): void {
+    this.resolvePromise();
+  }
 }
 
 class FakeGenericCliExecution implements GenericCliExecution {
   readonly context: GenericCliExecution['context'];
   private active = false;
+  private exitActive = false;
+  private exitDelivered = false;
   private exitCode: number | null = null;
+  private stopRequested = false;
+  private resolveExit: () => void = () => undefined;
+  private readonly exited = new Promise<void>((resolve) => {
+    this.resolveExit = resolve;
+  });
 
-  constructor(private readonly request: GenericCliStartRequest) {
+  constructor(
+    private readonly request: GenericCliStartRequest,
+    private readonly autoExitOnStop: boolean,
+    private readonly onStop: () => void,
+  ) {
     this.context = {
       id: request.identities.contextId,
       worktreeId: request.identities.worktreeId,
@@ -75,10 +128,22 @@ class FakeGenericCliExecution implements GenericCliExecution {
 
   activateOutput(): void {
     this.active = true;
+    this.exitActive = true;
+    this.deliverExit();
+  }
+
+  activateExit(): void {
+    this.exitActive = true;
+    this.deliverExit();
   }
 
   async stop(): Promise<void> {
-    // Tests drive exit explicitly so transition ordering remains deterministic.
+    if (!this.stopRequested && this.exitCode === null) {
+      this.stopRequested = true;
+      this.onStop();
+      if (this.autoExitOnStop) queueMicrotask(() => this.exit(143));
+    }
+    await this.exited;
   }
 
   dispose(): void {}
@@ -91,7 +156,15 @@ class FakeGenericCliExecution implements GenericCliExecution {
   exit(exitCode: number): void {
     if (this.exitCode !== null) return;
     this.exitCode = exitCode;
-    this.request.onExit(exitCode);
+    this.resolveExit();
+    this.deliverExit();
+  }
+
+  private deliverExit(): void {
+    if (this.exitCode !== null && this.exitActive && !this.exitDelivered) {
+      this.exitDelivered = true;
+      this.request.onExit(this.exitCode);
+    }
   }
 }
 

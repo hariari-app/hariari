@@ -41,6 +41,7 @@ export interface GenericCliExecution {
     readonly ptyId: string;
   };
   activateOutput(): void;
+  activateExit(): void;
   stop(): Promise<void>;
   dispose(): void;
 }
@@ -133,39 +134,83 @@ function bufferedPtyExecution(
   branchName: string,
   baseCommit: string,
 ): GenericCliExecution {
-  let active = false;
-  let disposed = false;
-  const output: string[] = [];
-  let exitCode: number | null = null;
-  const flush = (): void => {
-    if (!active) return;
-    for (const data of output.splice(0)) request.onOutput(data);
-    if (exitCode !== null) request.onExit(exitCode);
-  };
-  const dataSubscription = pty.onData((data) => {
-    output.push(data);
-    flush();
-  });
-  const exitSubscription = pty.onExit((event) => {
-    exitCode = event.exitCode;
-    flush();
-  });
+  const lifecycle = new BufferedPtyLifecycle(pty, request);
   return {
     context: executionContext(request, branchName, baseCommit),
-    activateOutput: () => {
-      active = true;
-      flush();
-    },
-    stop: async () => {
-      if (exitCode === null) pty.kill();
-    },
-    dispose: () => {
-      if (disposed) return;
-      disposed = true;
-      dataSubscription.dispose();
-      exitSubscription.dispose();
-    },
+    activateOutput: () => lifecycle.activateOutput(),
+    activateExit: () => lifecycle.activateExit(),
+    stop: () => lifecycle.stop(),
+    dispose: () => lifecycle.dispose(),
   };
+}
+
+class BufferedPtyLifecycle {
+  private outputActive = false;
+  private exitActive = false;
+  private disposed = false;
+  private stopRequested = false;
+  private exitDelivered = false;
+  private readonly output: string[] = [];
+  private exitCode: number | null = null;
+  private resolveExit: () => void = () => undefined;
+  private readonly exited = new Promise<void>((resolve) => {
+    this.resolveExit = resolve;
+  });
+
+  private readonly dataSubscription: PtyDisposable;
+  private readonly exitSubscription: PtyDisposable;
+
+  constructor(
+    private readonly pty: PtyProcess,
+    private readonly request: GenericCliStartRequest,
+  ) {
+    this.dataSubscription = pty.onData((data) => {
+      this.output.push(data);
+      this.flush();
+    });
+    this.exitSubscription = pty.onExit((event) => this.recordExit(event.exitCode));
+  }
+
+  activateOutput(): void {
+    this.outputActive = true;
+    this.activateExit();
+  }
+
+  activateExit(): void {
+    this.exitActive = true;
+    this.flush();
+  }
+
+  async stop(): Promise<void> {
+    if (!this.stopRequested && this.exitCode === null) {
+      this.stopRequested = true;
+      this.pty.kill();
+    }
+    await this.exited;
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.dataSubscription.dispose();
+    this.exitSubscription.dispose();
+  }
+
+  private recordExit(exitCode: number): void {
+    this.exitCode = exitCode;
+    this.resolveExit();
+    this.flush();
+  }
+
+  private flush(): void {
+    if (this.outputActive) {
+      for (const data of this.output.splice(0)) this.request.onOutput(data);
+    }
+    if (this.exitActive && this.exitCode !== null && !this.exitDelivered) {
+      this.exitDelivered = true;
+      this.request.onExit(this.exitCode);
+    }
+  }
 }
 
 function executionContext(

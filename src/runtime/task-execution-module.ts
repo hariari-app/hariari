@@ -23,6 +23,8 @@ export class TaskExecutionError extends Error {
 /** Runtime-owned execution module: adapter lifecycle, transient output, and durable transitions. */
 export class TaskExecutionModule {
   private readonly starts = new Map<string, Promise<TaskExecutionView>>();
+  private readonly settlements = new Map<string, Promise<void>>();
+  private readonly exitWaits = new Map<string, ExitWait>();
   private readonly active = new Map<string, GenericCliExecution>();
   private readonly subscribers = new Map<string, Set<(event: TaskOutputEvent) => void>>();
   private readonly outputSequences = new Map<string, number>();
@@ -53,13 +55,21 @@ export class TaskExecutionModule {
     if (view.attempt?.state !== 'cancelling') return view;
     const active = this.active.get(request.taskId);
     if (!active) return view;
+    return this.stopCancelled(request.taskId, active);
+  }
+
+  private async stopCancelled(
+    taskId: string,
+    active: GenericCliExecution,
+  ): Promise<TaskExecutionView> {
+    const exitWait = this.exitWaits.get(taskId);
     try {
       await active.stop();
+      await exitWait?.promise;
+      return this.tasks.execution(taskId);
     } catch {
-      await this.tasks.fail(request.taskId).catch(() => undefined);
       throw new TaskExecutionError('internal');
     }
-    return this.tasks.execution(request.taskId);
   }
 
   get(taskId: string): TaskExecutionView {
@@ -98,37 +108,70 @@ export class TaskExecutionModule {
         onExit: (exitCode) => void this.settle(request.taskId, exitCode),
       });
       this.active.set(request.taskId, active);
+      this.exitWaits.set(request.taskId, new ExitWait());
       await this.tasks.allocateContext(request.taskId, active.context);
-      await this.tasks.markStarted(request.taskId);
+      const started = await this.tasks.markStarted(request.taskId);
+      active.activateExit();
+      if (started.attempt?.state === 'cancelling') {
+        void this.stopCancelled(request.taskId, active).catch(() => undefined);
+        return started;
+      }
       active.activateOutput();
-      return this.tasks.execution(request.taskId);
+      return started;
     } catch (error) {
       if (active) {
         await active.stop().catch(() => undefined);
         active.dispose();
         this.active.delete(request.taskId);
       }
-      await this.tasks.fail(request.taskId).catch(() => undefined);
+      const view = this.tasks.execution(request.taskId);
+      if (view.attempt?.state === 'cancelling') await this.tasks.cancel(request.taskId).catch(() => undefined);
+      else await this.tasks.fail(request.taskId).catch(() => undefined);
+      this.resolveExitWait(request.taskId);
       if (error instanceof GenericCliExecutionError) throw new TaskExecutionError(error.code);
       if (error instanceof TaskStorageError) throw new TaskExecutionError('internal');
       throw new TaskExecutionError('internal');
     }
   }
 
-  private async settle(taskId: string, exitCode: number): Promise<void> {
+  private settle(taskId: string, exitCode: number): void {
+    if (this.settlements.has(taskId)) return;
+    const settlement = this.persistExitWithRetry(taskId, exitCode)
+      .then(() => this.release(taskId))
+      .catch((error: unknown) => {
+        this.rejectExitWait(taskId, error);
+        this.release(taskId);
+        throw error;
+      });
+    this.settlements.set(taskId, settlement);
+    void settlement.catch(() => undefined);
+  }
+
+  private async persistExitWithRetry(taskId: string, exitCode: number): Promise<void> {
     try {
       await this.persistExit(taskId, exitCode);
     } catch {
-      try {
-        await this.persistExit(taskId, exitCode);
-      } catch {
-        // The durable writer is either repaired by the retry or remains poisoned privately.
-      }
-    } finally {
-      const active = this.active.get(taskId);
-      active?.dispose();
-      this.active.delete(taskId);
+      await this.persistExit(taskId, exitCode);
     }
+  }
+
+  private release(taskId: string): void {
+    this.active.get(taskId)?.dispose();
+    this.active.delete(taskId);
+    this.settlements.delete(taskId);
+    this.resolveExitWait(taskId);
+  }
+
+  private resolveExitWait(taskId: string): void {
+    const exitWait = this.exitWaits.get(taskId);
+    this.exitWaits.delete(taskId);
+    exitWait?.resolve();
+  }
+
+  private rejectExitWait(taskId: string, error: unknown): void {
+    const exitWait = this.exitWaits.get(taskId);
+    this.exitWaits.delete(taskId);
+    exitWait?.reject(error);
   }
 
   private async persistExit(taskId: string, exitCode: number): Promise<void> {
@@ -175,4 +218,26 @@ function sanitizeOutput(value: string): string {
 
 function isTerminal(state: string): boolean {
   return state === 'completed' || state === 'failed' || state === 'cancelled';
+}
+
+class ExitWait {
+  private resolvePromise: () => void = () => undefined;
+  private rejectPromise: (error: unknown) => void = () => undefined;
+  readonly promise: Promise<void>;
+
+  constructor() {
+    this.promise = new Promise<void>((resolve, reject) => {
+      this.resolvePromise = resolve;
+      this.rejectPromise = reject;
+    });
+    void this.promise.catch(() => undefined);
+  }
+
+  resolve(): void {
+    this.resolvePromise();
+  }
+
+  reject(error: unknown): void {
+    this.rejectPromise(error);
+  }
 }

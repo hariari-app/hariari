@@ -2,9 +2,12 @@ import type { AgentConfig, AgentInfo, AgentStatus, AgentType } from './agent-typ
 import type { LayoutNode } from './layout-types';
 import type { SessionRecording } from './session-types';
 import type {
+  CancelTaskRequest,
   CreateTaskRequest,
   RuntimeProtocolRange,
   RuntimeUnavailableReason,
+  StartTaskRequest,
+  TaskExecutionView,
   TaskView,
 } from './runtime/runtime-interface';
 
@@ -285,6 +288,9 @@ export interface HariariApi {
   tasks: {
     create(request: CreateTaskRequest): Promise<TaskView>;
     list(): Promise<readonly TaskView[]>;
+    start(request: StartTaskRequest): Promise<TaskExecutionView>;
+    cancel(request: CancelTaskRequest): Promise<TaskExecutionView>;
+    execution(taskId: string): Promise<TaskExecutionView>;
   };
   shell: {
     openExternal(url: string): Promise<void>;

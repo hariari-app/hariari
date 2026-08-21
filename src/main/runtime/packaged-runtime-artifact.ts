@@ -118,6 +118,7 @@ export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
     const canonicalExecutablePath = await fs.promises.realpath(executablePath);
     assertConfined(canonicalPlatformRoot, canonicalExecutablePath);
     await verifyFile(canonicalExecutablePath, manifest);
+    assertDarwinNodePtyClosure(manifest.nativeAssets, this.platform, this.arch);
     const nativeAssets = await resolveNativeAssets(canonicalPlatformRoot, manifest.nativeAssets);
     return { manifest, executablePath: canonicalExecutablePath, nativeAssets };
   }
@@ -177,6 +178,21 @@ export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
       }
     } finally {
       await fs.promises.unlink(temporaryPath).catch(() => undefined);
+    }
+  }
+}
+
+function assertDarwinNodePtyClosure(
+  nativeAssets: readonly NativeAssetManifest[],
+  platform: NodeJS.Platform,
+  arch: string,
+): void {
+  if (platform !== 'darwin') return;
+  const paths = new Set(nativeAssets.map((asset) => asset.path));
+  const root = `node_modules/node-pty/prebuilds/darwin-${arch}`;
+  for (const name of ['pty.node', 'spawn-helper']) {
+    if (!paths.has(`${root}/${name}`)) {
+      throw new Error(`Runtime node-pty asset closure is missing: ${name}`);
     }
   }
 }

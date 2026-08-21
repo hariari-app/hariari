@@ -251,23 +251,34 @@ export class TaskModule {
   }
 
   markStarted(taskId: string): Promise<TaskExecutionView> {
-    return this.transition(taskId, { type: 'AttemptStarted', version: 1, taskId });
+    return this.enqueue(async () => {
+      this.throwIfPoisoned();
+      const task = this.taskById(taskId);
+      const execution = this.executionFor(task.id);
+      if (execution.attempt?.state === 'cancelling' || isTerminal(execution.attempt?.state)) {
+        return this.viewFor(task, execution);
+      }
+      await this.appendVisible({ type: 'AttemptStarted', version: 1, taskId });
+      return this.viewFor(task, this.executionFor(task.id));
+    });
   }
 
   complete(taskId: string, exitCode: number): Promise<TaskExecutionView> {
-    return this.transition(taskId, { type: 'AttemptCompleted', version: 1, taskId, exitCode });
+    return this.finish(taskId, 'completed', exitCode);
   }
 
   fail(taskId: string): Promise<TaskExecutionView> {
-    return this.transition(taskId, { type: 'AttemptFailed', version: 1, taskId });
+    return this.finish(taskId, 'failed');
   }
 
   requestCancellation(request: CancelTaskRequest): Promise<TaskExecutionView> {
     return this.enqueue(async () => {
       this.throwIfPoisoned();
       const task = this.taskById(request.taskId);
-      const execution = this.executionFor(task.id);
+      const execution = this.executions.get(task.id);
+      if (!execution?.attempt) throw new TaskStorageError('task-not-ready');
       const fingerprint = canonicalExecutionFingerprint(request.taskId);
+      if (isTerminal(execution.attempt.state)) return this.viewFor(task, execution);
       if (execution.cancellation) {
         if (execution.cancellation.idempotencyKey !== request.idempotencyKey) {
           throw new TaskStorageError('task-not-ready');
@@ -277,7 +288,6 @@ export class TaskModule {
         }
         return this.viewFor(task, execution);
       }
-      if (isTerminal(execution.attempt?.state)) return this.viewFor(task, execution);
       await this.appendVisible({
         type: 'CancellationRequested',
         version: 1,
@@ -290,7 +300,7 @@ export class TaskModule {
   }
 
   cancel(taskId: string): Promise<TaskExecutionView> {
-    return this.transition(taskId, { type: 'AttemptCancelled', version: 1, taskId });
+    return this.finish(taskId, 'cancelled');
   }
 
   execution(taskId: string): TaskExecutionView {
@@ -308,6 +318,27 @@ export class TaskModule {
     return this.enqueue(async () => {
       this.throwIfPoisoned();
       const task = this.taskById(taskId);
+      await this.appendVisible(event);
+      return this.viewFor(task, this.executionFor(task.id));
+    });
+  }
+
+  private finish(
+    taskId: string,
+    requested: Extract<TaskExecutionState, 'completed' | 'failed' | 'cancelled'>,
+    exitCode?: number,
+  ): Promise<TaskExecutionView> {
+    return this.enqueue(async () => {
+      this.throwIfPoisoned();
+      const task = this.taskById(taskId);
+      const execution = this.executionFor(task.id);
+      if (isTerminal(execution.attempt?.state)) return this.viewFor(task, execution);
+      const cancelled = requested === 'cancelled' || execution.attempt?.state === 'cancelling';
+      const event = cancelled
+        ? { type: 'AttemptCancelled' as const, version: 1 as const, taskId }
+        : requested === 'completed'
+          ? { type: 'AttemptCompleted' as const, version: 1 as const, taskId, exitCode: exitCode ?? 0 }
+          : { type: 'AttemptFailed' as const, version: 1 as const, taskId };
       await this.appendVisible(event);
       return this.viewFor(task, this.executionFor(task.id));
     });
@@ -422,7 +453,11 @@ export class TaskModule {
 
   private applyContextAllocated(event: ContextAllocatedEvent): void {
     const execution = this.executionFor(event.taskId);
-    if (!execution.attempt || execution.context || execution.attempt.state !== 'starting') {
+    if (
+      !execution.attempt ||
+      execution.context ||
+      (execution.attempt.state !== 'starting' && execution.attempt.state !== 'cancelling')
+    ) {
       throw new TaskStorageError('internal');
     }
     execution.context = event.context;

@@ -149,3 +149,4 @@ function isMacNativeCode(assetPath) {
 
 exports.findRuntimeManifests = findRuntimeManifests;
 exports.refreshRuntimeManifest = refreshRuntimeManifest;
+exports.isMacNativeCode = isMacNativeCode;

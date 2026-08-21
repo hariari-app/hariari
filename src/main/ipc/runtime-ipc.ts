@@ -3,9 +3,14 @@ import type { RuntimeRendererStatus } from '../../shared/ipc-types';
 import type {
   RuntimeConnectionState,
   RuntimeInterface,
+  TaskExecutionView,
   TaskView,
 } from '../../shared/runtime/runtime-interface';
-import { parseTaskRequest } from '../../runtime/protocol-validation';
+import {
+  parseTaskExecutionTaskId,
+  parseTaskLifecycleRequest,
+  parseTaskRequest,
+} from '../../runtime/protocol-validation';
 
 export interface RuntimeIpcRegistry {
   handle(channel: string, handler: (...args: unknown[]) => unknown): void;
@@ -45,12 +50,7 @@ export function registerRuntimeIpc(
 
   ipc.removeHandler(IPC_CHANNELS.RUNTIME_GET_STATUS);
   ipc.handle(IPC_CHANNELS.RUNTIME_GET_STATUS, () => latest);
-  ipc.removeHandler(IPC_CHANNELS.TASKS_CREATE);
-  ipc.handle(IPC_CHANNELS.TASKS_CREATE, async (_event, raw) =>
-    sanitizeTask(await runtime.createTask(parseTaskRequest(raw))),
-  );
-  ipc.removeHandler(IPC_CHANNELS.TASKS_LIST);
-  ipc.handle(IPC_CHANNELS.TASKS_LIST, async () => (await runtime.listTasks()).map(sanitizeTask));
+  registerTaskHandlers(runtime, ipc);
 
   const registration: RuntimeIpcRegistration = {
     publishLatest: () => {
@@ -61,8 +61,7 @@ export function registerRuntimeIpc(
       disposed = true;
       unsubscribe();
       ipc.removeHandler(IPC_CHANNELS.RUNTIME_GET_STATUS);
-      ipc.removeHandler(IPC_CHANNELS.TASKS_CREATE);
-      ipc.removeHandler(IPC_CHANNELS.TASKS_LIST);
+      disposeTaskHandlers(ipc);
       if (activeRegistrations.get(ipc) === registration) {
         activeRegistrations.delete(ipc);
       }
@@ -71,6 +70,39 @@ export function registerRuntimeIpc(
 
   activeRegistrations.set(ipc, registration);
   return registration;
+}
+
+function registerTaskHandlers(runtime: RuntimeInterface, ipc: RuntimeIpcRegistry): void {
+  ipc.removeHandler(IPC_CHANNELS.TASKS_CREATE);
+  ipc.handle(IPC_CHANNELS.TASKS_CREATE, async (_event, raw) =>
+    sanitizeTask(await runtime.createTask(parseTaskRequest(raw))),
+  );
+  ipc.removeHandler(IPC_CHANNELS.TASKS_LIST);
+  ipc.handle(IPC_CHANNELS.TASKS_LIST, async () => (await runtime.listTasks()).map(sanitizeTask));
+  ipc.removeHandler(IPC_CHANNELS.TASKS_START);
+  ipc.handle(IPC_CHANNELS.TASKS_START, async (_event, raw) =>
+    sanitizeTaskExecution(await runtime.startTask(parseTaskLifecycleRequest(raw))),
+  );
+  ipc.removeHandler(IPC_CHANNELS.TASKS_CANCEL);
+  ipc.handle(IPC_CHANNELS.TASKS_CANCEL, async (_event, raw) =>
+    sanitizeTaskExecution(await runtime.cancelTask(parseTaskLifecycleRequest(raw))),
+  );
+  ipc.removeHandler(IPC_CHANNELS.TASKS_EXECUTION);
+  ipc.handle(IPC_CHANNELS.TASKS_EXECUTION, async (_event, taskId) =>
+    sanitizeTaskExecution(await runtime.getTaskExecution(parseTaskExecutionTaskId(taskId))),
+  );
+}
+
+function disposeTaskHandlers(ipc: RuntimeIpcRegistry): void {
+  for (const channel of [
+    IPC_CHANNELS.TASKS_CREATE,
+    IPC_CHANNELS.TASKS_LIST,
+    IPC_CHANNELS.TASKS_START,
+    IPC_CHANNELS.TASKS_CANCEL,
+    IPC_CHANNELS.TASKS_EXECUTION,
+  ]) {
+    ipc.removeHandler(channel);
+  }
 }
 
 function sanitizeTask(task: TaskView): TaskView {
@@ -82,6 +114,27 @@ function sanitizeTask(task: TaskView): TaskView {
     baseRef: task.baseRef,
     provider: task.provider,
     createdAt: task.createdAt,
+  };
+}
+
+function sanitizeTaskExecution(execution: TaskExecutionView): TaskExecutionView {
+  return {
+    task: { ...sanitizeTask(execution.task), executionState: execution.task.executionState },
+    run: execution.run && { id: execution.run.id, number: execution.run.number },
+    attempt: execution.attempt && {
+      id: execution.attempt.id,
+      number: execution.attempt.number,
+      state: execution.attempt.state,
+      ...(execution.attempt.exitCode === undefined ? {} : { exitCode: execution.attempt.exitCode }),
+    },
+    context: execution.context && {
+      id: execution.context.id,
+      worktreeId: execution.context.worktreeId,
+      branchName: execution.context.branchName,
+      baseCommit: execution.context.baseCommit,
+      processId: execution.context.processId,
+      ptyId: execution.context.ptyId,
+    },
   };
 }
 

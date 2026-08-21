@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
+  CancelTaskRequest,
   CreateTaskRequest,
   RuntimeConnectionState,
   RuntimeInterface,
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
+  StartTaskRequest,
+  TaskExecutionView,
   TaskView,
 } from '../../src/shared/runtime/runtime-interface';
 import { IPC_CHANNELS } from '../../src/shared/constants';
@@ -18,11 +21,13 @@ function registerRuntimeIpcTests(): void {
   registerStatusReplayTest();
   registerRegistrationLifecycleTests();
   registerTaskAuthorityTests();
+  registerTaskExecutionAuthorityTest();
 }
 
 function registerTaskAuthorityTests(): void {
   registerTaskAuthorityProjectionTest();
   registerTaskIdempotencyValidationTest();
+  registerTaskLifecycleValidationTest();
 }
 
 function registerTaskAuthorityProjectionTest(): void {
@@ -68,9 +73,39 @@ function registerTaskAuthorityProjectionTest(): void {
         idempotencyKey: 'create-task-one',
       }),
     ).resolves.toMatchObject({ objective: 'New task' });
-    expect(ipc.channels()).toEqual(
-      [IPC_CHANNELS.RUNTIME_GET_STATUS, IPC_CHANNELS.TASKS_CREATE, IPC_CHANNELS.TASKS_LIST].sort(),
+    expect(ipc.channels()).toEqual(taskChannels());
+    registration.dispose();
+  });
+}
+
+function registerTaskExecutionAuthorityTest(): void {
+  it('exposes only sanitized Runtime Task lifecycle methods without process control authority', async () => {
+    const runtime = new FakeRuntime({
+      state: 'unavailable',
+      reason: 'not-connected',
+      retryable: true,
+    });
+    runtime.execution = privateExecution();
+    const ipc = new FakeIpcRegistry();
+    const registration = registerRuntimeIpc(runtime, ipc, vi.fn());
+    const request = { taskId: 'task-private-id', idempotencyKey: 'execution-key' };
+
+    const started = await ipc.invoke(IPC_CHANNELS.TASKS_START, request);
+    expect(started).toEqual(publicExecution());
+    await expect(ipc.invoke(IPC_CHANNELS.TASKS_CANCEL, request)).resolves.toEqual(
+      publicExecution(),
     );
+    await expect(ipc.invoke(IPC_CHANNELS.TASKS_EXECUTION, 'task-private-id')).resolves.toEqual(
+      publicExecution(),
+    );
+    expect(runtime.startRequests).toEqual([request]);
+    expect(runtime.cancelRequests).toEqual([request]);
+    expect(started).not.toHaveProperty('task.storagePath');
+    expect(started).not.toHaveProperty('run.privateToken');
+    expect(started).not.toHaveProperty('attempt.privatePid');
+    expect(started).not.toHaveProperty('context.command');
+    expect(started).not.toHaveProperty('context.environment');
+    expect(ipc.channels()).toEqual(taskChannels());
     registration.dispose();
   });
 }
@@ -96,6 +131,27 @@ function registerTaskIdempotencyValidationTest(): void {
       }),
     ).rejects.toThrow('Runtime protocol frame is invalid');
     expect(runtime.tasks).toEqual([]);
+    registration.dispose();
+  });
+}
+
+function registerTaskLifecycleValidationTest(): void {
+  it('rejects malformed lifecycle requests before they reach Runtime', async () => {
+    const runtime = new FakeRuntime({
+      state: 'unavailable',
+      reason: 'not-connected',
+      retryable: true,
+    });
+    const ipc = new FakeIpcRegistry();
+    const registration = registerRuntimeIpc(runtime, ipc, vi.fn());
+
+    await expect(
+      ipc.invoke(IPC_CHANNELS.TASKS_START, { taskId: '', idempotencyKey: 'start-key' }),
+    ).rejects.toThrow('Runtime protocol frame is invalid');
+    await expect(ipc.invoke(IPC_CHANNELS.TASKS_EXECUTION, 'x'.repeat(129))).rejects.toThrow(
+      'Runtime protocol frame is invalid',
+    );
+    expect(runtime.startRequests).toEqual([]);
     registration.dispose();
   });
 }
@@ -228,9 +284,7 @@ function registerRegistrationLifecycleTests(): void {
     expect(first.unsubscribeCalls).toBe(1);
     expect(first.listenerCount).toBe(0);
     expect(second.listenerCount).toBe(1);
-    expect(ipc.channels()).toEqual(
-      [IPC_CHANNELS.RUNTIME_GET_STATUS, IPC_CHANNELS.TASKS_CREATE, IPC_CHANNELS.TASKS_LIST].sort(),
-    );
+    expect(ipc.channels()).toEqual(taskChannels());
     expect(first.connectCalls).toBe(0);
     expect(second.connectCalls).toBe(0);
     expect(
@@ -271,6 +325,9 @@ class FakeRuntime implements RuntimeInterface {
   unsubscribeCalls = 0;
   connectResult: RuntimeConnectionState;
   tasks: TaskView[] = [];
+  execution: TaskExecutionView = privateExecution();
+  startRequests: StartTaskRequest[] = [];
+  cancelRequests: CancelTaskRequest[] = [];
 
   constructor(private state: RuntimeConnectionState) {
     this.connectResult = state;
@@ -327,19 +384,90 @@ class FakeRuntime implements RuntimeInterface {
     return this.tasks;
   }
 
-  async startTask(): Promise<never> {
-    throw new Error('not used by desktop IPC tests');
+  async startTask(request: StartTaskRequest): Promise<TaskExecutionView> {
+    this.startRequests.push(request);
+    return this.execution;
   }
 
-  async cancelTask(): Promise<never> {
-    throw new Error('not used by desktop IPC tests');
+  async cancelTask(request: CancelTaskRequest): Promise<TaskExecutionView> {
+    this.cancelRequests.push(request);
+    return this.execution;
   }
 
-  async getTaskExecution(): Promise<never> {
-    throw new Error('not used by desktop IPC tests');
+  async getTaskExecution(): Promise<TaskExecutionView> {
+    return this.execution;
   }
 
   async subscribeTaskOutput(): Promise<never> {
     throw new Error('not used by desktop IPC tests');
   }
+}
+
+function taskChannels(): string[] {
+  return [
+    IPC_CHANNELS.RUNTIME_GET_STATUS,
+    IPC_CHANNELS.TASKS_CREATE,
+    IPC_CHANNELS.TASKS_LIST,
+    IPC_CHANNELS.TASKS_START,
+    IPC_CHANNELS.TASKS_CANCEL,
+    IPC_CHANNELS.TASKS_EXECUTION,
+  ].sort();
+}
+
+function privateExecution(): TaskExecutionView {
+  return {
+    task: {
+      id: 'task-private-id',
+      objective: 'Run one Task.',
+      project: 'Hariari',
+      repository: 'hariari-app/hariari',
+      baseRef: 'main',
+      provider: 'shell',
+      createdAt: '2026-08-21T10:00:00.000Z',
+      executionState: 'running',
+      storagePath: '/private/tasks/events.log',
+    } as TaskExecutionView['task'],
+    run: { id: 'run-1', number: 1, privateToken: 'secret' } as TaskExecutionView['run'],
+    attempt: {
+      id: 'attempt-1',
+      number: 1,
+      state: 'running',
+      privatePid: 42,
+    } as TaskExecutionView['attempt'],
+    context: {
+      id: 'context-1',
+      worktreeId: 'worktree-1',
+      branchName: 'hariari/task-1',
+      baseCommit: 'base-1',
+      processId: 'process-1',
+      ptyId: 'pty-1',
+      command: 'private command',
+      environment: 'private env',
+    } as TaskExecutionView['context'],
+  };
+}
+
+function publicExecution(): TaskExecutionView {
+  return {
+    task: {
+      id: 'task-private-id',
+      objective: 'Run one Task.',
+      project: 'Hariari',
+      repository: 'hariari-app/hariari',
+      baseRef: 'main',
+      provider: 'shell',
+      createdAt: '2026-08-21T10:00:00.000Z',
+      executionState: 'running',
+    },
+    run: { id: 'run-1', number: 1 },
+    attempt: { id: 'attempt-1', number: 1, state: 'running' },
+    context: {
+      id: 'context-1',
+      worktreeId: 'worktree-1',
+      branchName: 'hariari/task-1',
+      baseCommit: 'base-1',
+      processId: 'process-1',
+      ptyId: 'pty-1',
+    },
+  };
 }
