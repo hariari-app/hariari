@@ -44,7 +44,12 @@ describe('real local Runtime Interface vertical', () => {
     verifiesDurableTasks,
   );
   it('replays a Task after a forced short event write', replaysTaskAfterShortWrite);
+  it(
+    'repairs a partial event write before an idempotent retry survives restart',
+    repairsPartialEventWriteBeforeRetry,
+  );
   it('reports malformed Task creates as non-retryable invalid requests', rejectsMalformedTasks);
+  it('rejects an overlong Task idempotency key without losing transport', rejectsOverlongTaskKey);
 });
 
 async function replaysTaskAfterShortWrite(): Promise<void> {
@@ -65,6 +70,41 @@ async function replaysTaskAfterShortWrite(): Promise<void> {
     });
   });
   const created = await runtime.createTask(taskRequest('short-write'));
+  await runtime.disconnect();
+
+  await servers[0]?.stop();
+  const restarted = fixture.createInterface();
+  await expect(restarted.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  await expect(restarted.listTasks()).resolves.toEqual([created]);
+  await restarted.disconnect();
+}
+
+async function repairsPartialEventWriteBeforeRetry(): Promise<void> {
+  const fixture = await createRealRuntimeFixture();
+  const runtime = fixture.createInterface();
+  await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  const eventPath = path.join(fixture.runtimeDirectory, 'tasks', 'events.log');
+  const open = fs.promises.open.bind(fs.promises);
+  let writes = 0;
+  vi.spyOn(fs.promises, 'open').mockImplementation(async (file, flags, mode) => {
+    const handle = await open(file, flags, mode);
+    if (file !== eventPath || flags !== 'a') return handle;
+    return new Proxy(handle, {
+      get(target, property, receiver) {
+        if (property !== 'write') return Reflect.get(target, property, receiver);
+        return async (data: Buffer) => {
+          writes += 1;
+          if (writes === 1) return target.write(data.subarray(0, 1));
+          if (writes === 2) return { bytesWritten: 0, buffer: data };
+          return target.write(data);
+        };
+      },
+    });
+  });
+  const request = taskRequest('partial-zero-retry');
+
+  await expect(runtime.createTask(request)).rejects.toEqual(new RuntimePortError('internal', true));
+  const created = await runtime.createTask(request);
   await runtime.disconnect();
 
   await servers[0]?.stop();
@@ -98,6 +138,20 @@ async function rejectsMalformedTasks(): Promise<void> {
     connected.session.createTask({ ...taskRequest('bad-provider'), provider: 'invalid' } as never),
   ).rejects.toEqual(new RuntimePortError('invalid-request', false));
   await connected.session.disconnect();
+}
+
+async function rejectsOverlongTaskKey(): Promise<void> {
+  const fixture = await createRealRuntimeFixture();
+  const runtime = fixture.createInterface();
+  await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+
+  await expect(runtime.createTask(taskRequest('x'.repeat(129)))).rejects.toEqual(
+    new RuntimePortError('invalid-request', false),
+  );
+  await expect(runtime.createTask(taskRequest('x'.repeat(128)))).resolves.toMatchObject({
+    objective: 'Make durable task creation observable.',
+  });
+  await runtime.disconnect();
 }
 
 function taskRequest(idempotencyKey: string) {

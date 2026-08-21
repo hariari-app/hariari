@@ -31,6 +31,7 @@ export class TaskModule {
   private readonly tasks = new Map<string, TaskView>();
   private readonly fingerprints = new Map<string, string>();
   private mutation: Promise<void> = Promise.resolve();
+  private poisoned = false;
 
   constructor(
     runtimeDirectory: string,
@@ -57,6 +58,7 @@ export class TaskModule {
 
   create(request: CreateTaskRequest): Promise<TaskView> {
     return this.enqueue(async () => {
+      if (this.poisoned) throw new TaskStorageError('internal');
       const fingerprint = canonicalFingerprint(request);
       const existing = this.tasks.get(request.idempotencyKey);
       if (existing) {
@@ -153,15 +155,38 @@ export class TaskModule {
     const frame = Buffer.concat([header, payload]);
     const handle = await fs.promises.open(this.eventPath, 'a', 0o600);
     try {
+      const startOffset = (await handle.stat()).size;
       let offset = 0;
-      while (offset < frame.length) {
-        const { bytesWritten } = await handle.write(frame.subarray(offset));
-        if (bytesWritten === 0) throw new TaskStorageError('internal');
-        offset += bytesWritten;
+      try {
+        while (offset < frame.length) {
+          const { bytesWritten } = await handle.write(frame.subarray(offset));
+          if (bytesWritten === 0) throw new TaskStorageError('internal');
+          offset += bytesWritten;
+        }
+        await handle.sync();
+      } catch (error) {
+        if (offset < frame.length) {
+          await this.repairIncompleteAppend(handle, startOffset);
+        } else {
+          this.poisoned = true;
+        }
+        throw error;
       }
-      await handle.sync();
     } finally {
       await handle.close();
+    }
+  }
+
+  private async repairIncompleteAppend(
+    handle: fs.promises.FileHandle,
+    offset: number,
+  ): Promise<void> {
+    try {
+      await handle.truncate(offset);
+      await handle.sync();
+    } catch {
+      this.poisoned = true;
+      throw new TaskStorageError('internal');
     }
   }
 

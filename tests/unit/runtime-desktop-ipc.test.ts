@@ -22,27 +22,73 @@ function registerRuntimeIpcTests(): void {
 
 function registerTaskAuthorityTests(): void {
   it('exposes only create and list Task authority and sanitizes returned views', async () => {
-    const runtime = new FakeRuntime({ state: 'unavailable', reason: 'not-connected', retryable: true });
-    runtime.tasks = [{
-      id: 'task-private-id', objective: 'Ship durable tasks', project: 'Hariari',
-      repository: 'hariari-app/hariari', baseRef: 'main', provider: 'codex',
-      createdAt: '2026-08-21T10:00:00.000Z', storagePath: '/private/tasks/events.log',
-    } as unknown as TaskView];
+    const runtime = new FakeRuntime({
+      state: 'unavailable',
+      reason: 'not-connected',
+      retryable: true,
+    });
+    runtime.tasks = [
+      {
+        id: 'task-private-id',
+        objective: 'Ship durable tasks',
+        project: 'Hariari',
+        repository: 'hariari-app/hariari',
+        baseRef: 'main',
+        provider: 'codex',
+        createdAt: '2026-08-21T10:00:00.000Z',
+        storagePath: '/private/tasks/events.log',
+      } as unknown as TaskView,
+    ];
     const ipc = new FakeIpcRegistry();
     const registration = registerRuntimeIpc(runtime, ipc, vi.fn());
 
-    await expect(ipc.invoke(IPC_CHANNELS.TASKS_LIST)).resolves.toEqual([{
-      id: 'task-private-id', objective: 'Ship durable tasks', project: 'Hariari',
-      repository: 'hariari-app/hariari', baseRef: 'main', provider: 'codex',
-      createdAt: '2026-08-21T10:00:00.000Z',
-    }]);
-    await expect(ipc.invoke(IPC_CHANNELS.TASKS_CREATE, {
-      objective: 'New task', project: 'Hariari', repository: 'hariari-app/hariari',
-      baseRef: 'main', provider: 'codex', idempotencyKey: 'create-task-one',
-    })).resolves.toMatchObject({ objective: 'New task' });
-    expect(ipc.channels()).toEqual([
-      IPC_CHANNELS.RUNTIME_GET_STATUS, IPC_CHANNELS.TASKS_CREATE, IPC_CHANNELS.TASKS_LIST,
-    ].sort());
+    await expect(ipc.invoke(IPC_CHANNELS.TASKS_LIST)).resolves.toEqual([
+      {
+        id: 'task-private-id',
+        objective: 'Ship durable tasks',
+        project: 'Hariari',
+        repository: 'hariari-app/hariari',
+        baseRef: 'main',
+        provider: 'codex',
+        createdAt: '2026-08-21T10:00:00.000Z',
+      },
+    ]);
+    await expect(
+      ipc.invoke(IPC_CHANNELS.TASKS_CREATE, {
+        objective: 'New task',
+        project: 'Hariari',
+        repository: 'hariari-app/hariari',
+        baseRef: 'main',
+        provider: 'codex',
+        idempotencyKey: 'create-task-one',
+      }),
+    ).resolves.toMatchObject({ objective: 'New task' });
+    expect(ipc.channels()).toEqual(
+      [IPC_CHANNELS.RUNTIME_GET_STATUS, IPC_CHANNELS.TASKS_CREATE, IPC_CHANNELS.TASKS_LIST].sort(),
+    );
+    registration.dispose();
+  });
+
+  it('rejects an overlong Task idempotency key before calling Runtime', async () => {
+    const runtime = new FakeRuntime({
+      state: 'unavailable',
+      reason: 'not-connected',
+      retryable: true,
+    });
+    const ipc = new FakeIpcRegistry();
+    const registration = registerRuntimeIpc(runtime, ipc, vi.fn());
+
+    await expect(
+      ipc.invoke(IPC_CHANNELS.TASKS_CREATE, {
+        objective: 'New task',
+        project: 'Hariari',
+        repository: 'hariari-app/hariari',
+        baseRef: 'main',
+        provider: 'codex',
+        idempotencyKey: 'x'.repeat(129),
+      }),
+    ).rejects.toThrow('Runtime protocol frame is invalid');
+    expect(runtime.tasks).toEqual([]);
     registration.dispose();
   });
 }
@@ -175,9 +221,9 @@ function registerRegistrationLifecycleTests(): void {
     expect(first.unsubscribeCalls).toBe(1);
     expect(first.listenerCount).toBe(0);
     expect(second.listenerCount).toBe(1);
-    expect(ipc.channels()).toEqual([
-      IPC_CHANNELS.RUNTIME_GET_STATUS, IPC_CHANNELS.TASKS_CREATE, IPC_CHANNELS.TASKS_LIST,
-    ].sort());
+    expect(ipc.channels()).toEqual(
+      [IPC_CHANNELS.RUNTIME_GET_STATUS, IPC_CHANNELS.TASKS_CREATE, IPC_CHANNELS.TASKS_LIST].sort(),
+    );
     expect(first.connectCalls).toBe(0);
     expect(second.connectCalls).toBe(0);
     expect(
@@ -258,8 +304,12 @@ class FakeRuntime implements RuntimeInterface {
 
   async createTask(request: CreateTaskRequest): Promise<TaskView> {
     const task: TaskView = {
-      id: `task-${this.tasks.length + 1}`, objective: request.objective, project: request.project,
-      repository: request.repository, baseRef: request.baseRef, provider: request.provider,
+      id: `task-${this.tasks.length + 1}`,
+      objective: request.objective,
+      project: request.project,
+      repository: request.repository,
+      baseRef: request.baseRef,
+      provider: request.provider,
       createdAt: '2026-08-21T10:00:00.000Z',
     };
     this.tasks.push(task);

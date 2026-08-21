@@ -1,4 +1,5 @@
 import {
+  RUNTIME_IDENTIFIER_MAX_LENGTH,
   TASK_PROVIDERS,
   type CreateTaskRequest,
   type RuntimeHealth,
@@ -23,7 +24,6 @@ import {
   type RuntimeWelcomeFrame,
 } from './protocol';
 
-const MAX_ID_LENGTH = 128;
 const MAX_VERSION_LENGTH = 128;
 const MAX_PROOF_LENGTH = 128;
 const MAX_TASK_FIELD_LENGTH = 512;
@@ -130,7 +130,7 @@ export function parseRequestFrame(value: unknown): RuntimeRequestFrame {
     operation: operation(frame.operation),
     correlationId: identifier(frame.correlationId),
     causationId: optionalIdentifier(frame.causationId),
-    idempotencyKey: optionalIdentifier(frame.idempotencyKey),
+    idempotencyKey: optionalTaskIdempotencyKey(frame.idempotencyKey),
     payload: object(frame.payload),
   };
 }
@@ -207,7 +207,7 @@ export function parseTaskRequest(value: unknown): CreateTaskRequest {
     repository: requiredTaskField(request.repository),
     baseRef: requiredTaskField(request.baseRef),
     provider: provider as CreateTaskRequest['provider'],
-    idempotencyKey: requiredTaskField(request.idempotencyKey),
+    idempotencyKey: requiredTaskIdentifier(request.idempotencyKey),
   };
 }
 
@@ -232,6 +232,12 @@ export function parseTaskList(value: Record<string, unknown>) {
 
 function requiredTaskField(value: unknown): string {
   const field = boundedString(value, MAX_TASK_FIELD_LENGTH);
+  if (field.trim().length === 0) invalid();
+  return field;
+}
+
+function requiredTaskIdentifier(value: unknown): string {
+  const field = boundedString(value, RUNTIME_IDENTIFIER_MAX_LENGTH);
   if (field.trim().length === 0) invalid();
   return field;
 }
@@ -277,15 +283,21 @@ function boundedString(value: unknown, maximum: number): string {
 }
 
 function identifier(value: unknown): string {
-  return boundedString(value, MAX_ID_LENGTH);
+  return boundedString(value, RUNTIME_IDENTIFIER_MAX_LENGTH);
 }
 
 function optionalIdentifier(value: unknown): string | null {
   return value === null ? null : identifier(value);
 }
 
+function optionalTaskIdempotencyKey(value: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string' || value.length === 0) invalid();
+  return value;
+}
+
 function nonce(value: unknown): string {
-  const result = boundedString(value, MAX_ID_LENGTH);
+  const result = boundedString(value, RUNTIME_IDENTIFIER_MAX_LENGTH);
   if (result.length < 4 || !/^[A-Za-z0-9_-]+$/.test(result)) invalid();
   return result;
 }
@@ -296,7 +308,7 @@ function positiveInteger(value: unknown): number {
 }
 
 function timestamp(value: unknown): string {
-  const result = boundedString(value, MAX_ID_LENGTH);
+  const result = boundedString(value, RUNTIME_IDENTIFIER_MAX_LENGTH);
   if (!result.endsWith('Z') || !Number.isFinite(Date.parse(result))) invalid();
   return result;
 }

@@ -3,6 +3,8 @@ export interface RuntimeProtocolRange {
   readonly max: number;
 }
 
+export const RUNTIME_IDENTIFIER_MAX_LENGTH = 128;
+
 export interface RuntimeHealth {
   readonly status: 'ready';
   readonly instanceId: string;

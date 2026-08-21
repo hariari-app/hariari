@@ -1,7 +1,6 @@
 import '@xterm/xterm/css/xterm.css';
 import './styles/global.css';
 import './styles/runtime-health.css';
-import './styles/tasks-view.css';
 import { mountRuntimeTasksSurface } from './runtime-tasks-surface';
 import './styles/terminal.css';
 import './styles/tab-bar.css';
@@ -532,12 +531,7 @@ function main(): void {
       });
     },
   });
-  const disposeRuntimeTasksSurface = mountRuntimeTasksSurface(
-    runtimeHealthHost,
-    sidebarEl,
-    window.api.runtime,
-    window.api.tasks,
-  );
+  const disposeRuntimeSurface = mountRuntimeTasksSurface(runtimeHealthHost, sidebarEl, window.api);
 
   // Store subscription — fan out state changes to both sidebar and tab bar
   store.subscribe((state, prev) => {
@@ -1676,7 +1670,7 @@ function main(): void {
   // Save state on window unload
   window.addEventListener('beforeunload', () => {
     clearInterval(autoSaveTimer);
-    disposeRuntimeTasksSurface();
+    disposeRuntimeSurface();
     saveGlobalState();
   });
 }

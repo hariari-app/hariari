@@ -3,14 +3,38 @@ import {
   type CreateTaskRequest,
   type TaskView,
 } from '../../shared/runtime/runtime-interface';
+import './styles/tasks-view.css';
 
 export interface TasksApi {
   create(request: CreateTaskRequest): Promise<TaskView>;
   list(): Promise<readonly TaskView[]>;
 }
 
+interface TaskElements {
+  readonly root: HTMLElement;
+  readonly list: HTMLUListElement;
+  readonly form: HTMLFormElement;
+  readonly fields: {
+    readonly objective: HTMLInputElement;
+    readonly project: HTMLInputElement;
+    readonly repository: HTMLInputElement;
+    readonly baseRef: HTMLInputElement;
+  };
+  readonly provider: HTMLSelectElement;
+  readonly submit: HTMLButtonElement;
+  readonly message: HTMLElement;
+}
+
 /** A thin renderer: Runtime remains the sole source of Task state. */
 export function mountTasksView(container: HTMLElement, tasks: TasksApi): () => void {
+  const view = createTaskElements();
+  container.appendChild(view.root);
+  loadTasks(view.list, view.message, tasks);
+  view.form.addEventListener('submit', (event) => submitTask(event, view, tasks));
+  return () => view.root.remove();
+}
+
+function createTaskElements(): TaskElements {
   const root = document.createElement('section');
   root.className = 'tasks-view';
   root.setAttribute('aria-label', 'Tasks');
@@ -26,6 +50,19 @@ export function mountTasksView(container: HTMLElement, tasks: TasksApi): () => v
     repository: field('Repository', 'repository'),
     baseRef: field('Base ref', 'baseRef'),
   };
+  const provider = createProvider();
+  const submit = document.createElement('button');
+  submit.type = 'submit';
+  submit.textContent = 'Create Task';
+  const message = document.createElement('p');
+  message.className = 'tasks-message';
+  message.setAttribute('role', 'status');
+  form.append(...Object.values(fields), provider, submit, message);
+  root.append(title, list, form);
+  return { root, list, form, fields, provider, submit, message };
+}
+
+function createProvider(): HTMLSelectElement {
   const provider = document.createElement('select');
   provider.name = 'provider';
   provider.setAttribute('aria-label', 'Provider');
@@ -36,52 +73,50 @@ export function mountTasksView(container: HTMLElement, tasks: TasksApi): () => v
     if (value === 'codex') option.selected = true;
     provider.appendChild(option);
   }
-  const submit = document.createElement('button');
-  submit.type = 'submit';
-  submit.textContent = 'Create Task';
-  const message = document.createElement('p');
-  message.className = 'tasks-message';
-  message.setAttribute('role', 'status');
-  form.append(...Object.values(fields), provider, submit, message);
-  root.append(title, list, form);
-  container.appendChild(root);
+  return provider;
+}
 
-  const render = (views: readonly TaskView[]): void => {
-    list.replaceChildren(...views.map((task) => taskElement(task)));
-  };
+function loadTasks(list: HTMLUListElement, message: HTMLElement, tasks: TasksApi): void {
   void tasks
     .list()
-    .then(render)
+    .then((views) => renderTasks(list, views))
     .catch(() => {
       message.textContent = 'Tasks are unavailable.';
     });
-  form.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const request: CreateTaskRequest = {
-      objective: fields.objective.value,
-      project: fields.project.value,
-      repository: fields.repository.value,
-      baseRef: fields.baseRef.value,
-      provider: provider.value as CreateTaskRequest['provider'],
-      idempotencyKey: crypto.randomUUID(),
-    };
-    submit.disabled = true;
-    message.textContent = '';
-    void tasks
-      .create(request)
-      .then(async () => {
-        form.reset();
-        provider.value = 'codex';
-        render(await tasks.list());
-      })
-      .catch(() => {
-        message.textContent = 'Task could not be created.';
-      })
-      .finally(() => {
-        submit.disabled = false;
-      });
-  });
-  return () => root.remove();
+}
+
+function submitTask(event: SubmitEvent, view: TaskElements, tasks: TasksApi): void {
+  event.preventDefault();
+  view.submit.disabled = true;
+  view.message.textContent = '';
+  void tasks
+    .create(taskRequest(view))
+    .then(async () => {
+      view.form.reset();
+      view.provider.value = 'codex';
+      renderTasks(view.list, await tasks.list());
+    })
+    .catch(() => {
+      view.message.textContent = 'Task could not be created.';
+    })
+    .finally(() => {
+      view.submit.disabled = false;
+    });
+}
+
+function taskRequest(view: TaskElements): CreateTaskRequest {
+  return {
+    objective: view.fields.objective.value,
+    project: view.fields.project.value,
+    repository: view.fields.repository.value,
+    baseRef: view.fields.baseRef.value,
+    provider: view.provider.value as CreateTaskRequest['provider'],
+    idempotencyKey: crypto.randomUUID(),
+  };
+}
+
+function renderTasks(list: HTMLUListElement, views: readonly TaskView[]): void {
+  list.replaceChildren(...views.map((task) => taskElement(task)));
 }
 
 function field(labelText: string, name: string): HTMLInputElement {

@@ -5,6 +5,7 @@ import { resolveRuntimeEndpoint } from './endpoint';
 import { NodeLocalRuntimeTransport } from './local-transport';
 import { RuntimeServer } from './runtime-server';
 import { ProtectedRuntimeTokenStore } from './token-store';
+import { RUNTIME_IDENTIFIER_MAX_LENGTH } from '../shared/runtime/runtime-interface';
 
 const DEFAULT_HANDSHAKE_DEADLINE_MS = 5_000;
 const DEFAULT_REQUEST_DEADLINE_MS = 30_000;
@@ -59,7 +60,9 @@ function parseConfiguration(argv: readonly string[]): RuntimeProcessConfiguratio
 
 function requiredValue(values: ReadonlyMap<string, string>, name: string): string {
   const value = values.get(name);
-  if (!value || value.length > 128) throw new Error('Runtime arguments are invalid');
+  if (!value || value.length > RUNTIME_IDENTIFIER_MAX_LENGTH) {
+    throw new Error('Runtime arguments are invalid');
+  }
   return value;
 }
 
