@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FileRuntimeStartupLeasePort } from '../../src/main/runtime/file-startup-lease';
 import { LocalRuntimeEndpointPort } from '../../src/main/runtime/local-endpoint-port';
 import { NodeRuntimeClient } from '../../src/main/runtime/node-runtime-client';
@@ -26,14 +26,35 @@ const roots: string[] = [];
 const children: ChildProcess[] = [];
 
 describe('host Node SEA Runtime artifact', () => {
-  afterEach(cleanSeaFixtures);
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await cleanSeaFixtures();
+  });
   it(
     'launches, handshakes, checks health, reconnects, and shuts down after resources disappear',
     verifiesPackagedSeaLifecycle,
     20_000,
   );
   it('runs the real worktree and PTY tracer from the packaged SEA', runsPackagedTaskTracer, 20_000);
+  it('waits for child exit and retries a busy fixture removal', cleansSeaFixturesAfterChildExit);
 });
+
+async function cleansSeaFixturesAfterChildExit(): Promise<void> {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hariari SEA cleanup-'));
+  roots.push(root);
+  const child = nodeSpawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    stdio: 'ignore',
+  });
+  children.push(child);
+  await waitForChildSpawn(child);
+  const remove = vi.spyOn(fs.promises, 'rm').mockRejectedValueOnce(busyRemovalError());
+
+  await cleanSeaFixtures();
+
+  expect(child.exitCode === null && child.signalCode === null).toBe(false);
+  expect(remove).toHaveBeenCalledTimes(2);
+  expect(fs.existsSync(root)).toBe(false);
+}
 
 async function verifiesPackagedSeaLifecycle(): Promise<void> {
   const fixture = createSeaFixture();
@@ -312,9 +333,55 @@ function readManifest(resourcesPath: string): { readonly runtimeVersion: string 
   return JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { readonly runtimeVersion: string };
 }
 
-function cleanSeaFixtures(): void {
-  for (const child of children.splice(0)) {
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+async function cleanSeaFixtures(): Promise<void> {
+  await Promise.all(children.map(stopFixtureChild));
+  children.length = 0;
+  await Promise.all(roots.map(removeFixtureRoot));
+  roots.length = 0;
+}
+
+async function stopFixtureChild(child: ChildProcess): Promise<void> {
+  if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+  await waitForChildExit(child);
+}
+
+function waitForChildExit(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = (): void => {
+      child.removeListener('exit', done);
+      child.removeListener('error', done);
+      resolve();
+    };
+    child.once('exit', done);
+    child.once('error', done);
+  });
+}
+
+async function removeFixtureRoot(root: string): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await fs.promises.rm(root, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (!isBusyRemoval(error) || attempt === 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
   }
-  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+}
+
+function isBusyRemoval(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'EBUSY' || code === 'ENOTEMPTY' || code === 'EPERM';
+}
+
+function waitForChildSpawn(child: ChildProcess): Promise<void> {
+  return new Promise((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
+}
+
+function busyRemovalError(): NodeJS.ErrnoException {
+  return Object.assign(new Error('fixture is busy'), { code: 'EBUSY' });
 }

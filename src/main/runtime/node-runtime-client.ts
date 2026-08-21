@@ -56,6 +56,8 @@ import {
   type RuntimeEndpoint,
 } from './runtime-ports';
 
+const TASK_START_DEADLINE_MS = 10_000;
+
 export interface NodeRuntimeClientOptions {
   readonly transport: RuntimeLocalTransport;
   readonly randomId: () => string;
@@ -355,7 +357,7 @@ class NodeRuntimeClientSession implements RuntimeClientSession {
     );
   }
 
-  startTask(request: StartTaskRequest, deadlineMs = 2_000): Promise<TaskExecutionView> {
+  startTask(request: StartTaskRequest, deadlineMs = TASK_START_DEADLINE_MS): Promise<TaskExecutionView> {
     return this.enqueue(async () =>
       parseTaskExecutionView(
         await this.request(

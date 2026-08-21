@@ -70,6 +70,24 @@ const OPERATION_FAILURES: ReadonlyArray<RuntimeProtocolErrorFrame> = [
 
 describe('Runtime client handshake failures', registerRuntimeClientFailureTests);
 
+it('allows worktree allocation the task-start deadline at the client seam', async () => {
+  const transport = new HandshakeTransport({});
+  const client = new NodeRuntimeClient({
+    transport,
+    randomId: () => 'client-request',
+    randomNonce: () => 'client-nonce',
+  });
+  const connection = await client.connect(endpoint(), TOKEN, CONNECT_OPTIONS);
+  if (connection.kind !== 'connected') throw new Error('expected connection');
+
+  await expect(connection.session.startTask(startRequest())).resolves.toMatchObject({
+    task: { id: 'task-1', executionState: 'running' },
+    attempt: { state: 'running' },
+  });
+
+  expect(transport.operationDeadlines).toEqual([10_000, 10_000]);
+});
+
 function registerRuntimeClientFailureTests(): void {
   registerHandshakeTransportFailures();
   registerTerminalHandshakeFailures();
@@ -212,10 +230,12 @@ function runtimeInterface(environment: FakeRuntimeEnvironment, clients: NodeRunt
 }
 
 class HandshakeTransport implements RuntimeLocalTransport {
+  readonly operationDeadlines: number[] = [];
+
   constructor(private readonly script: HandshakeScript) {}
 
   async connect(): Promise<RuntimeFrameConnection> {
-    return new HandshakeConnection(this.script);
+    return new HandshakeConnection(this.script, this.operationDeadlines);
   }
 
   async listen(): Promise<never> {
@@ -228,9 +248,12 @@ class HandshakeConnection implements RuntimeFrameConnection {
   private authenticate: RuntimeAuthenticateFrame | null = null;
   private request: RuntimeRequestFrame | null = null;
 
-  constructor(private readonly script: HandshakeScript) {}
+  constructor(
+    private readonly script: HandshakeScript,
+    private readonly operationDeadlines: number[] = [],
+  ) {}
 
-  async readFrame(): Promise<Record<string, unknown>> {
+  async readFrame(deadlineMs: number): Promise<Record<string, unknown>> {
     this.reads += 1;
     const stage = this.reads === 1 ? 'challenge-read' : 'reply-read';
     if (this.script.failure?.stage === stage) {
@@ -239,10 +262,11 @@ class HandshakeConnection implements RuntimeFrameConnection {
     if (this.reads === 1) {
       return this.script.malformedChallenge ? { kind: 'invalid' } : { ...challenge() };
     }
+    if (this.reads > 2) this.operationDeadlines.push(deadlineMs);
     return this.reads === 2 ? this.handshakeReply() : this.operationReply();
   }
 
-  async writeFrame(frame: Record<string, unknown>): Promise<void> {
+  async writeFrame(frame: Record<string, unknown>, deadlineMs: number): Promise<void> {
     if (this.script.failure?.stage === 'authenticate-write') {
       throw new RuntimeTransportError(this.script.failure.code);
     }
@@ -251,6 +275,7 @@ class HandshakeConnection implements RuntimeFrameConnection {
       return;
     }
     this.request = frame as unknown as RuntimeRequestFrame;
+    this.operationDeadlines.push(deadlineMs);
   }
 
   onClose(): () => void {
@@ -307,7 +332,9 @@ class HandshakeConnection implements RuntimeFrameConnection {
   }
 
   private healthReply(): Record<string, unknown> {
-    if (!this.request || this.request.operation.name !== 'runtime.health') {
+    if (!this.request) throw new Error('successful operation was not scripted');
+    if (this.request.operation.name === 'task.start') return this.taskStartReply();
+    if (this.request.operation.name !== 'runtime.health') {
       throw new Error('successful operation was not scripted');
     }
     return {
@@ -325,6 +352,40 @@ class HandshakeConnection implements RuntimeFrameConnection {
         protocolVersion: 1,
         startedAt: '2026-08-20T10:00:00.000Z',
         checkedAt: '2026-08-20T10:00:01.000Z',
+      },
+    };
+  }
+
+  private taskStartReply(): Record<string, unknown> {
+    if (!this.request) throw new Error('task start was not scripted');
+    return {
+      kind: 'runtime.response',
+      protocolVersion: this.request.protocolVersion,
+      requestId: this.request.requestId,
+      operation: this.request.operation,
+      correlationId: this.request.correlationId,
+      ok: true,
+      result: {
+        task: {
+          id: 'task-1',
+          objective: 'Allocate a task worktree.',
+          project: 'Hariari',
+          repository: '/tmp/repository',
+          baseRef: 'HEAD',
+          provider: 'shell',
+          createdAt: '2026-08-21T10:00:00.000Z',
+          executionState: 'running',
+        },
+        run: { id: 'run-1', number: 1 },
+        attempt: { id: 'attempt-1', number: 1, state: 'running' },
+        context: {
+          id: 'context-1',
+          worktreeId: 'worktree-1',
+          branchName: 'hariari/task-task-1/run-1/attempt-1',
+          baseCommit: 'base-1',
+          processId: 'process-1',
+          ptyId: 'pty-1',
+        },
       },
     };
   }
@@ -354,4 +415,8 @@ function shutdownRequest() {
     expectedInstanceId: 'runtime-instance',
     reason: 'test' as const,
   };
+}
+
+function startRequest() {
+  return { taskId: 'task-1', idempotencyKey: 'worktree-allocation' };
 }
