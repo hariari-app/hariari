@@ -157,7 +157,7 @@ export class TaskExecutionModule {
       this.active.set(request.taskId, active);
       this.exitWaits.set(request.taskId, new ExitWait());
       await this.tasks.allocateContext(request.taskId, active.context, active.providerSession && execution.task.provider === 'claude'
-        ? { id: this.randomId(), provider: 'claude', nativeSessionId: active.providerSession.nativeSessionId, taskId: request.taskId, attemptId: execution.attempt.id, executionContextId: active.context.id, capabilities: active.providerSession.capabilities, parentId: null }
+        ? { id: this.randomId(), provider: 'claude', nativeSessionId: active.providerSession.nativeSessionId, taskId: request.taskId, attemptId: execution.attempt.id, executionContextId: active.context.id, capabilities: active.providerSession.capabilities, parentId: execution.attempt.number > 1 ? execution.providerSessions.at(-1)?.id ?? null : null }
         : null);
       const started = await this.tasks.markStarted(request.taskId);
       active.activateExit();

@@ -306,7 +306,16 @@ export class TaskModule {
       if (prior) {
         if (prior.fingerprint !== fingerprint) throw new TaskStorageError('idempotency-conflict');
         const task = this.taskById(prior.taskId); const execution = this.executionFor(task.id);
-        if (!prior.childAttemptId || execution.attempt?.id !== prior.childAttemptId || !execution.context || !execution.providerSession) throw new TaskStorageError('task-not-ready');
+        if (!prior.childAttemptId) {
+          const session = execution.providerSession;
+          if (!session || !execution.attempt || !execution.context || session.id !== request.providerSessionId) throw new TaskStorageError('task-not-ready');
+          const parentContext = { ...execution.context };
+          const parentSession = { ...session, capabilities: { ...session.capabilities } };
+          const attempt = { id: this.randomId(), number: execution.attempt.number + 1, state: 'starting' as const };
+          await this.appendVisible({ type: 'AttemptForked', version: 1, taskId: task.id, attempt, parentAttemptId: execution.attempt.id, parentSessionId: session.id });
+          return { execution: this.viewFor(task, this.executionFor(task.id)), created: true, parentContext, parentSession };
+        }
+        if (execution.attempt?.id !== prior.childAttemptId || !execution.context || !execution.providerSession) throw new TaskStorageError('task-not-ready');
         return { execution: this.viewFor(task, execution), created: false, parentContext: { ...execution.context }, parentSession: { ...execution.providerSession, capabilities: { ...execution.providerSession.capabilities } } };
       }
       const task = this.taskById(request.taskId); const execution = this.executionFor(task.id); const session = execution.providerSession;

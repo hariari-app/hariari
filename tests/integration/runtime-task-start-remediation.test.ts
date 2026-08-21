@@ -27,6 +27,11 @@ const FAILED_APPEND_MODES = ['zero-first', 'partial-then-zero', 'partial-then-er
 const FAILED_ALLOCATION_APPEND_CASES = ['ContextAllocated', 'AttemptFailed'].flatMap(
   (name, index) => FAILED_APPEND_MODES.map((mode) => ({ name, mode, writeCall: index + 3 })),
 );
+const CLAUDE_LIFECYCLE_APPEND_CASES = [
+  { name: 'ClaudeResumeRejected', writeCall: 1 },
+  { name: 'ClaudeForkRequested', writeCall: 1 },
+  { name: 'AttemptForked', writeCall: 2 },
+].flatMap((transition) => FAILED_APPEND_MODES.map((mode) => ({ ...transition, mode })));
 
 describe('authenticated Runtime Task start remediation', registerTaskStartTests);
 
@@ -49,10 +54,92 @@ function registerTaskStartTests(): void {
   it('resumes a matching Claude session without allocating another execution', resumesMatchingClaudeSession);
   it('records a scope-mismatched Claude resume rejection across restart', rejectsMismatchedClaudeResume);
   it('records an unsupported Claude resume rejection across restart', rejectsUnsupportedClaudeResume);
+  it(
+    'replays an unattached durable Claude fork as a starting child without inventing a native identity',
+    replaysUnattachedClaudeFork,
+  );
+  it.each(CLAUDE_LIFECYCLE_APPEND_CASES)(
+    'repairs $name $mode append failure for same-key Claude lifecycle retry and replay',
+    verifiesClaudeLifecycleAppendRecovery,
+  );
   it.each(FAILED_ALLOCATION_APPEND_CASES)(
     'preserves an allocated Git context across $name $mode append repair',
     async ({ writeCall, mode }) => preservesFailedContext(writeCall, mode),
   );
+}
+
+async function replaysUnattachedClaudeFork(): Promise<void> {
+  const childGate = deferred();
+  let stalledChild = false;
+  const adapter = new FakeGenericCliExecutionAdapter({
+    beforeStart: (request) => request.attempt.number === 2 && !stalledChild
+      ? (stalledChild = true, childGate.promise)
+      : undefined,
+  });
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const task = await runtime.createTask({ objective: 'Recover a durable Claude fork.', project: 'Hariari', repository: 'fake-checkout', baseRef: 'main', provider: 'claude', idempotencyKey: 'unattached-fork-create' });
+  const parent = await runtime.startTask({ taskId: task.id, idempotencyKey: 'unattached-fork-start' });
+  const fork = runtime.forkClaudeSession!({ taskId: task.id, providerSessionId: parent.providerSession!.id, idempotencyKey: 'unattached-fork' });
+  try {
+    await waitForAdapterStarts(adapter, task.id, 2);
+    await runtime.disconnect();
+    await subject.restart();
+    const restarted = await subject.connect();
+    await expect(restarted.getTaskExecution(task.id)).resolves.toMatchObject({
+      task: { executionState: 'starting' },
+      attempt: { number: 2, state: 'starting' },
+      context: null,
+      providerSession: null,
+      attempts: [{ number: 1 }, { number: 2, state: 'starting' }],
+      providerSessions: [parent.providerSession],
+    });
+    await expect(restarted.startTask({ taskId: task.id, idempotencyKey: 'unattached-fork-start' })).resolves.toMatchObject({
+      attempt: { number: 2, state: 'running' },
+      providerSession: { parentId: parent.providerSession!.id },
+    });
+    await restarted.disconnect();
+  } finally {
+    childGate.resolve();
+    await Promise.allSettled([fork]);
+  }
+}
+
+async function waitForAdapterStarts(adapter: FakeGenericCliExecutionAdapter, taskId: string, count: number): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (adapter.startCount(taskId) < count) {
+    if (Date.now() >= deadline) throw new Error(`expected ${count} adapter starts`);
+    await nextRuntimeTurn();
+  }
+}
+
+async function verifiesClaudeLifecycleAppendRecovery(
+  transition: (typeof CLAUDE_LIFECYCLE_APPEND_CASES)[number],
+): Promise<void> {
+  const adapter = new FakeGenericCliExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const task = await runtime.createTask({ objective: 'Repair a Claude lifecycle append.', project: 'Hariari', repository: 'fake-checkout', baseRef: 'main', provider: 'claude', idempotencyKey: `claude-${transition.name}-${transition.mode}-create` });
+  const parent = await runtime.startTask({ taskId: task.id, idempotencyKey: `claude-${transition.name}-${transition.mode}-start` });
+  const resume = { taskId: task.id, providerSessionId: parent.providerSession!.id, repository: 'other-checkout', worktreeId: parent.context!.worktreeId, branchName: parent.context!.branchName, idempotencyKey: `claude-${transition.name}-${transition.mode}` };
+  const fork = { taskId: task.id, providerSessionId: parent.providerSession!.id, idempotencyKey: resume.idempotencyKey };
+  corruptExecutionAppend(path.join(subject.runtimeDirectory, 'tasks', 'events.log'), transition.writeCall, transition.mode);
+  if (transition.name === 'ClaudeResumeRejected') {
+    await expect(runtime.resumeClaudeSession!(resume)).rejects.toEqual(new RuntimePortError('internal', true));
+    await expect(runtime.resumeClaudeSession!(resume)).rejects.toEqual(new RuntimePortError('not-found', false));
+  } else {
+    await expect(runtime.forkClaudeSession!(fork)).rejects.toEqual(new RuntimePortError('internal', true));
+    await expect(runtime.forkClaudeSession!(fork)).resolves.toMatchObject({ attempt: { number: 2, state: 'running' } });
+  }
+  await runtime.disconnect();
+  await subject.restart();
+  const restarted = await subject.connect();
+  if (transition.name === 'ClaudeResumeRejected') {
+    await expect(restarted.resumeClaudeSession!(resume)).rejects.toEqual(new RuntimePortError('not-found', false));
+  } else {
+    await expect(restarted.forkClaudeSession!(fork)).resolves.toMatchObject({ attempt: { number: 2, state: 'running' } });
+  }
+  await restarted.disconnect();
 }
 
 async function rejectsMismatchedClaudeResume(): Promise<void> {

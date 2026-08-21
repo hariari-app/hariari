@@ -42,7 +42,7 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
   constructor(
     private readonly options: {
       readonly autoExitOnStop?: boolean;
-      readonly beforeStart?: Promise<void>;
+      readonly beforeStart?: Promise<void> | ((request: GenericCliStartRequest) => Promise<void> | undefined);
       readonly startError?: (request: GenericCliStartRequest) => Error;
       readonly claudeCapabilities?: { readonly resume: boolean; readonly fork: boolean };
     } = {},
@@ -51,7 +51,8 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
   async start(request: GenericCliStartRequest): Promise<GenericCliExecution> {
     this.startCounts.set(request.task.id, this.startCount(request.task.id) + 1);
     this.signalFor(this.starts, request.task.id).resolve();
-    await this.options.beforeStart;
+    const beforeStart = this.options.beforeStart;
+    await (typeof beforeStart === 'function' ? beforeStart(request) : beforeStart);
     const startError = this.options.startError?.(request);
     if (startError) throw startError;
     const execution = new FakeGenericCliExecution(
