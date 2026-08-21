@@ -21,6 +21,11 @@ function registerRuntimeIpcTests(): void {
 }
 
 function registerTaskAuthorityTests(): void {
+  registerTaskAuthorityProjectionTest();
+  registerTaskIdempotencyValidationTest();
+}
+
+function registerTaskAuthorityProjectionTest(): void {
   it('exposes only create and list Task authority and sanitizes returned views', async () => {
     const runtime = new FakeRuntime({
       state: 'unavailable',
@@ -68,7 +73,9 @@ function registerTaskAuthorityTests(): void {
     );
     registration.dispose();
   });
+}
 
+function registerTaskIdempotencyValidationTest(): void {
   it('rejects an overlong Task idempotency key before calling Runtime', async () => {
     const runtime = new FakeRuntime({
       state: 'unavailable',
