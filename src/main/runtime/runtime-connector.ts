@@ -1,8 +1,10 @@
 import type {
+  CreateTaskRequest,
   RuntimeConnectionState,
   RuntimeInterface,
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
+  TaskView,
 } from '../../shared/runtime/runtime-interface';
 import {
   RuntimePortError,
@@ -86,6 +88,46 @@ class RuntimeConnector implements RuntimeInterface {
 
   shutdown(request: RuntimeShutdownRequest): Promise<RuntimeShutdownResult> {
     return this.lifecycle.beginShutdown(request, (owner) => this.performShutdown(request, owner));
+  }
+
+  createTask(request: CreateTaskRequest): Promise<TaskView> {
+    return this.withSession((session) =>
+      session.createTask(request, this.dependencies.connectDeadlineMs),
+    );
+  }
+
+  listTasks(): Promise<readonly TaskView[]> {
+    return this.withSession((session) => session.listTasks(this.dependencies.connectDeadlineMs));
+  }
+
+  private async withSession<T>(
+    operation: (session: RuntimeClientSession) => Promise<T>,
+  ): Promise<T> {
+    const connected = this.session ? null : await this.connectOrStart();
+    const session = this.session;
+    if (!session) {
+      const state = connected ?? this.supervisor.currentState();
+      if (state.state === 'unavailable') {
+        const code =
+          state.reason === 'credentials-unavailable' || state.reason === 'authentication-rejected'
+            ? state.reason
+            : 'connection-failed';
+        throw new RuntimePortError(code, state.retryable);
+      }
+      throw new RuntimePortError('connection-failed', true);
+    }
+    try {
+      return await operation(session);
+    } catch (error) {
+      if (
+        error instanceof RuntimePortError &&
+        ['transport-lost', 'protocol-error'].includes(error.code)
+      ) {
+        const generation = this.supervisor.currentGeneration();
+        if (generation !== null) await this.handleSessionFailure(session, generation, error);
+      }
+      throw error;
+    }
   }
 
   private async performShutdown(

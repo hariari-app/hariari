@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +11,7 @@ import type {
   RuntimeEndpoint,
   RuntimeProcessPort,
 } from '../../src/main/runtime/runtime-ports';
+import { RuntimePortError } from '../../src/main/runtime/runtime-ports';
 import type { RuntimeInterface } from '../../src/shared/runtime/runtime-interface';
 import {
   NodeLocalRuntimeTransport,
@@ -25,7 +26,10 @@ const directories: string[] = [];
 const servers: RuntimeServer[] = [];
 
 describe('real local Runtime Interface vertical', () => {
-  afterEach(cleanRuntimeFixtures);
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await cleanRuntimeFixtures();
+  });
   it(
     'starts, reconnects, queries health, disconnects, and shuts down through the public seam',
     verifiesRealRuntimeLifecycle,
@@ -35,7 +39,155 @@ describe('real local Runtime Interface vertical', () => {
     'keeps a healthy idle session connected across multiple server request deadlines',
     verifiesIdleHealthSupervision,
   );
+  it(
+    'creates, lists, idempotently replays, and rebuilds durable Tasks through RuntimeInterface',
+    verifiesDurableTasks,
+  );
+  it('replays a Task after a forced short event write', replaysTaskAfterShortWrite);
+  it(
+    'repairs a partial event write before an idempotent retry survives restart',
+    repairsPartialEventWriteBeforeRetry,
+  );
+  it('reports malformed Task creates as non-retryable invalid requests', rejectsMalformedTasks);
+  it('rejects an overlong Task idempotency key without losing transport', rejectsOverlongTaskKey);
 });
+
+async function replaysTaskAfterShortWrite(): Promise<void> {
+  const fixture = await createRealRuntimeFixture();
+  const runtime = fixture.createInterface();
+  await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  const eventPath = path.join(fixture.runtimeDirectory, 'tasks', 'events.log');
+  const open = fs.promises.open.bind(fs.promises);
+  vi.spyOn(fs.promises, 'open').mockImplementation(async (file, flags, mode) => {
+    const handle = await open(file, flags, mode);
+    if (file !== eventPath || flags !== 'a') return handle;
+    return new Proxy(handle, {
+      get(target, property, receiver) {
+        if (property !== 'write') return Reflect.get(target, property, receiver);
+        return async (data: Buffer) =>
+          target.write(data.subarray(0, data.length === 1 ? 1 : data.length - 1));
+      },
+    });
+  });
+  const created = await runtime.createTask(taskRequest('short-write'));
+  await runtime.disconnect();
+
+  await servers[0]?.stop();
+  const restarted = fixture.createInterface();
+  await expect(restarted.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  await expect(restarted.listTasks()).resolves.toEqual([created]);
+  await restarted.disconnect();
+}
+
+async function repairsPartialEventWriteBeforeRetry(): Promise<void> {
+  const fixture = await createRealRuntimeFixture();
+  const runtime = fixture.createInterface();
+  await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  const eventPath = path.join(fixture.runtimeDirectory, 'tasks', 'events.log');
+  const open = fs.promises.open.bind(fs.promises);
+  let writes = 0;
+  vi.spyOn(fs.promises, 'open').mockImplementation(async (file, flags, mode) => {
+    const handle = await open(file, flags, mode);
+    if (file !== eventPath || flags !== 'a') return handle;
+    return new Proxy(handle, {
+      get(target, property, receiver) {
+        if (property !== 'write') return Reflect.get(target, property, receiver);
+        return async (data: Buffer) => {
+          writes += 1;
+          if (writes === 1) return target.write(data.subarray(0, 1));
+          if (writes === 2) return { bytesWritten: 0, buffer: data };
+          return target.write(data);
+        };
+      },
+    });
+  });
+  const request = taskRequest('partial-zero-retry');
+
+  await expect(runtime.createTask(request)).rejects.toEqual(new RuntimePortError('internal', true));
+  const created = await runtime.createTask(request);
+  await runtime.disconnect();
+
+  await servers[0]?.stop();
+  const restarted = fixture.createInterface();
+  await expect(restarted.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  await expect(restarted.listTasks()).resolves.toEqual([created]);
+  await restarted.disconnect();
+}
+
+async function rejectsMalformedTasks(): Promise<void> {
+  const fixture = await createRealRuntimeFixture();
+  const runtime = fixture.createInterface();
+  await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  await runtime.disconnect();
+  const client = new NodeRuntimeClient({
+    transport: fixture.transport,
+    randomId: () => crypto.randomUUID(),
+    randomNonce: () => crypto.randomUUID(),
+  });
+  const connected = await client.connect(fixture.endpoint, new Uint8Array(32).fill(91), {
+    clientIdentity: { name: 'hariari-desktop', version: '0.6.8' },
+    supportedProtocolRange: { min: 1, max: 2 },
+    deadlineMs: 500,
+  });
+  if (connected.kind !== 'connected') throw new Error('expected connected Runtime');
+
+  await expect(
+    connected.session.createTask({ ...taskRequest('missing-objective'), objective: ' ' }),
+  ).rejects.toEqual(new RuntimePortError('invalid-request', false));
+  await expect(
+    connected.session.createTask({ ...taskRequest('bad-provider'), provider: 'invalid' } as never),
+  ).rejects.toEqual(new RuntimePortError('invalid-request', false));
+  await connected.session.disconnect();
+}
+
+async function rejectsOverlongTaskKey(): Promise<void> {
+  const fixture = await createRealRuntimeFixture();
+  const runtime = fixture.createInterface();
+  await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+
+  await expect(runtime.createTask(taskRequest('x'.repeat(129)))).rejects.toEqual(
+    new RuntimePortError('invalid-request', false),
+  );
+  await expect(runtime.createTask(taskRequest('x'.repeat(128)))).resolves.toMatchObject({
+    objective: 'Make durable task creation observable.',
+  });
+  await runtime.disconnect();
+}
+
+function taskRequest(idempotencyKey: string) {
+  return {
+    objective: 'Make durable task creation observable.',
+    project: 'Hariari',
+    repository: 'hariari-app/hariari',
+    baseRef: 'main',
+    provider: 'codex' as const,
+    idempotencyKey,
+  };
+}
+
+async function verifiesDurableTasks(): Promise<void> {
+  const fixture = await createRealRuntimeFixture();
+  const runtime = fixture.createInterface();
+  await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  const request = taskRequest('task-create-one');
+
+  const created = await runtime.createTask(request);
+  await expect(
+    Promise.all([runtime.createTask(request), runtime.createTask(request)]),
+  ).resolves.toEqual([created, created]);
+  await expect(
+    runtime.createTask({ ...request, objective: 'A different task with the same key' }),
+  ).rejects.toEqual(new RuntimePortError('idempotency-conflict', false));
+  await expect(runtime.listTasks()).resolves.toEqual([created]);
+  await runtime.disconnect();
+
+  await servers[0]?.stop();
+  fs.rmSync(path.join(fixture.runtimeDirectory, 'tasks', 'projection.json'));
+  const restarted = fixture.createInterface();
+  await expect(restarted.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  await expect(restarted.listTasks()).resolves.toEqual([created]);
+  await restarted.disconnect();
+}
 
 async function verifiesIdleHealthSupervision(): Promise<void> {
   const fixture = await createRealRuntimeFixture({
@@ -130,6 +282,7 @@ interface RealRuntimeFixture {
   readonly launches: { value: number };
   readonly createInterface: () => RuntimeInterface;
   readonly endpoint: RuntimeEndpoint;
+  readonly runtimeDirectory: string;
   readonly transport: GatedCloseTransport;
 }
 
@@ -190,7 +343,7 @@ async function createRealRuntimeFixture(
       now: Date.now,
       delay: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
     });
-  return { launches, createInterface, endpoint, transport };
+  return { launches, createInterface, endpoint, runtimeDirectory, transport };
 }
 
 interface ProcessFixtureOptions {

@@ -1,13 +1,18 @@
-import type {
-  RuntimeHealth,
-  RuntimeProtocolRange,
-  RuntimeShutdownRequest,
+import {
+  RUNTIME_IDENTIFIER_MAX_LENGTH,
+  TASK_PROVIDERS,
+  type CreateTaskRequest,
+  type RuntimeHealth,
+  type RuntimeProtocolRange,
+  type RuntimeShutdownRequest,
 } from '../shared/runtime/runtime-interface';
 import {
   RUNTIME_HANDSHAKE_VERSION,
   RUNTIME_HEALTH_OPERATION,
   RUNTIME_OPERATION_VERSION,
   RUNTIME_SHUTDOWN_OPERATION,
+  TASK_CREATE_OPERATION,
+  TASK_LIST_OPERATION,
   type RuntimeAuthenticateFrame,
   type RuntimeAuthenticatedReplyEnvelope,
   type RuntimeChallengeFrame,
@@ -19,9 +24,10 @@ import {
   type RuntimeWelcomeFrame,
 } from './protocol';
 
-const MAX_ID_LENGTH = 128;
 const MAX_VERSION_LENGTH = 128;
 const MAX_PROOF_LENGTH = 128;
+const MAX_TASK_FIELD_LENGTH = 512;
+const TASK_PROVIDER_SET = new Set<string>(TASK_PROVIDERS);
 
 export class RuntimeProtocolValidationError extends Error {
   constructor() {
@@ -124,7 +130,7 @@ export function parseRequestFrame(value: unknown): RuntimeRequestFrame {
     operation: operation(frame.operation),
     correlationId: identifier(frame.correlationId),
     causationId: optionalIdentifier(frame.causationId),
-    idempotencyKey: optionalIdentifier(frame.idempotencyKey),
+    idempotencyKey: optionalTaskIdempotencyKey(frame.idempotencyKey),
     payload: object(frame.payload),
   };
 }
@@ -186,6 +192,56 @@ export function parseShutdownRequest(request: RuntimeRequestFrame): RuntimeShutd
   };
 }
 
+export function parseCreateTaskRequest(request: RuntimeRequestFrame): CreateTaskRequest {
+  if (request.operation.name !== TASK_CREATE_OPERATION || !request.idempotencyKey) invalid();
+  return parseTaskRequest({ ...request.payload, idempotencyKey: request.idempotencyKey });
+}
+
+export function parseTaskRequest(value: unknown): CreateTaskRequest {
+  const request = object(value);
+  const provider = boundedString(request.provider, MAX_TASK_FIELD_LENGTH);
+  if (!TASK_PROVIDER_SET.has(provider)) invalid();
+  return {
+    objective: requiredTaskField(request.objective),
+    project: requiredTaskField(request.project),
+    repository: requiredTaskField(request.repository),
+    baseRef: requiredTaskField(request.baseRef),
+    provider: provider as CreateTaskRequest['provider'],
+    idempotencyKey: requiredTaskIdentifier(request.idempotencyKey),
+  };
+}
+
+export function parseTaskView(value: Record<string, unknown>) {
+  const provider = boundedString(value.provider, MAX_TASK_FIELD_LENGTH);
+  if (!TASK_PROVIDER_SET.has(provider)) invalid();
+  return {
+    id: identifier(value.id),
+    objective: requiredTaskField(value.objective),
+    project: requiredTaskField(value.project),
+    repository: requiredTaskField(value.repository),
+    baseRef: requiredTaskField(value.baseRef),
+    provider: provider as CreateTaskRequest['provider'],
+    createdAt: timestamp(value.createdAt),
+  };
+}
+
+export function parseTaskList(value: Record<string, unknown>) {
+  if (!Array.isArray(value.tasks)) invalid();
+  return value.tasks.map((task) => parseTaskView(object(task)));
+}
+
+function requiredTaskField(value: unknown): string {
+  const field = boundedString(value, MAX_TASK_FIELD_LENGTH);
+  if (field.trim().length === 0) invalid();
+  return field;
+}
+
+function requiredTaskIdentifier(value: unknown): string {
+  const field = boundedString(value, RUNTIME_IDENTIFIER_MAX_LENGTH);
+  if (field.trim().length === 0) invalid();
+  return field;
+}
+
 export function parseStoppedResult(value: Record<string, unknown>): {
   readonly state: 'stopped';
   readonly instanceId: string;
@@ -198,7 +254,13 @@ function operation(value: unknown): RuntimeOperationFrame {
   const candidate = object(value);
   if (candidate.version !== RUNTIME_OPERATION_VERSION) invalid();
   const name = candidate.name;
-  if (name !== RUNTIME_HEALTH_OPERATION && name !== RUNTIME_SHUTDOWN_OPERATION) invalid();
+  if (
+    name !== RUNTIME_HEALTH_OPERATION &&
+    name !== RUNTIME_SHUTDOWN_OPERATION &&
+    name !== TASK_CREATE_OPERATION &&
+    name !== TASK_LIST_OPERATION
+  )
+    invalid();
   return { name, version: RUNTIME_OPERATION_VERSION };
 }
 
@@ -221,15 +283,21 @@ function boundedString(value: unknown, maximum: number): string {
 }
 
 function identifier(value: unknown): string {
-  return boundedString(value, MAX_ID_LENGTH);
+  return boundedString(value, RUNTIME_IDENTIFIER_MAX_LENGTH);
 }
 
 function optionalIdentifier(value: unknown): string | null {
   return value === null ? null : identifier(value);
 }
 
+function optionalTaskIdempotencyKey(value: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string' || value.length === 0) invalid();
+  return value;
+}
+
 function nonce(value: unknown): string {
-  const result = boundedString(value, MAX_ID_LENGTH);
+  const result = boundedString(value, RUNTIME_IDENTIFIER_MAX_LENGTH);
   if (result.length < 4 || !/^[A-Za-z0-9_-]+$/.test(result)) invalid();
   return result;
 }
@@ -240,7 +308,7 @@ function positiveInteger(value: unknown): number {
 }
 
 function timestamp(value: unknown): string {
-  const result = boundedString(value, MAX_ID_LENGTH);
+  const result = boundedString(value, RUNTIME_IDENTIFIER_MAX_LENGTH);
   if (!result.endsWith('Z') || !Number.isFinite(Date.parse(result))) invalid();
   return result;
 }

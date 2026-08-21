@@ -223,6 +223,8 @@ function serialSession(
         return session.queryHealth(deadlineMs);
       }),
     shutdown: (request, deadlineMs) => enqueue(() => session.shutdown(request, deadlineMs)),
+    createTask: (request, deadlineMs) => enqueue(() => session.createTask(request, deadlineMs)),
+    listTasks: (deadlineMs) => enqueue(() => session.listTasks(deadlineMs)),
     disconnect: () => session.disconnect(),
     onDisconnect: (listener) => session.onDisconnect(listener),
   };
@@ -277,6 +279,8 @@ function orderedShutdownClient(client: RuntimeClientPort, gate: ShutdownGate): R
             }
             return connection.session.shutdown(request, deadlineMs);
           },
+          createTask: (request, deadlineMs) => connection.session.createTask(request, deadlineMs),
+          listTasks: (deadlineMs) => connection.session.listTasks(deadlineMs),
           disconnect: () => connection.session.disconnect(),
           onDisconnect: (listener) => connection.session.onDisconnect(listener),
         },
@@ -297,6 +301,8 @@ function gatedShutdownSession(
       await release.promise;
       return session.shutdown(request, deadlineMs);
     },
+    createTask: (request, deadlineMs) => session.createTask(request, deadlineMs),
+    listTasks: (deadlineMs) => session.listTasks(deadlineMs),
     disconnect: () => session.disconnect(),
     onDisconnect: (listener) => session.onDisconnect(listener),
   };

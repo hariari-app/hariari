@@ -3,6 +3,8 @@ export interface RuntimeProtocolRange {
   readonly max: number;
 }
 
+export const RUNTIME_IDENTIFIER_MAX_LENGTH = 128;
+
 export interface RuntimeHealth {
   readonly status: 'ready';
   readonly instanceId: string;
@@ -11,6 +13,43 @@ export interface RuntimeHealth {
   readonly protocolVersion: number;
   readonly startedAt: string;
   readonly checkedAt: string;
+}
+
+export const TASK_PROVIDERS = [
+  'claude',
+  'gemini',
+  'codex',
+  'pi',
+  'opencode',
+  'cline',
+  'copilot',
+  'amp',
+  'continue',
+  'cursor',
+  'crush',
+  'qwen',
+  'shell',
+] as const;
+
+export type TaskProvider = (typeof TASK_PROVIDERS)[number];
+
+export interface CreateTaskRequest {
+  readonly objective: string;
+  readonly project: string;
+  readonly repository: string;
+  readonly baseRef: string;
+  readonly provider: TaskProvider;
+  readonly idempotencyKey: string;
+}
+
+export interface TaskView {
+  readonly id: string;
+  readonly objective: string;
+  readonly project: string;
+  readonly repository: string;
+  readonly baseRef: string;
+  readonly provider: TaskProvider;
+  readonly createdAt: string;
 }
 
 export type RuntimeOperationFailureCode =
@@ -74,4 +113,6 @@ export interface RuntimeInterface {
   subscribeStatus(listener: (state: RuntimeConnectionState) => void): () => void;
   disconnect(): Promise<void>;
   shutdown(request: RuntimeShutdownRequest): Promise<RuntimeShutdownResult>;
+  createTask(request: CreateTaskRequest): Promise<TaskView>;
+  listTasks(): Promise<readonly TaskView[]>;
 }

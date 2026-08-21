@@ -2,8 +2,10 @@ import type { AgentConfig, AgentInfo, AgentStatus, AgentType } from './agent-typ
 import type { LayoutNode } from './layout-types';
 import type { SessionRecording } from './session-types';
 import type {
+  CreateTaskRequest,
   RuntimeProtocolRange,
   RuntimeUnavailableReason,
+  TaskView,
 } from './runtime/runtime-interface';
 
 export type RuntimeRendererStatus =
@@ -279,6 +281,10 @@ export interface HariariApi {
   runtime: {
     getStatus(): Promise<RuntimeRendererStatus>;
     onStatus(callback: (status: RuntimeRendererStatus) => void): () => void;
+  };
+  tasks: {
+    create(request: CreateTaskRequest): Promise<TaskView>;
+    list(): Promise<readonly TaskView[]>;
   };
   shell: {
     openExternal(url: string): Promise<void>;

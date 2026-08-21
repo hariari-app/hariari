@@ -209,6 +209,10 @@ contextBridge.exposeInMainWorld('api', {
       };
     },
   },
+  tasks: {
+    create: (request: unknown) => ipcRenderer.invoke(IPC_CHANNELS.TASKS_CREATE, request),
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.TASKS_LIST),
+  },
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_EXTERNAL, url),
   },

@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
+  CreateTaskRequest,
   RuntimeConnectionState,
   RuntimeInterface,
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
+  TaskView,
 } from '../../src/shared/runtime/runtime-interface';
 import { IPC_CHANNELS } from '../../src/shared/constants';
 import { registerRuntimeIpc } from '../../src/main/ipc/runtime-ipc';
@@ -15,6 +17,87 @@ function registerRuntimeIpcTests(): void {
   registerStatusPublicationTest();
   registerStatusReplayTest();
   registerRegistrationLifecycleTests();
+  registerTaskAuthorityTests();
+}
+
+function registerTaskAuthorityTests(): void {
+  registerTaskAuthorityProjectionTest();
+  registerTaskIdempotencyValidationTest();
+}
+
+function registerTaskAuthorityProjectionTest(): void {
+  it('exposes only create and list Task authority and sanitizes returned views', async () => {
+    const runtime = new FakeRuntime({
+      state: 'unavailable',
+      reason: 'not-connected',
+      retryable: true,
+    });
+    runtime.tasks = [
+      {
+        id: 'task-private-id',
+        objective: 'Ship durable tasks',
+        project: 'Hariari',
+        repository: 'hariari-app/hariari',
+        baseRef: 'main',
+        provider: 'codex',
+        createdAt: '2026-08-21T10:00:00.000Z',
+        storagePath: '/private/tasks/events.log',
+      } as unknown as TaskView,
+    ];
+    const ipc = new FakeIpcRegistry();
+    const registration = registerRuntimeIpc(runtime, ipc, vi.fn());
+
+    await expect(ipc.invoke(IPC_CHANNELS.TASKS_LIST)).resolves.toEqual([
+      {
+        id: 'task-private-id',
+        objective: 'Ship durable tasks',
+        project: 'Hariari',
+        repository: 'hariari-app/hariari',
+        baseRef: 'main',
+        provider: 'codex',
+        createdAt: '2026-08-21T10:00:00.000Z',
+      },
+    ]);
+    await expect(
+      ipc.invoke(IPC_CHANNELS.TASKS_CREATE, {
+        objective: 'New task',
+        project: 'Hariari',
+        repository: 'hariari-app/hariari',
+        baseRef: 'main',
+        provider: 'codex',
+        idempotencyKey: 'create-task-one',
+      }),
+    ).resolves.toMatchObject({ objective: 'New task' });
+    expect(ipc.channels()).toEqual(
+      [IPC_CHANNELS.RUNTIME_GET_STATUS, IPC_CHANNELS.TASKS_CREATE, IPC_CHANNELS.TASKS_LIST].sort(),
+    );
+    registration.dispose();
+  });
+}
+
+function registerTaskIdempotencyValidationTest(): void {
+  it('rejects an overlong Task idempotency key before calling Runtime', async () => {
+    const runtime = new FakeRuntime({
+      state: 'unavailable',
+      reason: 'not-connected',
+      retryable: true,
+    });
+    const ipc = new FakeIpcRegistry();
+    const registration = registerRuntimeIpc(runtime, ipc, vi.fn());
+
+    await expect(
+      ipc.invoke(IPC_CHANNELS.TASKS_CREATE, {
+        objective: 'New task',
+        project: 'Hariari',
+        repository: 'hariari-app/hariari',
+        baseRef: 'main',
+        provider: 'codex',
+        idempotencyKey: 'x'.repeat(129),
+      }),
+    ).rejects.toThrow('Runtime protocol frame is invalid');
+    expect(runtime.tasks).toEqual([]);
+    registration.dispose();
+  });
 }
 
 function registerInitialStatusTest(): void {
@@ -145,7 +228,9 @@ function registerRegistrationLifecycleTests(): void {
     expect(first.unsubscribeCalls).toBe(1);
     expect(first.listenerCount).toBe(0);
     expect(second.listenerCount).toBe(1);
-    expect(ipc.channels()).toEqual([IPC_CHANNELS.RUNTIME_GET_STATUS]);
+    expect(ipc.channels()).toEqual(
+      [IPC_CHANNELS.RUNTIME_GET_STATUS, IPC_CHANNELS.TASKS_CREATE, IPC_CHANNELS.TASKS_LIST].sort(),
+    );
     expect(first.connectCalls).toBe(0);
     expect(second.connectCalls).toBe(0);
     expect(
@@ -158,9 +243,9 @@ function registerRegistrationLifecycleTests(): void {
 }
 
 class FakeIpcRegistry {
-  private readonly handlers = new Map<string, () => unknown>();
+  private readonly handlers = new Map<string, (...args: unknown[]) => unknown>();
 
-  handle(channel: string, handler: () => unknown): void {
+  handle(channel: string, handler: (...args: unknown[]) => unknown): void {
     if (this.handlers.has(channel)) throw new Error(`duplicate handler: ${channel}`);
     this.handlers.set(channel, handler);
   }
@@ -169,10 +254,10 @@ class FakeIpcRegistry {
     this.handlers.delete(channel);
   }
 
-  async invoke(channel: string): Promise<unknown> {
+  async invoke(channel: string, ...args: unknown[]): Promise<unknown> {
     const handler = this.handlers.get(channel);
     if (!handler) throw new Error(`missing handler: ${channel}`);
-    return handler();
+    return handler({}, ...args);
   }
 
   channels(): string[] {
@@ -185,6 +270,7 @@ class FakeRuntime implements RuntimeInterface {
   connectCalls = 0;
   unsubscribeCalls = 0;
   connectResult: RuntimeConnectionState;
+  tasks: TaskView[] = [];
 
   constructor(private state: RuntimeConnectionState) {
     this.connectResult = state;
@@ -221,5 +307,23 @@ class FakeRuntime implements RuntimeInterface {
 
   async shutdown(_request: RuntimeShutdownRequest): Promise<RuntimeShutdownResult> {
     return { state: 'not-running' };
+  }
+
+  async createTask(request: CreateTaskRequest): Promise<TaskView> {
+    const task: TaskView = {
+      id: `task-${this.tasks.length + 1}`,
+      objective: request.objective,
+      project: request.project,
+      repository: request.repository,
+      baseRef: request.baseRef,
+      provider: request.provider,
+      createdAt: '2026-08-21T10:00:00.000Z',
+    };
+    this.tasks.push(task);
+    return task;
+  }
+
+  async listTasks(): Promise<readonly TaskView[]> {
+    return this.tasks;
   }
 }

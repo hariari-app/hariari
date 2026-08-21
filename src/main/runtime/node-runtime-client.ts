@@ -1,7 +1,9 @@
 import type {
+  CreateTaskRequest,
   RuntimeHealth,
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
+  TaskView,
 } from '../../shared/runtime/runtime-interface';
 import type {
   RuntimeFrameConnection,
@@ -13,6 +15,8 @@ import {
   RUNTIME_HEALTH_OPERATION,
   RUNTIME_OPERATION_VERSION,
   RUNTIME_SHUTDOWN_OPERATION,
+  TASK_CREATE_OPERATION,
+  TASK_LIST_OPERATION,
   createClientProof,
   selectHighestMutualVersion,
   verifyServerProof,
@@ -30,6 +34,8 @@ import {
   parseHealthResult,
   parseResponseFrame,
   parseStoppedResult,
+  parseTaskList,
+  parseTaskView,
 } from '../../runtime/protocol-validation';
 import {
   RuntimePortError,
@@ -211,6 +217,31 @@ class NodeRuntimeClientSession implements RuntimeClientSession {
       );
       return parseStoppedResult(result);
     });
+  }
+
+  createTask(request: CreateTaskRequest, deadlineMs = 2_000): Promise<TaskView> {
+    return this.enqueue(async () =>
+      parseTaskView(
+        await this.request(
+          TASK_CREATE_OPERATION,
+          {
+            objective: request.objective,
+            project: request.project,
+            repository: request.repository,
+            baseRef: request.baseRef,
+            provider: request.provider,
+          },
+          request.idempotencyKey,
+          deadlineMs,
+        ),
+      ),
+    );
+  }
+
+  listTasks(deadlineMs = 2_000): Promise<readonly TaskView[]> {
+    return this.enqueue(async () =>
+      parseTaskList(await this.request(TASK_LIST_OPERATION, {}, null, deadlineMs)),
+    );
   }
 
   async disconnect(): Promise<void> {

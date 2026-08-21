@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
+  CreateTaskRequest,
   RuntimeConnectionState,
   RuntimeInterface,
   RuntimeShutdownRequest,
+  TaskView,
 } from '../../src/shared/runtime/runtime-interface';
 import { verifyRuntimePackageSmoke } from '../../src/main/runtime/runtime-package-smoke';
 
@@ -54,6 +56,14 @@ class SmokeRuntime implements RuntimeInterface {
   subscribeStatus(listener: (state: RuntimeConnectionState) => void): () => void {
     listener(this.state);
     return () => undefined;
+  }
+
+  async createTask(_request: CreateTaskRequest): Promise<TaskView> {
+    throw new Error('not used by package smoke');
+  }
+
+  async listTasks(): Promise<readonly TaskView[]> {
+    return [];
   }
 }
 

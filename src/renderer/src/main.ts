@@ -1,7 +1,7 @@
 import '@xterm/xterm/css/xterm.css';
 import './styles/global.css';
 import './styles/runtime-health.css';
-import { mountRuntimeHealth } from './runtime-health';
+import { mountRuntimeTasksSurface } from './runtime-tasks-surface';
 import './styles/terminal.css';
 import './styles/tab-bar.css';
 import './styles/source-control.css';
@@ -329,7 +329,6 @@ function main(): void {
   runtimeHealthHost.className = 'runtime-health-host';
   const versionElement = hintBar.querySelector('.hint-version');
   hintBar.insertBefore(runtimeHealthHost, versionElement);
-  const disposeRuntimeHealth = mountRuntimeHealth(runtimeHealthHost, window.api.runtime);
   appEl.appendChild(hintBar);
 
   // Aria-live region for screen reader announcements of agent status changes
@@ -532,6 +531,7 @@ function main(): void {
       });
     },
   });
+  const disposeRuntimeSurface = mountRuntimeTasksSurface(runtimeHealthHost, sidebarEl, window.api);
 
   // Store subscription — fan out state changes to both sidebar and tab bar
   store.subscribe((state, prev) => {
@@ -1670,7 +1670,7 @@ function main(): void {
   // Save state on window unload
   window.addEventListener('beforeunload', () => {
     clearInterval(autoSaveTimer);
-    disposeRuntimeHealth();
+    disposeRuntimeSurface();
     saveGlobalState();
   });
 }

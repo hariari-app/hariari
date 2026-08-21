@@ -103,6 +103,8 @@ function createRuntime(shutdownResult: Promise<RuntimeShutdownResult>): RuntimeF
     }),
     disconnect: vi.fn(async () => undefined),
     shutdown: vi.fn((_request: RuntimeShutdownRequest) => shutdownResult),
+    createTask: vi.fn(),
+    listTasks: vi.fn(),
   };
 }
 
@@ -111,6 +113,8 @@ type RuntimeFake = RuntimeInterface & {
   queryHealth: ReturnType<typeof vi.fn<RuntimeInterface['queryHealth']>>;
   disconnect: ReturnType<typeof vi.fn<RuntimeInterface['disconnect']>>;
   shutdown: ReturnType<typeof vi.fn<RuntimeInterface['shutdown']>>;
+  createTask: ReturnType<typeof vi.fn<RuntimeInterface['createTask']>>;
+  listTasks: ReturnType<typeof vi.fn<RuntimeInterface['listTasks']>>;
 };
 
 class FakeIpcRegistry {

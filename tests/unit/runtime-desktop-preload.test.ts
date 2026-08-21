@@ -25,12 +25,16 @@ describe('Desktop Runtime preload API', () => {
     vi.stubGlobal('APP_VERSION', '0.6.8');
   });
 
-  it('exposes only status reads and a removable status listener', async () => {
+  it('exposes status reads plus only create/list Task authority', async () => {
     await import('../../src/preload/index');
     const api = electron.exposeInMainWorld.mock.calls[0]?.[1] as {
       runtime: {
         getStatus(): Promise<unknown>;
         onStatus(callback: (status: RuntimeRendererStatus) => void): () => void;
+      };
+      tasks: {
+        create(request: unknown): Promise<unknown>;
+        list(): Promise<unknown>;
       };
     };
 
@@ -54,10 +58,16 @@ describe('Desktop Runtime preload API', () => {
     expect(callback).toHaveBeenCalledWith(status);
 
     unsubscribe();
-    expect(electron.removeListener).toHaveBeenCalledWith(
-      IPC_CHANNELS.RUNTIME_STATUS,
-      handler,
-    );
+    expect(electron.removeListener).toHaveBeenCalledWith(IPC_CHANNELS.RUNTIME_STATUS, handler);
     expect(JSON.stringify(api.runtime)).not.toMatch(/shutdown|process|token|endpoint|path/);
+
+    await api.tasks.create({ objective: 'Create task' });
+    await api.tasks.list();
+    expect(Object.keys(api.tasks).sort()).toEqual(['create', 'list']);
+    expect(electron.invoke).toHaveBeenCalledWith(IPC_CHANNELS.TASKS_CREATE, {
+      objective: 'Create task',
+    });
+    expect(electron.invoke).toHaveBeenCalledWith(IPC_CHANNELS.TASKS_LIST);
+    expect(JSON.stringify(api.tasks)).not.toMatch(/rebuild|storage|path|runtime/);
   });
 });

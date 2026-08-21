@@ -10,6 +10,8 @@ import {
   RUNTIME_HEALTH_OPERATION,
   RUNTIME_OPERATION_VERSION,
   RUNTIME_SHUTDOWN_OPERATION,
+  TASK_CREATE_OPERATION,
+  TASK_LIST_OPERATION,
   createAuthenticatedReplyEnvelope,
   createServerProof,
   selectHighestMutualVersion,
@@ -24,8 +26,10 @@ import {
 import {
   parseAuthenticateFrame,
   parseRequestFrame,
+  parseCreateTaskRequest,
   parseShutdownRequest,
 } from './protocol-validation';
+import { TaskModule, TaskStorageError } from './task-module';
 
 export interface RuntimeServerOptions {
   readonly transport: RuntimeLocalTransport;
@@ -58,6 +62,7 @@ export class RuntimeServer {
   readonly identity: RuntimeIdentityFrame;
   private readonly connections = new Set<RuntimeFrameConnection>();
   private readonly shutdownRecords = new Map<string, ShutdownRecord>();
+  private readonly tasks: TaskModule;
   private lifecycle: RuntimeServerLifecycle = { phase: 'idle' };
 
   constructor(private readonly options: RuntimeServerOptions) {
@@ -67,14 +72,19 @@ export class RuntimeServer {
       buildId: options.buildId,
       startedAt: new Date(options.now()).toISOString(),
     };
+    this.tasks = new TaskModule(options.endpoint.runtimeDirectory, options.now, options.randomId);
   }
 
   async start(): Promise<void> {
     if (this.lifecycle.phase === 'starting') return void (await this.lifecycle.listener);
     if (this.lifecycle.phase !== 'idle') return;
-    const listener = this.options.transport.listen(this.options.endpoint, (connection) =>
-      this.serveConnection(connection),
-    );
+    const listener = this.tasks
+      .start()
+      .then(() =>
+        this.options.transport.listen(this.options.endpoint, (connection) =>
+          this.serveConnection(connection),
+        ),
+      );
     const starting = { phase: 'starting' as const, listener };
     this.lifecycle = starting;
     try {
@@ -112,7 +122,7 @@ export class RuntimeServer {
       while (!this.isStopping()) {
         const frame = await connection.readFrame(this.options.requestDeadlineMs);
         const request = parseRequestFrame(frame);
-        const response = this.handleRequest(request, selectedProtocol);
+        const response = await this.handleRequest(request, selectedProtocol);
         const acceptedShutdown = stopsRuntime(request, response);
         try {
           await connection.writeFrame({ ...response }, this.options.requestDeadlineMs);
@@ -204,10 +214,10 @@ export class RuntimeServer {
     );
   }
 
-  private handleRequest(
+  private async handleRequest(
     request: RuntimeRequestFrame,
     protocolVersion: number,
-  ): RuntimeResponseFrame {
+  ): Promise<RuntimeResponseFrame> {
     if (request.protocolVersion !== protocolVersion) {
       return failure(request, protocolVersion, 'invalid-request', false);
     }
@@ -222,6 +232,32 @@ export class RuntimeServer {
         protocolVersion,
         checkedAt: new Date(this.options.now()).toISOString(),
       });
+    }
+    if (request.operation.name === TASK_LIST_OPERATION) {
+      if (request.idempotencyKey !== null || Object.keys(request.payload).length !== 0) {
+        return failure(request, protocolVersion, 'invalid-request', false);
+      }
+      return success(request, protocolVersion, { tasks: this.tasks.list() });
+    }
+    if (request.operation.name === TASK_CREATE_OPERATION) {
+      let taskRequest;
+      try {
+        taskRequest = parseCreateTaskRequest(request);
+      } catch {
+        return failure(request, protocolVersion, 'invalid-request', false);
+      }
+      try {
+        return success(
+          request,
+          protocolVersion,
+          (await this.tasks.create(taskRequest)) as unknown as Record<string, unknown>,
+        );
+      } catch (error) {
+        if (error instanceof TaskStorageError) {
+          return failure(request, protocolVersion, error.code, error.code === 'internal');
+        }
+        return failure(request, protocolVersion, 'internal', true);
+      }
     }
     return this.handleShutdown(request, protocolVersion);
   }
