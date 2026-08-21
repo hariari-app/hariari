@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_CHANNELS } from '../shared/constants';
 import type { AgentStatus } from '../shared/agent-types';
+import type { RuntimeRendererStatus } from '../shared/ipc-types';
 
 contextBridge.exposeInMainWorld('api', {
   platform: process.platform,
@@ -192,6 +193,19 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.on(IPC_CHANNELS.UPDATE_STATUS, handler);
       return () => {
         ipcRenderer.removeListener(IPC_CHANNELS.UPDATE_STATUS, handler);
+      };
+    },
+  },
+  runtime: {
+    getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_GET_STATUS),
+    onStatus: (callback: (status: RuntimeRendererStatus) => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        status: RuntimeRendererStatus,
+      ) => callback(status);
+      ipcRenderer.on(IPC_CHANNELS.RUNTIME_STATUS, handler);
+      return () => {
+        ipcRenderer.removeListener(IPC_CHANNELS.RUNTIME_STATUS, handler);
       };
     },
   },

@@ -331,7 +331,6 @@ select:focus-visible {
 }
 
 .hint-version {
-  margin-left: auto;
   color: var(--fg-faint);
   font-size: var(--font-xs);
   opacity: 0.6;

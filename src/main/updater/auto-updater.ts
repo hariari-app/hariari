@@ -3,6 +3,17 @@ import { IPC_CHANNELS } from '../../shared/constants';
 
 // Lazy-load electron-updater so dev mode never crashes on missing native deps
 type AutoUpdater = typeof import('electron-updater').autoUpdater;
+export type AutoUpdaterPort = Pick<
+  AutoUpdater,
+  | 'autoDownload'
+  | 'autoInstallOnAppQuit'
+  | 'autoRunAppAfterInstall'
+  | 'checkForUpdates'
+  | 'downloadUpdate'
+  | 'on'
+  | 'quitAndInstall'
+  | 'removeAllListeners'
+>;
 
 let cachedAutoUpdater: AutoUpdater | undefined;
 
@@ -45,8 +56,13 @@ export class AutoUpdateManager {
   private currentStatus: UpdateStatus = { state: 'not-available' };
   private isChecking = false;
   private installTriggered = false;
+  private updater: AutoUpdaterPort | undefined;
 
-  constructor() {
+  constructor(
+    private readonly prepareForInstall: () => Promise<void>,
+    updater?: AutoUpdaterPort,
+  ) {
+    this.updater = updater;
     // Don't run in dev mode — electron-updater requires a packaged app
     if (!app.isPackaged) {
       console.log('[AutoUpdater] Skipping — app is not packaged (dev mode)');
@@ -85,24 +101,25 @@ export class AutoUpdateManager {
     ipcMain.removeHandler(IPC_CHANNELS.UPDATE_DOWNLOAD);
     ipcMain.removeHandler(IPC_CHANNELS.UPDATE_INSTALL);
     // Remove autoUpdater event listeners to prevent stacking on reload
-    if (app.isPackaged) getAutoUpdater().removeAllListeners();
+    if (app.isPackaged) this.getUpdater().removeAllListeners();
   }
 
   private readonly manualUpdateOnly = isLinuxNonAppImage();
 
   private configureUpdater(): void {
     // Non-AppImage Linux installs can't auto-update — only check for new versions
-    getAutoUpdater().autoDownload = !this.manualUpdateOnly;
-    getAutoUpdater().autoInstallOnAppQuit = !this.manualUpdateOnly;
-    getAutoUpdater().autoRunAppAfterInstall = true;
+    this.getUpdater().autoDownload = !this.manualUpdateOnly;
+    // Installation must use the guarded IPC path so Runtime stops before Desktop quits.
+    this.getUpdater().autoInstallOnAppQuit = false;
+    this.getUpdater().autoRunAppAfterInstall = true;
   }
 
   private registerEvents(): void {
-    getAutoUpdater().on('checking-for-update', () => {
+    this.getUpdater().on('checking-for-update', () => {
       this.sendStatus({ state: 'checking' });
     });
 
-    getAutoUpdater().on('update-available', (info: { version: string }) => {
+    this.getUpdater().on('update-available', (info: { version: string }) => {
       if (this.manualUpdateOnly) {
         // Non-AppImage Linux: direct user to download from GitHub
         const downloadUrl = `https://github.com/hariari-app/hariari/releases/tag/v${info.version}`;
@@ -119,25 +136,25 @@ export class AutoUpdateManager {
       });
     });
 
-    getAutoUpdater().on('update-not-available', () => {
+    this.getUpdater().on('update-not-available', () => {
       this.sendStatus({ state: 'not-available' });
     });
 
-    getAutoUpdater().on('download-progress', (progress: { percent: number }) => {
+    this.getUpdater().on('download-progress', (progress: { percent: number }) => {
       this.sendStatus({
         state: 'downloading',
         progress: Math.round(progress.percent),
       });
     });
 
-    getAutoUpdater().on('update-downloaded', (info: { version: string }) => {
+    this.getUpdater().on('update-downloaded', (info: { version: string }) => {
       this.sendStatus({
         state: 'downloaded',
         version: info.version,
       });
     });
 
-    getAutoUpdater().on('error', (err: Error) => {
+    this.getUpdater().on('error', (err: Error) => {
       console.error('[AutoUpdater] Error:', err.message);
       // Sanitize error — don't expose internal paths or API responses to renderer
       const safeError = err.message.includes('net::')
@@ -163,7 +180,7 @@ export class AutoUpdateManager {
         return { ok: false, error: 'Download already in progress' };
       }
       try {
-        await getAutoUpdater().downloadUpdate();
+        await this.getUpdater().downloadUpdate();
         return { ok: true };
       } catch (err) {
         console.error('[AutoUpdater] Download failed:', err);
@@ -171,25 +188,34 @@ export class AutoUpdateManager {
       }
     });
 
-    ipcMain.handle(IPC_CHANNELS.UPDATE_INSTALL, () => {
-      if (this.currentStatus.state !== 'downloaded') {
-        return { ok: false, error: 'No update downloaded' };
-      }
-      if (this.installTriggered) {
-        return { ok: false, error: 'Install already triggered' };
-      }
-      this.installTriggered = true;
-      getAutoUpdater().quitAndInstall(false, true);
-    });
+    ipcMain.handle(IPC_CHANNELS.UPDATE_INSTALL, async () => this.installUpdate());
+  }
+
+  private async installUpdate(): Promise<{ readonly ok: boolean; readonly error?: string }> {
+    if (this.currentStatus.state !== 'downloaded') {
+      return { ok: false, error: 'No update downloaded' };
+    }
+    if (this.installTriggered) return { ok: false, error: 'Install already triggered' };
+    this.installTriggered = true;
+    try {
+      await this.prepareForInstall();
+    } catch (error) {
+      this.installTriggered = false;
+      console.error('[AutoUpdater] Runtime shutdown preparation failed:', error);
+      return { ok: false, error: 'Unable to prepare update installation — try again' };
+    }
+    this.getUpdater().quitAndInstall(false, true);
+    return { ok: true };
   }
 
   private async checkForUpdates(): Promise<void> {
     if (this.isChecking) return;
     // Don't re-check while a download is active or update is ready to install
-    if (this.currentStatus.state === 'downloading' || this.currentStatus.state === 'downloaded') return;
+    if (this.currentStatus.state === 'downloading' || this.currentStatus.state === 'downloaded')
+      return;
     this.isChecking = true;
     try {
-      await getAutoUpdater().checkForUpdates();
+      await this.getUpdater().checkForUpdates();
     } catch (err) {
       console.warn('[AutoUpdater] Check failed:', (err as Error).message);
     } finally {
@@ -202,5 +228,10 @@ export class AutoUpdateManager {
     if (this.window && !this.window.isDestroyed()) {
       this.window.webContents.send(IPC_CHANNELS.UPDATE_STATUS, status);
     }
+  }
+
+  private getUpdater(): AutoUpdaterPort {
+    this.updater ??= getAutoUpdater();
+    return this.updater;
   }
 }

@@ -1,6 +1,28 @@
 import type { AgentConfig, AgentInfo, AgentStatus, AgentType } from './agent-types';
 import type { LayoutNode } from './layout-types';
 import type { SessionRecording } from './session-types';
+import type {
+  RuntimeProtocolRange,
+  RuntimeUnavailableReason,
+} from './runtime/runtime-interface';
+
+export type RuntimeRendererStatus =
+  | {
+      readonly state: 'connected';
+      readonly runtimeVersion: string;
+      readonly protocolVersion: number;
+    }
+  | {
+      readonly state: 'unavailable';
+      readonly reason: RuntimeUnavailableReason;
+      readonly retryable: boolean;
+    }
+  | {
+      readonly state: 'incompatible';
+      readonly desktopRange: RuntimeProtocolRange;
+      readonly runtimeRange: RuntimeProtocolRange;
+      readonly runtimeVersion: string;
+    };
 
 export interface PtySpawnRequest {
   readonly agentId: string;
@@ -253,6 +275,10 @@ export interface HariariApi {
     download(): Promise<void>;
     install(): Promise<void>;
     onStatus(callback: (status: UpdateStatus) => void): () => void;
+  };
+  runtime: {
+    getStatus(): Promise<RuntimeRendererStatus>;
+    onStatus(callback: (status: RuntimeRendererStatus) => void): () => void;
   };
   shell: {
     openExternal(url: string): Promise<void>;

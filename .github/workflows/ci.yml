@@ -30,4 +30,36 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npx electron-vite build
+      - run: npm run build
+
+  runtime-package-smoke:
+    runs-on: ${{ matrix.runner }}
+    needs: lint-and-test
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-latest
+          - macos-latest
+          - windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install Windows native build prerequisites
+        if: runner.os == 'Windows'
+        run: python -m pip install setuptools
+      - name: Install macOS native build prerequisites
+        if: runner.os == 'macOS'
+        run: python3 -m pip install setuptools --break-system-packages
+      - run: npm ci
+      - name: Build unsigned unpacked application
+        run: npm run pack -- --publish never
+      - name: Verify packaged Runtime and Desktop lifecycle on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run runtime:package-smoke -- --dist dist
+      - name: Verify packaged Runtime and Desktop lifecycle
+        if: runner.os != 'Linux'
+        run: npm run runtime:package-smoke -- --dist dist

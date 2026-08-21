@@ -3,7 +3,7 @@ name: Build & Release
 on:
   push:
     tags:
-      - "v*"
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -19,12 +19,21 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm test
 
   build-linux:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -32,24 +41,59 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npx electron-vite build
-      - run: npx electron-builder --linux -p never
+      - run: sudo apt-get update && sudo apt-get install -y cpio rpm rpm2cpio
+      - run: npm run build
+      - run: npx electron-builder --linux --${{ matrix.arch }} -p never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify unpacked Runtime lifecycle
+        run: xvfb-run -a npm run runtime:package-smoke -- --dist dist
+      - name: Verify AppImage, deb, and rpm Runtime layouts
+        shell: bash
+        run: |
+          set -euo pipefail
+          APPIMAGE=$(find dist -maxdepth 1 -name '*.AppImage' -print -quit)
+          DEB=$(find dist -maxdepth 1 -name '*.deb' -print -quit)
+          RPM=$(find dist -maxdepth 1 -name '*.rpm' -print -quit)
+          test -n "$APPIMAGE" && test -n "$DEB" && test -n "$RPM"
+          chmod +x "$APPIMAGE"
+          mkdir -p "$RUNNER_TEMP/runtime-appimage" "$RUNNER_TEMP/runtime-deb" "$RUNNER_TEMP/runtime-rpm"
+          (cd "$RUNNER_TEMP/runtime-appimage" && "$GITHUB_WORKSPACE/$APPIMAGE" --appimage-extract >/dev/null)
+          dpkg-deb -x "$DEB" "$RUNNER_TEMP/runtime-deb"
+          (cd "$RUNNER_TEMP/runtime-rpm" && rpm2cpio "$GITHUB_WORKSPACE/$RPM" | cpio -idmu)
+          xvfb-run -a npm run runtime:package-smoke -- --dist "$RUNNER_TEMP/runtime-appimage/squashfs-root"
+          xvfb-run -a npm run runtime:package-smoke -- --dist "$RUNNER_TEMP/runtime-deb"
+          xvfb-run -a npm run runtime:package-smoke -- --dist "$RUNNER_TEMP/runtime-rpm"
+      - name: Preserve architecture-specific update metadata
+        shell: bash
+        run: |
+          if [ "${{ matrix.arch }}" = x64 ]; then
+            mv dist/latest-linux.yml dist/latest-linux-x64.yml
+          else
+            test -f dist/latest-linux-arm64.yml
+          fi
       - uses: actions/upload-artifact@v4
         with:
-          name: linux-builds
+          name: linux-builds-${{ matrix.arch }}
           path: |
             dist/*.deb
             dist/*.rpm
             dist/*.AppImage
-            dist/latest-linux.yml
+            dist/latest-linux-${{ matrix.arch }}.yml
           retention-days: 5
 
   build-macos:
     needs: test
-    runs-on: macos-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x64
+          - runner: macos-15
+            arch: arm64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -58,7 +102,21 @@ jobs:
           cache: npm
       - run: python3 -m pip install setuptools --break-system-packages
       - run: npm ci
-      - run: npx electron-vite build
+      - run: npm run build
+
+      - name: Require release signing credentials
+        env:
+          MAC_CERTIFICATE_P12: ${{ secrets.MAC_CERTIFICATE_P12 }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          test -n "$MAC_CERTIFICATE_P12"
+          test -n "$MAC_CERTIFICATE_PASSWORD"
+          test -n "$APPLE_ID"
+          test -n "$APPLE_ID_PASSWORD"
+          test -n "$APPLE_TEAM_ID"
 
       # Import Apple code signing certificate from GitHub secrets
       - name: Import code signing certificate
@@ -88,12 +146,43 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
 
       # Build, sign, and notarize
-      - run: npx electron-builder --mac -p never
+      - run: npx electron-builder --mac --${{ matrix.arch }} -p never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Verify nested Runtime and application signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=$(find dist -type d -name 'Hariari.app' -print -quit)
+          RUNTIME=$(find dist -type f -path "*/Contents/Resources/runtime/darwin-${{ matrix.arch }}/hariari-runtime" -print -quit)
+          test -n "$APP" && test -n "$RUNTIME"
+          codesign --verify --strict --verbose=2 "$RUNTIME"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign --display --verbose=4 "$RUNTIME"
+          codesign --display --entitlements :- "$RUNTIME"
+      - name: Verify packaged Runtime lifecycle
+        run: npm run runtime:package-smoke -- --dist dist
+      - name: Verify macOS DMG and ZIP application launch
+        shell: bash
+        run: |
+          set -euo pipefail
+          DMG=$(find dist -maxdepth 1 -name '*.dmg' -print -quit)
+          ZIP=$(find dist -maxdepth 1 -name '*.zip' -print -quit)
+          test -n "$DMG" && test -n "$ZIP"
+          mkdir -p "$RUNNER_TEMP/hariari-dmg" "$RUNNER_TEMP/hariari-zip"
+          hdiutil attach "$DMG" -readonly -nobrowse -mountpoint "$RUNNER_TEMP/hariari-dmg"
+          trap 'hdiutil detach "$RUNNER_TEMP/hariari-dmg"' EXIT
+          npm run runtime:package-smoke -- --dist "$RUNNER_TEMP/hariari-dmg"
+          ditto -x -k "$ZIP" "$RUNNER_TEMP/hariari-zip"
+          npm run runtime:package-smoke -- --dist "$RUNNER_TEMP/hariari-zip"
+          hdiutil detach "$RUNNER_TEMP/hariari-dmg"
+          trap - EXIT
+      - name: Preserve architecture-specific update metadata
+        run: mv dist/latest-mac.yml dist/latest-mac-${{ matrix.arch }}.yml
 
       # Clean up keychain
       - name: Clean up keychain
@@ -103,16 +192,16 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: macos-builds
+          name: macos-builds-${{ matrix.arch }}
           path: |
             dist/*.dmg
             dist/*.zip
-            dist/latest-mac.yml
+            dist/latest-mac-${{ matrix.arch }}.yml
           retention-days: 5
 
   build-windows:
     needs: test
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -122,11 +211,29 @@ jobs:
       - run: dotnet tool install --global AzureSignTool
       - run: python3 -m pip install setuptools
       - run: npm ci
-      - run: npx electron-vite build
+      - run: npm run build
+      - name: Require release signing credentials
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_ENDPOINT: ${{ secrets.AZURE_ENDPOINT }}
+          AZURE_CODE_SIGNING_ACCOUNT: ${{ secrets.AZURE_CODE_SIGNING_ACCOUNT }}
+          AZURE_CERT_PROFILE_NAME: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
+        run: |
+          @(
+            $env:AZURE_CLIENT_ID,
+            $env:AZURE_CLIENT_SECRET,
+            $env:AZURE_TENANT_ID,
+            $env:AZURE_ENDPOINT,
+            $env:AZURE_CODE_SIGNING_ACCOUNT,
+            $env:AZURE_CERT_PROFILE_NAME
+          ) | ForEach-Object { if ([string]::IsNullOrWhiteSpace($_)) { throw 'Missing Azure signing credential' } }
       - run: npx electron-builder --win -p never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ELECTRON_BUILDER_HTTP_TIMEOUT: "300000"
+          ELECTRON_BUILDER_HTTP_TIMEOUT: '300000'
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -134,6 +241,36 @@ jobs:
           AZURE_CODE_SIGNING_ACCOUNT: ${{ secrets.AZURE_CODE_SIGNING_ACCOUNT }}
           AZURE_CERT_PROFILE_NAME: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
         timeout-minutes: 20
+      - name: Verify nested Runtime Authenticode signature
+        shell: pwsh
+        run: |
+          $runtime = Get-ChildItem dist -Recurse -File -Filter hariari-runtime.exe |
+            Where-Object { $_.FullName -match 'resources[\\/]runtime[\\/]win32-x64' } |
+            Select-Object -First 1
+          if (-not $runtime) { throw 'Packaged Runtime executable is missing' }
+          $signature = Get-AuthenticodeSignature $runtime.FullName
+          if ($signature.Status -ne 'Valid') { throw "Runtime Authenticode status is $($signature.Status)" }
+          $signature | Format-List Status,StatusMessage,SignerCertificate
+      - name: Verify packaged Runtime lifecycle
+        run: npm run runtime:package-smoke -- --dist dist
+      - name: Verify installed Windows application launch
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist -File -Filter '*.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Windows installer is missing' }
+          $installDirectory = Join-Path $env:RUNNER_TEMP 'hariari-installed'
+          $install = Start-Process $installer.FullName -ArgumentList '/S', "/D=$installDirectory" -PassThru -Wait
+          if ($install.ExitCode -ne 0) { throw "Windows installer exited with $($install.ExitCode)" }
+          try {
+            npm run runtime:package-smoke -- --dist $installDirectory
+            if ($LASTEXITCODE -ne 0) { throw "Installed Desktop smoke exited with $LASTEXITCODE" }
+          } finally {
+            $uninstaller = Get-ChildItem $installDirectory -File -Filter 'Uninstall*.exe' |
+              Select-Object -First 1
+            if ($uninstaller) {
+              Start-Process $uninstaller.FullName -ArgumentList '/S' -Wait
+            }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-builds
@@ -153,16 +290,30 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: linux-builds
+          pattern: linux-builds-*
           path: artifacts/linux
+          merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
-          name: macos-builds
+          pattern: macos-builds-*
           path: artifacts/macos
+          merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
           name: windows-builds
           path: artifacts/windows
+      - name: Merge Linux architecture update metadata
+        run: >-
+          node scripts/runtime-merge-architecture-updates.mjs
+          artifacts/linux/latest-linux-x64.yml
+          artifacts/linux/latest-linux-arm64.yml
+          artifacts/linux/latest-linux.yml
+      - name: Merge macOS architecture update metadata
+        run: >-
+          node scripts/runtime-merge-architecture-updates.mjs
+          artifacts/macos/latest-mac-x64.yml
+          artifacts/macos/latest-mac-arm64.yml
+          artifacts/macos/latest-mac.yml
       - name: Generate SHA256 checksums
         run: |
           cd artifacts
@@ -181,6 +332,7 @@ jobs:
             artifacts/linux/*.rpm
             artifacts/linux/*.AppImage
             artifacts/linux/latest-linux.yml
+            artifacts/linux/latest-linux-arm64.yml
             artifacts/macos/*.dmg
             artifacts/macos/*.zip
             artifacts/macos/latest-mac.yml

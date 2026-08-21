@@ -1,4 +1,4 @@
-import { app, session } from 'electron';
+import { app, ipcMain, session } from 'electron';
 import { createMainWindow } from './window/main-window';
 import { PtyManager } from './pty/pty-manager';
 import { AgentManager } from './agent/agent-manager';
@@ -8,6 +8,8 @@ import { registerIpcHandlers } from './ipc/handlers';
 import { StateManager } from './state/state-manager';
 import { AutoUpdateManager } from './updater/auto-updater';
 import { migrateLegacyVoiceApiKey } from './voice/voice-secrets';
+import * as runtimeDesktop from './runtime/runtime-desktop-lifecycle';
+import { IPC_CHANNELS } from '../shared/constants';
 
 let ptyManager: PtyManager;
 let agentManager: AgentManager;
@@ -278,7 +280,7 @@ app.commandLine.appendSwitch('enable-features', 'WebSpeechAPI');
 // Disable SUID sandbox for environments where chrome-sandbox is not setuid root
 app.commandLine.appendSwitch('no-sandbox');
 
-app.whenReady().then(() => {
+if (!runtimeDesktop.startRuntimePackageSmokeIfRequested(app)) app.whenReady().then(() => {
   migrateLegacyVoiceApiKey();
 
   // Set CSP via response headers (more authoritative than <meta> tag)
@@ -319,14 +321,26 @@ app.whenReady().then(() => {
     }
   });
 
+  const runtimeLifecycle = runtimeDesktop.startDesktopRuntimeLifecycle({
+    ipc: ipcMain,
+    publishStatus: (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.RUNTIME_STATUS, status);
+      }
+    },
+  });
+
   // Register IPC handlers BEFORE creating window so renderer can call them immediately
   registerIpcHandlers(agentManager, ptyManager, stateManager, projectManager, notificationManager);
 
   // Now create the window — renderer will load and IPC handlers are ready
   mainWindow = createMainWindow(savedState?.window);
+  mainWindow.webContents.on('did-finish-load', () => runtimeLifecycle.publishLatest());
 
   // Auto-updater — checks GitHub Releases for new versions
-  autoUpdateManager = new AutoUpdateManager();
+  autoUpdateManager = new AutoUpdateManager(() =>
+    runtimeLifecycle.prepareForDesktopUpdate(),
+  );
   autoUpdateManager.start(mainWindow);
 
   // Ctrl+Shift+V: intercept before Chromium's native "paste as plain text"
@@ -377,6 +391,7 @@ app.whenReady().then(() => {
     autoUpdateManager?.dispose();
     agentManager?.disposeAll();
     ptyManager?.disposeAll();
+    runtimeLifecycle.dispose();
   });
 });
 

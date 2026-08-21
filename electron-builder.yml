@@ -5,7 +5,13 @@ directories:
   output: dist
 files:
   - out/**/*
-  - "!**/*.map"
+  - '!out/runtime-artifacts/**/*'
+  - '!**/*.map'
+extraResources:
+  - from: out/runtime-artifacts/runtime
+    to: runtime
+    filter:
+      - '**/*'
 extraMetadata:
   main: ./out/main/index.js
 icon: resources/icons/512x512.png
@@ -38,10 +44,8 @@ appImage:
   artifactName: Hariari-${version}-${arch}.AppImage
 mac:
   target:
-    - target: dmg
-      arch: [x64, arm64]
-    - target: zip
-      arch: [x64, arm64]
+    - dmg
+    - zip
   category: public.app-category.developer-tools
   icon: resources/icons/512x512.png
   artifactName: Hariari-${version}-${arch}.${ext}
@@ -49,9 +53,11 @@ mac:
   gatekeeperAssess: false
   entitlements: resources/entitlements.mac.plist
   entitlementsInherit: resources/entitlements.mac.inherit.plist
+  signIgnore:
+    - '[/\\]Contents[/\\]Resources[/\\]runtime[/\\]'
   notarize: false
-afterPack: scripts/after-pack.js
-afterSign: scripts/notarize.js
+afterPack: scripts/runtime-after-pack.js
+afterSign: scripts/runtime-after-sign.js
 dmg:
   artifactName: Hariari-${version}-${arch}.dmg
 win:
@@ -63,6 +69,8 @@ win:
     sign: ./scripts/azure-sign.js
     signingHashAlgorithms:
       - sha256
+  signExts:
+    - .exe
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
