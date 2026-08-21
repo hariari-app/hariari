@@ -88,6 +88,27 @@ it('allows worktree allocation the task-start deadline at the client seam', asyn
   expect(transport.operationDeadlines).toEqual([10_000, 10_000]);
 });
 
+it('allows worktree allocation the task-start deadline through RuntimeInterface', async () => {
+  const environment = new FakeRuntimeEnvironment();
+  const transport = new HandshakeTransport({});
+  const runtime = runtimeInterface(
+    environment,
+    new NodeRuntimeClient({
+      transport,
+      randomId: () => 'client-request',
+      randomNonce: () => 'client-nonce',
+    }),
+    2_000,
+  );
+
+  await expect(runtime.startTask(startRequest())).resolves.toMatchObject({
+    task: { id: 'task-1', executionState: 'running' },
+    attempt: { state: 'running' },
+  });
+
+  expect(transport.operationDeadlines).toEqual([2_000, 2_000, 10_000, 10_000]);
+});
+
 function registerRuntimeClientFailureTests(): void {
   registerHandshakeTransportFailures();
   registerTerminalHandshakeFailures();
@@ -209,7 +230,11 @@ function handshakeClient(script: HandshakeScript): NodeRuntimeClient {
   });
 }
 
-function runtimeInterface(environment: FakeRuntimeEnvironment, clients: NodeRuntimeClient) {
+function runtimeInterface(
+  environment: FakeRuntimeEnvironment,
+  clients: NodeRuntimeClient,
+  connectDeadlineMs = CONNECT_OPTIONS.deadlineMs,
+) {
   return createRuntimeConnector({
     clients,
     endpoints: environment.endpoints,
@@ -219,7 +244,7 @@ function runtimeInterface(environment: FakeRuntimeEnvironment, clients: NodeRunt
     artifacts: environment.artifacts,
     clientIdentity: CONNECT_OPTIONS.clientIdentity,
     supportedProtocolRange: CONNECT_OPTIONS.supportedProtocolRange,
-    connectDeadlineMs: CONNECT_OPTIONS.deadlineMs,
+    connectDeadlineMs,
     startupDeadlineMs: 100,
     reconnectDelayMs: 25,
     healthPollIntervalMs: 10_000,

@@ -107,7 +107,7 @@ class RuntimeConnector implements RuntimeInterface {
   }
 
   startTask(request: StartTaskRequest): Promise<TaskExecutionView> {
-    return this.withSession((session) => session.startTask(request, this.dependencies.connectDeadlineMs));
+    return this.withSession((session) => session.startTask(request));
   }
 
   cancelTask(request: CancelTaskRequest): Promise<TaskExecutionView> {
