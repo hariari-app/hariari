@@ -45,6 +45,16 @@ export class TaskExecutionPoller {
   update(views: readonly TaskExecutionView[]): void {
     this.clear();
     if (this.disposed || !views.some((view) => isNonterminal(view.task.executionState))) return;
+    this.scheduleRefresh();
+  }
+
+  retry(): void {
+    this.clear();
+    if (this.disposed) return;
+    this.scheduleRefresh();
+  }
+
+  private scheduleRefresh(): void {
     this.timer = this.schedule(() => {
       this.timer = null;
       if (!this.disposed) void this.refresh();

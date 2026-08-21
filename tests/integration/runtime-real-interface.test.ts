@@ -23,7 +23,7 @@ import { RuntimeServer } from '../../src/runtime/runtime-server';
 import { ProtectedRuntimeTokenStore } from '../../src/runtime/token-store';
 import type { GenericCliExecutionAdapter } from '../../src/runtime/generic-cli-execution-adapter';
 import { FakeGenericCliExecutionAdapter } from './runtime-test-fakes';
-import { createDisposableGitRepository } from './disposable-git-repository';
+import { createDisposableGitRepository } from '../test-common/disposable-git-repository';
 
 const directories: string[] = [];
 const servers: RuntimeServer[] = [];
@@ -327,14 +327,15 @@ async function runsShellTaskTracer(): Promise<void> {
 }
 
 function createRuntimeGitRepository(): { readonly path: string; readonly baseCommit: string } {
-  return createDisposableGitRepository({
-    roots: directories,
+  const repository = createDisposableGitRepository({
     temporaryPrefix: 'hariari-runtime-task-repository-',
     readmeContents: '# Runtime tracer\n',
     commitMessage: 'initial runtime tracer fixture',
     authorName: 'Runtime Test',
     authorEmail: 'runtime@example.test',
   });
+  directories.push(repository.root);
+  return repository;
 }
 
 async function waitForCondition<T>(read: () => Promise<T | null>): Promise<T> {

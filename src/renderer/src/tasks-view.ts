@@ -38,17 +38,27 @@ export function mountTasksView(container: HTMLElement, tasks: TasksApi): () => v
   container.appendChild(view.root);
   let disposed = false;
   let latest: readonly TaskExecutionView[] = [];
+  let authoritativeRefreshRequired = false;
+  let refreshSequence = 0;
   const refresh = async (): Promise<void> => {
+    const sequence = ++refreshSequence;
     try {
       const views = await loadTaskExecutions(tasks);
-      if (disposed) return;
+      if (disposed || sequence !== refreshSequence) return;
       latest = views;
-      renderTasks(view.list, views, tasks, refresh, view.message);
+      authoritativeRefreshRequired = false;
+      renderTasks(view.list, views, tasks, refreshAfterLifecycle, view.message);
       poller.update(views);
     } catch {
-      if (!disposed) view.message.textContent = 'Task execution could not be updated.';
-      poller.update(latest);
+      if (disposed || sequence !== refreshSequence) return;
+      view.message.textContent = 'Task execution could not be updated.';
+      if (authoritativeRefreshRequired) poller.retry();
+      else poller.update(latest);
     }
+  };
+  const refreshAfterLifecycle = (): Promise<void> => {
+    authoritativeRefreshRequired = true;
+    return refresh();
   };
   const poller = new TaskExecutionPoller(refresh);
   void refresh();
@@ -197,10 +207,9 @@ function taskAction(
     message.textContent = '';
     const request = { taskId, idempotencyKey: crypto.randomUUID() };
     const operation = action === 'start' ? tasks.start(request) : tasks.cancel(request);
-    void operation.then(refresh).catch(async () => {
+    void operation.then(refresh, () => {
       message.textContent = 'Task execution could not be updated.';
-      await refresh();
-      button.disabled = false;
+      return refresh();
     });
   });
   return button;

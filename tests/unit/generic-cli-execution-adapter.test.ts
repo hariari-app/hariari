@@ -1,26 +1,26 @@
-import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LocalGenericCliExecutionAdapter } from '../../src/runtime/generic-cli-execution-adapter';
+import {
+  createDisposableGitRepository,
+  type DisposableGitRepository,
+} from '../test-common/disposable-git-repository';
 
-const directories: string[] = [];
+const repositories: DisposableGitRepository[] = [];
 
 describe('Local Generic CLI execution adapter', () => {
   afterEach(() => {
-    for (const directory of directories.splice(0))
-      fs.rmSync(directory, { recursive: true, force: true });
+    for (const repository of repositories.splice(0)) repository.dispose();
   });
 
   it('owns one idempotent PTY stop and settles only after node-pty reports exit', async () => {
     const repository = createRepository();
     const pty = new FakePty();
     const adapter = new LocalGenericCliExecutionAdapter({
-      runtimeDirectory: path.join(repository, 'runtime'),
+      runtimeDirectory: path.join(repository.path, 'runtime'),
       pty: { spawn: () => pty },
     });
-    const execution = await adapter.start(startRequest(repository));
+    const execution = await adapter.start(startRequest(repository.path));
     let settled = false;
     const firstStop = execution.stop().then(() => {
       settled = true;
@@ -39,17 +39,15 @@ describe('Local Generic CLI execution adapter', () => {
   });
 });
 
-function createRepository(): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hariari-generic-cli-adapter-'));
-  directories.push(root);
-  const repository = path.join(root, 'repository');
-  fs.mkdirSync(repository);
-  execFileSync('git', ['init'], { cwd: repository, stdio: 'pipe' });
-  execFileSync('git', ['config', 'user.email', 'runtime@example.test'], { cwd: repository });
-  execFileSync('git', ['config', 'user.name', 'Runtime Test'], { cwd: repository });
-  fs.writeFileSync(path.join(repository, 'README.md'), '# Generic CLI adapter\n');
-  execFileSync('git', ['add', 'README.md'], { cwd: repository, stdio: 'pipe' });
-  execFileSync('git', ['commit', '-m', 'fixture'], { cwd: repository, stdio: 'pipe' });
+function createRepository(): DisposableGitRepository {
+  const repository = createDisposableGitRepository({
+    temporaryPrefix: 'hariari-generic-cli-adapter-',
+    readmeContents: '# Generic CLI adapter\n',
+    commitMessage: 'fixture',
+    authorName: 'Runtime Test',
+    authorEmail: 'runtime@example.test',
+  });
+  repositories.push(repository);
   return repository;
 }
 

@@ -18,15 +18,15 @@ import {
   type RuntimeTransportListener,
 } from '../../src/runtime/local-transport';
 import { RuntimeServer } from '../../src/runtime/runtime-server';
-import { createDisposableGitRepository } from './disposable-git-repository';
+import { createDisposableGitRepository } from '../test-common/disposable-git-repository';
 import { FakeGenericCliExecutionAdapter } from './runtime-test-fakes';
 
 const roots: string[] = [];
 const servers: RuntimeServer[] = [];
-const FAILED_ALLOCATION_APPEND_CASES = [
-  { name: 'ContextAllocated', writeCall: 3 },
-  { name: 'AttemptFailed', writeCall: 4 },
-] as const;
+const FAILED_APPEND_MODES = ['zero-first', 'partial-then-zero', 'partial-then-error'] as const;
+const FAILED_ALLOCATION_APPEND_CASES = ['ContextAllocated', 'AttemptFailed'].flatMap(
+  (name, index) => FAILED_APPEND_MODES.map((mode) => ({ name, mode, writeCall: index + 3 })),
+);
 
 describe('authenticated Runtime Task start remediation', registerTaskStartTests);
 
@@ -38,8 +38,8 @@ function registerTaskStartTests(): void {
   });
   it('coalesces concurrent same-key starts from independent sessions', coalescesConcurrentStarts);
   it.each(FAILED_ALLOCATION_APPEND_CASES)(
-    'preserves an allocated Git context across $name append repair',
-    async ({ writeCall }) => preservesFailedContext(writeCall),
+    'preserves an allocated Git context across $name $mode append repair',
+    async ({ writeCall, mode }) => preservesFailedContext(writeCall, mode),
   );
 }
 
@@ -92,7 +92,10 @@ function assertSingleExecution(execution: TaskExecutionView): void {
   });
 }
 
-async function preservesFailedContext(failedWrite: number): Promise<void> {
+async function preservesFailedContext(
+  failedWrite: number,
+  mode: (typeof FAILED_APPEND_MODES)[number],
+): Promise<void> {
   const subject = await createSubject(
     (runtimeDirectory) =>
       new LocalGenericCliExecutionAdapter({
@@ -103,7 +106,11 @@ async function preservesFailedContext(failedWrite: number): Promise<void> {
   const repository = createTestRepository();
   const runtime = await subject.connect();
   const task = await runtime.createTask(shellTask('failed-allocation-create', repository.path));
-  corruptExecutionAppend(path.join(subject.runtimeDirectory, 'tasks', 'events.log'), failedWrite);
+  corruptExecutionAppend(
+    path.join(subject.runtimeDirectory, 'tasks', 'events.log'),
+    failedWrite,
+    mode,
+  );
 
   await expect(
     runtime.startTask({ taskId: task.id, idempotencyKey: 'failed-allocation-start' }),
@@ -164,14 +171,15 @@ function assertGitResources(runtimeDirectory: string, failed: TaskExecutionView)
 }
 
 function createTestRepository(): { readonly path: string; readonly baseCommit: string } {
-  return createDisposableGitRepository({
-    roots,
+  const repository = createDisposableGitRepository({
     temporaryPrefix: 'hariari-failed-allocation-',
     readmeContents: '# Failed allocation\n',
     commitMessage: 'failed allocation fixture',
     authorName: 'Runtime Test',
     authorEmail: 'runtime@example.test',
   });
+  roots.push(repository.root);
+  return repository;
 }
 
 function shellTask(idempotencyKey: string, repository: string) {
@@ -313,7 +321,11 @@ class ObservedRuntimeTransport extends NodeLocalRuntimeTransport {
   }
 }
 
-function corruptExecutionAppend(eventPath: string, failedWrite: number): void {
+function corruptExecutionAppend(
+  eventPath: string,
+  failedWrite: number,
+  mode: (typeof FAILED_APPEND_MODES)[number],
+): void {
   const open = fs.promises.open.bind(fs.promises);
   let writes = 0;
   let partial = false;
@@ -325,11 +337,17 @@ function corruptExecutionAppend(eventPath: string, failedWrite: number): void {
         if (property !== 'write') return Reflect.get(target, property, receiver);
         return async (data: Buffer) => {
           writes += 1;
+          if (writes === failedWrite && mode === 'zero-first') {
+            return { bytesWritten: 0, buffer: data };
+          }
           if (writes === failedWrite) {
             partial = true;
             return target.write(data.subarray(0, 1));
           }
-          if (partial && writes === failedWrite + 1) return { bytesWritten: 0, buffer: data };
+          if (partial && writes === failedWrite + 1) {
+            if (mode === 'partial-then-error') throw new Error('injected append error');
+            return { bytesWritten: 0, buffer: data };
+          }
           return target.write(data);
         };
       },

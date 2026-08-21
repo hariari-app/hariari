@@ -10,7 +10,7 @@ import {
   type GenericCliExecution,
   type GenericCliExecutionAdapter,
 } from './generic-cli-execution-adapter';
-import { TaskModule, TaskStorageError } from './task-module';
+import { TaskModule } from './task-module';
 
 const MAX_OUTPUT_CHARS = 4 * 1024;
 
@@ -18,6 +18,10 @@ interface InFlightStart {
   readonly idempotencyKey: string;
   readonly promise: Promise<TaskExecutionView>;
 }
+
+type TerminalTransition =
+  | { readonly kind: 'start-failure' }
+  | { readonly kind: 'process-exit'; readonly exitCode: number };
 
 export class TaskExecutionError extends Error {
   constructor(readonly code: 'worktree-unavailable' | 'process-start-failed' | 'internal') {
@@ -163,7 +167,7 @@ export class TaskExecutionModule {
       await this.allocateFailedContext(taskId, error.context);
     }
     try {
-      await this.persistStartFailure(taskId);
+      await this.persistTerminalWithRepair(taskId, { kind: 'start-failure' });
     } finally {
       this.resolveExitWait(taskId);
     }
@@ -175,26 +179,16 @@ export class TaskExecutionModule {
     taskId: string,
     context: GenericCliExecution['context'],
   ): Promise<void> {
-    try {
-      await this.tasks.allocateContext(taskId, context);
-    } catch (error) {
-      if (this.tasks.execution(taskId).context) return;
-      if (!(error instanceof TaskStorageError)) throw error;
-      await this.tasks.allocateContext(taskId, context);
-    }
-  }
-
-  private async persistStartFailure(taskId: string): Promise<void> {
-    try {
-      await this.tasks.fail(taskId);
-    } catch {
-      await this.tasks.fail(taskId);
-    }
+    await this.persistWithOneShotRepair(
+      taskId,
+      (view) => view.context !== null,
+      () => this.tasks.allocateContext(taskId, context),
+    );
   }
 
   private settle(taskId: string, exitCode: number): void {
     if (this.settlements.has(taskId)) return;
-    const settlement = this.persistExitWithRetry(taskId, exitCode)
+    const settlement = this.persistTerminalWithRepair(taskId, { kind: 'process-exit', exitCode })
       .then(() => this.release(taskId))
       .catch((error: unknown) => {
         this.rejectExitWait(taskId, error);
@@ -205,12 +199,25 @@ export class TaskExecutionModule {
     void settlement.catch(() => undefined);
   }
 
-  private async persistExitWithRetry(taskId: string, exitCode: number): Promise<void> {
+  private async persistWithOneShotRepair(
+    taskId: string,
+    applied: (view: TaskExecutionView) => boolean,
+    transition: () => Promise<unknown>,
+  ): Promise<void> {
     try {
-      await this.persistExit(taskId, exitCode);
+      await transition();
     } catch {
-      await this.persistExit(taskId, exitCode);
+      if (applied(this.tasks.execution(taskId))) return;
+      await transition();
     }
+  }
+
+  private persistTerminalWithRepair(taskId: string, transition: TerminalTransition): Promise<void> {
+    return this.persistWithOneShotRepair(
+      taskId,
+      (view) => isTerminal(view.attempt?.state),
+      () => this.persistTerminal(taskId, transition),
+    );
   }
 
   private release(taskId: string): void {
@@ -232,12 +239,13 @@ export class TaskExecutionModule {
     exitWait?.reject(error);
   }
 
-  private async persistExit(taskId: string, exitCode: number): Promise<void> {
+  private async persistTerminal(taskId: string, transition: TerminalTransition): Promise<void> {
     const view = this.tasks.execution(taskId);
     if (!view.attempt || isTerminal(view.attempt.state)) return;
     if (view.attempt.state === 'cancelling') await this.tasks.cancel(taskId);
-    else if (exitCode === 0) await this.tasks.complete(taskId, exitCode);
-    else await this.tasks.fail(taskId);
+    else if (transition.kind === 'process-exit' && transition.exitCode === 0) {
+      await this.tasks.complete(taskId, transition.exitCode);
+    } else await this.tasks.fail(taskId);
   }
 
   private publishOutput(taskId: string, attemptId: string, value: string): void {
@@ -274,7 +282,7 @@ function sanitizeOutput(value: string): string {
     .slice(0, MAX_OUTPUT_CHARS);
 }
 
-function isTerminal(state: TaskExecutionState): boolean {
+function isTerminal(state: TaskExecutionState | undefined): boolean {
   return state === 'completed' || state === 'failed' || state === 'cancelled';
 }
 

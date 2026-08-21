@@ -20,7 +20,7 @@ import type {
 } from '../../src/shared/runtime/runtime-interface';
 import { NodeLocalRuntimeTransport } from '../../src/runtime/local-transport';
 import { ProtectedRuntimeTokenStore } from '../../src/runtime/token-store';
-import { createDisposableGitRepository } from './disposable-git-repository';
+import { createDisposableGitRepository } from '../test-common/disposable-git-repository';
 
 const roots: string[] = [];
 const children: ChildProcess[] = [];
@@ -112,14 +112,15 @@ async function runsPackagedTaskTracer(): Promise<void> {
 }
 
 function createPackagedGitRepository(): { readonly path: string; readonly baseCommit: string } {
-  return createDisposableGitRepository({
-    roots,
+  const repository = createDisposableGitRepository({
     temporaryPrefix: 'hariari-packaged-runtime-task-',
     readmeContents: '# Packaged Runtime\n',
     commitMessage: 'initial packaged fixture',
     authorName: 'Runtime Test',
     authorEmail: 'runtime@example.test',
   });
+  roots.push(repository.root);
+  return repository;
 }
 
 async function waitForTaskCompletion(runtime: RuntimeInterface, taskId: string): Promise<void> {

@@ -4,7 +4,6 @@ import os from 'node:os';
 import path from 'node:path';
 
 export interface DisposableGitRepositoryOptions {
-  readonly roots: string[];
   readonly temporaryPrefix: string;
   readonly readmeContents: string;
   readonly commitMessage: string;
@@ -12,14 +11,34 @@ export interface DisposableGitRepositoryOptions {
   readonly authorEmail: string;
 }
 
-export function createDisposableGitRepository(options: DisposableGitRepositoryOptions): {
+export interface DisposableGitRepository {
+  readonly root: string;
   readonly path: string;
   readonly baseCommit: string;
-} {
+  dispose(): void;
+}
+
+export function createDisposableGitRepository(
+  options: DisposableGitRepositoryOptions,
+): DisposableGitRepository {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), options.temporaryPrefix));
-  options.roots.push(root);
   const repository = path.join(root, 'repository');
-  fs.mkdirSync(repository);
+  try {
+    fs.mkdirSync(repository);
+    const baseCommit = initializeRepository(repository, options);
+    return {
+      root,
+      path: repository,
+      baseCommit,
+      dispose: () => fs.rmSync(root, { recursive: true, force: true }),
+    };
+  } catch (error) {
+    fs.rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function initializeRepository(repository: string, options: DisposableGitRepositoryOptions): string {
   execFileSync('git', ['init'], { cwd: repository, stdio: 'pipe' });
   execFileSync('git', ['config', 'user.email', options.authorEmail], {
     cwd: repository,
@@ -35,9 +54,8 @@ export function createDisposableGitRepository(options: DisposableGitRepositoryOp
     cwd: repository,
     stdio: 'pipe',
   });
-  const baseCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
+  return execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: repository,
     encoding: 'utf8',
   }).trim();
-  return { path: repository, baseCommit };
 }

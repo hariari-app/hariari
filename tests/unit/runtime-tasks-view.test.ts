@@ -6,9 +6,16 @@ import type {
   TaskView,
 } from '../../src/shared/runtime/runtime-interface';
 
-describe('Runtime Tasks renderer', () => {
-  afterEach(() => vi.unstubAllGlobals());
+describe('Runtime Tasks renderer', registerTasksViewTests);
 
+function registerTasksViewTests(): void {
+  afterEach(() => vi.unstubAllGlobals());
+  registerRejectedStartTest();
+  registerAmbiguousLifecycleTests();
+  registerDisposalTest();
+}
+
+function registerRejectedStartTest(): void {
   it('refreshes durable failed state after a rejected start and keeps the error sanitized', async () => {
     const documentRef = new FakeDocument();
     vi.stubGlobal('document', documentRef);
@@ -30,7 +37,70 @@ describe('Runtime Tasks renderer', () => {
     dispose();
     expect(container.children).toHaveLength(0);
   });
-});
+}
+
+function registerAmbiguousLifecycleTests(): void {
+  it.each([
+    { operation: 'start' as const, staleLabel: 'Start', authoritativeLabel: 'Cancel' },
+    { operation: 'cancel' as const, staleLabel: 'Cancel', authoritativeLabel: null },
+  ])(
+    'keeps an ambiguous $operation control disabled until an authoritative retry rerenders it',
+    async (testCase) => {
+      const documentRef = new FakeDocument();
+      const timers = new FakeTimers();
+      vi.stubGlobal('document', documentRef);
+      vi.stubGlobal('setTimeout', timers.setTimeout);
+      vi.stubGlobal('clearTimeout', timers.clearTimeout);
+      const container = documentRef.createElement('div');
+      const subject = createAmbiguousTasksSubject(testCase.operation);
+      const dispose = mountTasksView(container as unknown as HTMLElement, subject.tasks);
+      await nextTurn();
+      const staleAction = findByClass(container, 'tasks-action');
+
+      staleAction?.click();
+      await nextTurn();
+
+      expect(staleAction?.textContent).toBe(testCase.staleLabel);
+      expect(staleAction?.disabled).toBe(true);
+      expect(timers.delays()).toEqual([500]);
+      timers.fireNext();
+      await nextTurn();
+      const authoritativeAction = findByClass(container, 'tasks-action');
+      if (testCase.authoritativeLabel) {
+        expect(authoritativeAction).toMatchObject({
+          textContent: testCase.authoritativeLabel,
+          disabled: false,
+        });
+      } else {
+        expect(authoritativeAction).toBeNull();
+        expect(taskDetails(container)).toContain('cancelled');
+      }
+      dispose();
+    },
+  );
+}
+
+function registerDisposalTest(): void {
+  it('cancels a pending authoritative lifecycle refresh when disposed', async () => {
+    const documentRef = new FakeDocument();
+    const timers = new FakeTimers();
+    vi.stubGlobal('document', documentRef);
+    vi.stubGlobal('setTimeout', timers.setTimeout);
+    vi.stubGlobal('clearTimeout', timers.clearTimeout);
+    const container = documentRef.createElement('div');
+    const subject = createAmbiguousTasksSubject('start');
+    const dispose = mountTasksView(container as unknown as HTMLElement, subject.tasks);
+    await nextTurn();
+
+    findByClass(container, 'tasks-action')?.click();
+    await nextTurn();
+    expect(timers.size).toBe(1);
+    dispose();
+
+    expect(timers.size).toBe(0);
+    expect(container.children).toHaveLength(0);
+  });
+}
 
 function createTasksSubject(): {
   readonly tasks: TasksApi;
@@ -50,6 +120,29 @@ function createTasksSubject(): {
       start,
       cancel: vi.fn(),
       execution: async () => execution,
+    },
+  };
+}
+
+function createAmbiguousTasksSubject(operation: 'start' | 'cancel'): { readonly tasks: TasksApi } {
+  const task = taskView();
+  let execution = executionView(task, operation === 'start' ? 'ready' : 'running');
+  let executionReads = 0;
+  const rejectAfter = (state: TaskExecutionState) => async (): Promise<never> => {
+    execution = executionView(task, state);
+    throw new Error(`ambiguous ${operation} result`);
+  };
+  return {
+    tasks: {
+      create: vi.fn(),
+      list: async () => [task],
+      start: vi.fn(operation === 'start' ? rejectAfter('running') : async () => execution),
+      cancel: vi.fn(operation === 'cancel' ? rejectAfter('cancelled') : async () => execution),
+      execution: async () => {
+        executionReads += 1;
+        if (executionReads === 2) throw new Error('first authoritative refresh failed');
+        return execution;
+      },
     },
   };
 }
@@ -150,4 +243,43 @@ function findByClass(root: FakeElement, className: string): FakeElement | null {
 
 function taskDetails(container: FakeElement): string {
   return findByClass(container, 'tasks-item')?.children[0]?.textContent ?? '';
+}
+
+function nextTurn(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+class FakeTimers {
+  private nextId = 0;
+  private readonly pending = new Map<
+    number,
+    { readonly task: () => void; readonly delay: number }
+  >();
+
+  readonly setTimeout = vi.fn((task: () => void, delay: number): number => {
+    const id = ++this.nextId;
+    this.pending.set(id, { task, delay });
+    return id;
+  });
+
+  readonly clearTimeout = vi.fn((timer: number): void => {
+    this.pending.delete(timer);
+  });
+
+  get size(): number {
+    return this.pending.size;
+  }
+
+  delays(): number[] {
+    return [...this.pending.values()].map(({ delay }) => delay);
+  }
+
+  fireNext(): void {
+    const next = this.pending.entries().next().value as
+      | [number, { readonly task: () => void }]
+      | undefined;
+    if (!next) throw new Error('expected a scheduled refresh');
+    this.pending.delete(next[0]);
+    next[1].task();
+  }
 }
