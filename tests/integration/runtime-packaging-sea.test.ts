@@ -3,7 +3,7 @@ import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FileRuntimeStartupLeasePort } from '../../src/main/runtime/file-startup-lease';
 import { LocalRuntimeEndpointPort } from '../../src/main/runtime/local-endpoint-port';
 import { NodeRuntimeClient } from '../../src/main/runtime/node-runtime-client';
@@ -20,18 +20,41 @@ import type {
 } from '../../src/shared/runtime/runtime-interface';
 import { NodeLocalRuntimeTransport } from '../../src/runtime/local-transport';
 import { ProtectedRuntimeTokenStore } from '../../src/runtime/token-store';
+import { createDisposableGitRepository } from '../test-common/disposable-git-repository';
 
 const roots: string[] = [];
 const children: ChildProcess[] = [];
 
 describe('host Node SEA Runtime artifact', () => {
-  afterEach(cleanSeaFixtures);
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await cleanSeaFixtures();
+  });
   it(
     'launches, handshakes, checks health, reconnects, and shuts down after resources disappear',
     verifiesPackagedSeaLifecycle,
     20_000,
   );
+  it('runs the real worktree and PTY tracer from the packaged SEA', runsPackagedTaskTracer, 20_000);
+  it('waits for child exit and retries a busy fixture removal', cleansSeaFixturesAfterChildExit);
 });
+
+async function cleansSeaFixturesAfterChildExit(): Promise<void> {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hariari SEA cleanup-'));
+  roots.push(root);
+  const child = nodeSpawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    stdio: 'ignore',
+  });
+  children.push(child);
+  await waitForChildSpawn(child);
+  const remove = vi.spyOn(fs.promises, 'rm').mockRejectedValueOnce(busyRemovalError());
+
+  await cleanSeaFixtures();
+
+  expect(child.exitCode === null && child.signalCode === null).toBe(false);
+  expect(remove).toHaveBeenCalledTimes(2);
+  expect(fs.existsSync(root)).toBe(false);
+}
 
 async function verifiesPackagedSeaLifecycle(): Promise<void> {
   const fixture = createSeaFixture();
@@ -54,6 +77,60 @@ async function verifiesPackagedSeaLifecycle(): Promise<void> {
   });
   expect(fixture.launches.value).toBe(1);
   await shutdownPackagedRuntime(second, reconnected);
+}
+
+async function runsPackagedTaskTracer(): Promise<void> {
+  const fixture = createSeaFixture();
+  const runtime = fixture.createInterface();
+  const connected = await runtime.connectOrStart();
+  assertConnected(connected, 'task tracer startup');
+  const repository = createPackagedGitRepository();
+  const task = await runtime.createTask({
+    objective: 'Run packaged Generic CLI tracer.',
+    project: 'Hariari',
+    repository: repository.path,
+    baseRef: 'HEAD',
+    provider: 'shell',
+    idempotencyKey: 'packaged-tracer-create',
+  });
+  const output: string[] = [];
+  const unsubscribe = await runtime.subscribeTaskOutput(task.id, (event) => {
+    if (event.kind === 'data') output.push(event.data);
+  });
+  await runtime.startTask({ taskId: task.id, idempotencyKey: 'packaged-tracer-start' });
+  await waitForTaskCompletion(runtime, task.id);
+  const completed = await runtime.getTaskExecution(task.id);
+  unsubscribe();
+
+  expect(completed).toMatchObject({
+    task: { executionState: 'completed' },
+    attempt: { state: 'completed', exitCode: 0 },
+    context: { baseCommit: repository.baseCommit },
+  });
+  expect(output.join('')).toContain('hariari-runtime-tracer');
+  await shutdownPackagedRuntime(runtime, connected);
+}
+
+function createPackagedGitRepository(): { readonly path: string; readonly baseCommit: string } {
+  const repository = createDisposableGitRepository({
+    temporaryPrefix: 'hariari-packaged-runtime-task-',
+    readmeContents: '# Packaged Runtime\n',
+    commitMessage: 'initial packaged fixture',
+    authorName: 'Runtime Test',
+    authorEmail: 'runtime@example.test',
+  });
+  roots.push(repository.root);
+  return repository;
+}
+
+async function waitForTaskCompletion(runtime: RuntimeInterface, taskId: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const execution = await runtime.getTaskExecution(taskId);
+    if (execution.attempt?.state === 'completed') return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('packaged task tracer did not complete');
 }
 
 async function preflightPackagedArtifact(artifacts: PackagedRuntimeArtifactPort): Promise<void> {
@@ -248,9 +325,55 @@ function readManifest(resourcesPath: string): { readonly runtimeVersion: string 
   return JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { readonly runtimeVersion: string };
 }
 
-function cleanSeaFixtures(): void {
-  for (const child of children.splice(0)) {
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+async function cleanSeaFixtures(): Promise<void> {
+  await Promise.all(children.map(stopFixtureChild));
+  children.length = 0;
+  await Promise.all(roots.map(removeFixtureRoot));
+  roots.length = 0;
+}
+
+async function stopFixtureChild(child: ChildProcess): Promise<void> {
+  if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+  await waitForChildExit(child);
+}
+
+function waitForChildExit(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = (): void => {
+      child.removeListener('exit', done);
+      child.removeListener('error', done);
+      resolve();
+    };
+    child.once('exit', done);
+    child.once('error', done);
+  });
+}
+
+async function removeFixtureRoot(root: string): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await fs.promises.rm(root, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (!isBusyRemoval(error) || attempt === 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
   }
-  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+}
+
+function isBusyRemoval(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'EBUSY' || code === 'ENOTEMPTY' || code === 'EPERM';
+}
+
+function waitForChildSpawn(child: ChildProcess): Promise<void> {
+  return new Promise((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
+}
+
+function busyRemovalError(): NodeJS.ErrnoException {
+  return Object.assign(new Error('fixture is busy'), { code: 'EBUSY' });
 }

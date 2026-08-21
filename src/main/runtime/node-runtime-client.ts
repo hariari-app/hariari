@@ -1,14 +1,18 @@
 import type {
+  CancelTaskRequest,
   CreateTaskRequest,
   RuntimeHealth,
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
+  StartTaskRequest,
+  TaskExecutionView,
+  TaskOutputEvent,
   TaskView,
 } from '../../shared/runtime/runtime-interface';
-import type {
-  RuntimeFrameConnection,
-  RuntimeLocalTransport,
+import {
   RuntimeTransportError,
+  type RuntimeFrameConnection,
+  type RuntimeLocalTransport,
 } from '../../runtime/local-transport';
 import {
   RUNTIME_HANDSHAKE_VERSION,
@@ -16,7 +20,11 @@ import {
   RUNTIME_OPERATION_VERSION,
   RUNTIME_SHUTDOWN_OPERATION,
   TASK_CREATE_OPERATION,
+  TASK_CANCEL_OPERATION,
+  TASK_EXECUTION_OPERATION,
   TASK_LIST_OPERATION,
+  TASK_OUTPUT_SUBSCRIBE_OPERATION,
+  TASK_START_OPERATION,
   createClientProof,
   selectHighestMutualVersion,
   verifyServerProof,
@@ -33,7 +41,9 @@ import {
   parseHandshakeReply,
   parseHealthResult,
   parseResponseFrame,
+  parseOutputFrame,
   parseStoppedResult,
+  parseTaskExecutionView,
   parseTaskList,
   parseTaskView,
 } from '../../runtime/protocol-validation';
@@ -45,6 +55,8 @@ import {
   type RuntimeClientSession,
   type RuntimeEndpoint,
 } from './runtime-ports';
+
+const TASK_START_DEADLINE_MS = 10_000;
 
 export interface NodeRuntimeClientOptions {
   readonly transport: RuntimeLocalTransport;
@@ -68,7 +80,7 @@ export class NodeRuntimeClient implements RuntimeClientPort {
 
     try {
       const reply = await this.authenticate(connection, token, options);
-      return this.createConnection(connection, reply, options);
+      return this.createConnection(connection, reply, endpoint, token, options);
     } catch (error) {
       connection.close();
       if (error instanceof RuntimePortError) throw error;
@@ -114,6 +126,8 @@ export class NodeRuntimeClient implements RuntimeClientPort {
   private createConnection(
     connection: RuntimeFrameConnection,
     reply: RuntimeWelcomeFrame | RuntimeIncompatibleFrame,
+    endpoint: RuntimeEndpoint,
+    token: Uint8Array,
     options: RuntimeClientConnectOptions,
   ): RuntimeClientConnection {
     const selected = selectHighestMutualVersion(options.supportedProtocolRange, reply.runtimeRange);
@@ -137,6 +151,8 @@ export class NodeRuntimeClient implements RuntimeClientPort {
         reply.selectedProtocolVersion,
         reply.runtime,
         this.options.randomId,
+        (taskId, listener, deadlineMs) =>
+          this.openOutputSession(endpoint, token, options, taskId, listener, deadlineMs),
       ),
     };
   }
@@ -156,6 +172,100 @@ export class NodeRuntimeClient implements RuntimeClientPort {
       if (code === 'protocol') throw new RuntimePortError('protocol-error');
       throw new RuntimePortError('connection-failed');
     }
+  }
+
+  private async openOutputSession(
+    endpoint: RuntimeEndpoint,
+    token: Uint8Array,
+    options: RuntimeClientConnectOptions,
+    taskId: string,
+    listener: (event: TaskOutputEvent) => void,
+    deadlineMs: number,
+  ): Promise<() => void> {
+    const connection = await this.connectTransport(endpoint, deadlineMs);
+    try {
+      const reply = await this.authenticate(connection, token, options);
+      if (reply.kind !== 'runtime.welcome') throw new RuntimePortError('protocol-error');
+      const request = createOutputSubscribeRequest(
+        reply.selectedProtocolVersion,
+        this.options.randomId(),
+        this.options.randomId(),
+        taskId,
+      );
+      await connection.writeFrame({ ...request }, deadlineMs);
+      const acknowledgement = parseResponseFrame(await connection.readFrame(deadlineMs));
+      assertOutputSubscriptionAcknowledged(acknowledgement, reply.selectedProtocolVersion, request);
+      let closed = false;
+      const close = (): void => {
+        if (closed) return;
+        closed = true;
+        connection.close();
+      };
+      void this.readOutput(connection, reply.selectedProtocolVersion, taskId, listener, deadlineMs, close);
+      return close;
+    } catch (error) {
+      connection.close();
+      if (error instanceof RuntimePortError) throw error;
+      throw handshakePortError(error);
+    }
+  }
+
+  private async readOutput(
+    connection: RuntimeFrameConnection,
+    protocolVersion: number,
+    taskId: string,
+    listener: (event: TaskOutputEvent) => void,
+    deadlineMs: number,
+    close: () => void,
+  ): Promise<void> {
+    while (true) {
+      try {
+        const frame = parseOutputFrame(await connection.readFrame(deadlineMs), protocolVersion);
+        if (frame.taskId !== taskId) throw new RuntimePortError('protocol-error');
+        listener(frame.event);
+      } catch (error) {
+        if (error instanceof RuntimeTransportError && error.code === 'deadline') continue;
+        close();
+        return;
+      }
+    }
+  }
+}
+
+function createOutputSubscribeRequest(
+  protocolVersion: number,
+  requestId: string,
+  correlationId: string,
+  taskId: string,
+): RuntimeRequestFrame {
+  return {
+    kind: 'runtime.request',
+    protocolVersion,
+    requestId,
+    operation: { name: TASK_OUTPUT_SUBSCRIBE_OPERATION, version: RUNTIME_OPERATION_VERSION },
+    correlationId,
+    causationId: null,
+    idempotencyKey: null,
+    payload: { taskId },
+  };
+}
+
+function assertOutputSubscriptionAcknowledged(
+  acknowledgement: ReturnType<typeof parseResponseFrame>,
+  protocolVersion: number,
+  request: RuntimeRequestFrame,
+): void {
+  if (!acknowledgement.ok) {
+    throw new RuntimePortError(acknowledgement.error.code, acknowledgement.error.retryable);
+  }
+  if (
+    acknowledgement.protocolVersion !== protocolVersion ||
+    acknowledgement.requestId !== request.requestId ||
+    acknowledgement.correlationId !== request.correlationId ||
+    acknowledgement.operation.name !== TASK_OUTPUT_SUBSCRIBE_OPERATION ||
+    acknowledgement.result.subscribed !== true
+  ) {
+    throw new RuntimePortError('protocol-error');
   }
 }
 
@@ -189,6 +299,11 @@ class NodeRuntimeClientSession implements RuntimeClientSession {
     private readonly protocolVersion: number,
     private readonly runtimeIdentity: RuntimeIdentityFrame,
     private readonly randomId: () => string,
+    private readonly subscribeOutput: (
+      taskId: string,
+      listener: (event: TaskOutputEvent) => void,
+      deadlineMs: number,
+    ) => Promise<() => void>,
   ) {}
 
   queryHealth(deadlineMs = 2_000): Promise<RuntimeHealth> {
@@ -242,6 +357,48 @@ class NodeRuntimeClientSession implements RuntimeClientSession {
     return this.enqueue(async () =>
       parseTaskList(await this.request(TASK_LIST_OPERATION, {}, null, deadlineMs)),
     );
+  }
+
+  startTask(request: StartTaskRequest, deadlineMs = TASK_START_DEADLINE_MS): Promise<TaskExecutionView> {
+    return this.enqueue(async () =>
+      parseTaskExecutionView(
+        await this.request(
+          TASK_START_OPERATION,
+          { taskId: request.taskId },
+          request.idempotencyKey,
+          deadlineMs,
+        ),
+      ),
+    );
+  }
+
+  cancelTask(request: CancelTaskRequest, deadlineMs = 2_000): Promise<TaskExecutionView> {
+    return this.enqueue(async () =>
+      parseTaskExecutionView(
+        await this.request(
+          TASK_CANCEL_OPERATION,
+          { taskId: request.taskId },
+          request.idempotencyKey,
+          deadlineMs,
+        ),
+      ),
+    );
+  }
+
+  getTaskExecution(taskId: string, deadlineMs = 2_000): Promise<TaskExecutionView> {
+    return this.enqueue(async () =>
+      parseTaskExecutionView(
+        await this.request(TASK_EXECUTION_OPERATION, { taskId }, null, deadlineMs),
+      ),
+    );
+  }
+
+  subscribeTaskOutput(
+    taskId: string,
+    listener: (event: TaskOutputEvent) => void,
+    deadlineMs = 2_000,
+  ): Promise<() => void> {
+    return this.subscribeOutput(taskId, listener, deadlineMs);
   }
 
   async disconnect(): Promise<void> {

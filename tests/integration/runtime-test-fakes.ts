@@ -1,9 +1,13 @@
 import type {
+  CancelTaskRequest,
   CreateTaskRequest,
   RuntimeHealth,
   RuntimeProtocolRange,
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
+  StartTaskRequest,
+  TaskExecutionView,
+  TaskOutputEvent,
   TaskView,
 } from '../../src/shared/runtime/runtime-interface';
 import {
@@ -20,8 +24,158 @@ import {
   type RuntimeStartupLeasePort,
   type RuntimeTokenPort,
 } from '../../src/main/runtime/runtime-ports';
+import type {
+  GenericCliExecution,
+  GenericCliExecutionAdapter,
+  GenericCliStartRequest,
+} from '../../src/runtime/generic-cli-execution-adapter';
 
 const DEFAULT_TOKEN = new Uint8Array(32).fill(7);
+
+/** Deterministic execution Adapter for public-seam Runtime lifecycle tests. */
+export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapter {
+  private readonly executions = new Map<string, FakeGenericCliExecution>();
+  private readonly startCounts = new Map<string, number>();
+  private readonly starts = new Map<string, DeferredSignal>();
+  private readonly stops = new Map<string, DeferredSignal>();
+
+  constructor(
+    private readonly options: {
+      readonly autoExitOnStop?: boolean;
+      readonly beforeStart?: Promise<void>;
+      readonly startError?: (request: GenericCliStartRequest) => Error;
+    } = {},
+  ) {}
+
+  async start(request: GenericCliStartRequest): Promise<GenericCliExecution> {
+    this.startCounts.set(request.task.id, this.startCount(request.task.id) + 1);
+    this.signalFor(this.starts, request.task.id).resolve();
+    await this.options.beforeStart;
+    const startError = this.options.startError?.(request);
+    if (startError) throw startError;
+    const execution = new FakeGenericCliExecution(
+      request,
+      this.options.autoExitOnStop ?? true,
+      () => this.signalFor(this.stops, request.task.id).resolve(),
+    );
+    this.executions.set(request.task.id, execution);
+    return execution;
+  }
+
+  waitForStart(taskId: string): Promise<void> {
+    return this.signalFor(this.starts, taskId).promise;
+  }
+
+  startCount(taskId: string): number {
+    return this.startCounts.get(taskId) ?? 0;
+  }
+
+  waitForStop(taskId: string): Promise<void> {
+    return this.signalFor(this.stops, taskId).promise;
+  }
+
+  emit(taskId: string, data: string): void {
+    this.executionFor(taskId).emit(data);
+  }
+
+  exit(taskId: string, exitCode = 0): void {
+    this.executionFor(taskId).exit(exitCode);
+  }
+
+  private executionFor(taskId: string): FakeGenericCliExecution {
+    const execution = this.executions.get(taskId);
+    if (!execution) throw new Error(`No fake execution for ${taskId}`);
+    return execution;
+  }
+
+  private signalFor(signals: Map<string, DeferredSignal>, taskId: string): DeferredSignal {
+    const existing = signals.get(taskId);
+    if (existing) return existing;
+    const signal = new DeferredSignal();
+    signals.set(taskId, signal);
+    return signal;
+  }
+}
+
+class DeferredSignal {
+  private resolvePromise: () => void = () => undefined;
+  readonly promise = new Promise<void>((resolve) => {
+    this.resolvePromise = resolve;
+  });
+
+  resolve(): void {
+    this.resolvePromise();
+  }
+}
+
+class FakeGenericCliExecution implements GenericCliExecution {
+  readonly context: GenericCliExecution['context'];
+  private active = false;
+  private exitActive = false;
+  private exitDelivered = false;
+  private exitCode: number | null = null;
+  private stopRequested = false;
+  private resolveExit: () => void = () => undefined;
+  private readonly exited = new Promise<void>((resolve) => {
+    this.resolveExit = resolve;
+  });
+
+  constructor(
+    private readonly request: GenericCliStartRequest,
+    private readonly autoExitOnStop: boolean,
+    private readonly onStop: () => void,
+  ) {
+    this.context = {
+      id: request.identities.contextId,
+      worktreeId: request.identities.worktreeId,
+      branchName: `hariari/task-${request.task.id}/run-${request.run.number}/attempt-${request.attempt.number}`,
+      baseCommit: 'fake-base-commit',
+      processId: request.identities.processId,
+      ptyId: request.identities.ptyId,
+    };
+  }
+
+  activateOutput(): void {
+    this.active = true;
+    this.exitActive = true;
+    this.deliverExit();
+  }
+
+  activateExit(): void {
+    this.exitActive = true;
+    this.deliverExit();
+  }
+
+  async stop(): Promise<void> {
+    if (!this.stopRequested && this.exitCode === null) {
+      this.stopRequested = true;
+      this.onStop();
+      if (this.autoExitOnStop) queueMicrotask(() => this.exit(143));
+    }
+    await this.exited;
+  }
+
+  dispose(): void {}
+
+  emit(data: string): void {
+    if (!this.active) throw new Error('Fake output was activated too early');
+    this.request.onOutput(data);
+  }
+
+  exit(exitCode: number): void {
+    if (this.exitCode !== null) return;
+    this.exitCode = exitCode;
+    this.resolveExit();
+    this.deliverExit();
+  }
+
+  private deliverExit(): void {
+    if (this.exitCode !== null && this.exitActive && !this.exitDelivered) {
+      this.exitDelivered = true;
+      this.request.onExit(this.exitCode);
+    }
+  }
+}
 
 export class FakeRuntimeEnvironment {
   readonly endpoint: RuntimeEndpoint = {
@@ -104,6 +258,8 @@ export class FakeRuntimeEnvironment {
   };
   readonly shutdownResults = new Map<string, RuntimeShutdownResult>();
   readonly tasks = new Map<string, TaskView>();
+  readonly executions = new Map<string, TaskExecutionView>();
+  readonly executionKeys = new Map<string, { readonly taskId: string; readonly view: TaskExecutionView }>();
   readonly launchRequests: unknown[] = [];
   serverRange: RuntimeProtocolRange = { min: 1, max: 2 };
   running = false;
@@ -258,6 +414,51 @@ class FakeRuntimeSession implements RuntimeClientSession {
   async listTasks(): Promise<readonly TaskView[]> {
     if (this.disconnected) throw new RuntimePortError('transport-lost');
     return [...this.environment.tasks.values()];
+  }
+
+  async startTask(request: StartTaskRequest): Promise<TaskExecutionView> {
+    if (this.disconnected) throw new RuntimePortError('transport-lost');
+    const task = [...this.environment.tasks.values()].find((candidate) => candidate.id === request.taskId);
+    if (!task) throw new RuntimePortError('not-found', false);
+    const existing = this.environment.executionKeys.get(request.idempotencyKey);
+    if (existing) {
+      if (existing.taskId === request.taskId) return existing.view;
+      throw new RuntimePortError('idempotency-conflict', false);
+    }
+    const view: TaskExecutionView = {
+      task: { ...task, executionState: 'running' },
+      run: { id: 'run-1', number: 1 },
+      attempt: { id: 'attempt-1', number: 1, state: 'running' },
+      context: {
+        id: 'context-1',
+        worktreeId: 'worktree-1',
+        branchName: 'hariari/task-1/run-1/attempt-1',
+        baseCommit: 'base-1',
+        processId: 'process-1',
+        ptyId: 'pty-1',
+      },
+    };
+    this.environment.executions.set(task.id, view);
+    this.environment.executionKeys.set(request.idempotencyKey, { taskId: task.id, view });
+    return view;
+  }
+
+  async cancelTask(_request: CancelTaskRequest): Promise<TaskExecutionView> {
+    throw new RuntimePortError('unsupported-operation', false);
+  }
+
+  async getTaskExecution(taskId: string): Promise<TaskExecutionView> {
+    if (this.disconnected) throw new RuntimePortError('transport-lost');
+    const execution = this.environment.executions.get(taskId);
+    if (!execution) throw new RuntimePortError('not-found', false);
+    return execution;
+  }
+
+  async subscribeTaskOutput(
+    _taskId: string,
+    _listener: (event: TaskOutputEvent) => void,
+  ): Promise<() => void> {
+    throw new RuntimePortError('unsupported-operation', false);
   }
 
   async disconnect(): Promise<void> {

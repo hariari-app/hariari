@@ -71,6 +71,8 @@ win:
       - sha256
   signExts:
     - .exe
+    - .node
+    - .dll
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true

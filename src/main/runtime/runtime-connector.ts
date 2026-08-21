@@ -1,9 +1,13 @@
 import type {
+  CancelTaskRequest,
   CreateTaskRequest,
   RuntimeConnectionState,
   RuntimeInterface,
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
+  StartTaskRequest,
+  TaskExecutionView,
+  TaskOutputEvent,
   TaskView,
 } from '../../shared/runtime/runtime-interface';
 import {
@@ -26,6 +30,7 @@ export type { RuntimeConnectorDependencies } from './runtime-connector-types';
 class RuntimeConnector implements RuntimeInterface {
   private session: RuntimeClientSession | null = null;
   private removeDisconnectListener: (() => void) | null = null;
+  private readonly outputSubscriptions = new Set<() => void>();
   private readonly supervisor: RuntimeConnectionSupervisor;
   private readonly lifecycle = new RuntimeConnectorLifecycle();
   private readonly upgradeIdentity: RuntimeUpgradeIdentityPolicy;
@@ -78,6 +83,7 @@ class RuntimeConnector implements RuntimeInterface {
   }
   async disconnect(): Promise<void> {
     this.supervisor.cancel();
+    this.releaseOutputSubscriptions();
     await this.releaseSession();
     this.supervisor.publish({
       state: 'unavailable',
@@ -98,6 +104,42 @@ class RuntimeConnector implements RuntimeInterface {
 
   listTasks(): Promise<readonly TaskView[]> {
     return this.withSession((session) => session.listTasks(this.dependencies.connectDeadlineMs));
+  }
+
+  startTask(request: StartTaskRequest): Promise<TaskExecutionView> {
+    return this.withSession((session) => session.startTask(request));
+  }
+
+  cancelTask(request: CancelTaskRequest): Promise<TaskExecutionView> {
+    return this.withSession((session) => session.cancelTask(request, this.dependencies.connectDeadlineMs));
+  }
+
+  getTaskExecution(taskId: string): Promise<TaskExecutionView> {
+    return this.withSession((session) =>
+      session.getTaskExecution(taskId, this.dependencies.connectDeadlineMs),
+    );
+  }
+
+  subscribeTaskOutput(
+    taskId: string,
+    listener: (event: TaskOutputEvent) => void,
+  ): Promise<() => void> {
+    return this.withSession(async (session) => {
+      const unsubscribe = await session.subscribeTaskOutput(
+        taskId,
+        listener,
+        this.dependencies.connectDeadlineMs,
+      );
+      let active = true;
+      const close = (): void => {
+        if (!active) return;
+        active = false;
+        this.outputSubscriptions.delete(close);
+        unsubscribe();
+      };
+      this.outputSubscriptions.add(close);
+      return close;
+    });
   }
 
   private async withSession<T>(
@@ -420,6 +462,7 @@ class RuntimeConnector implements RuntimeInterface {
   }
 
   private async releaseSession(session = this.session): Promise<void> {
+    this.releaseOutputSubscriptions();
     if (!session) return;
     if (this.session === session) {
       this.session = null;
@@ -427,6 +470,10 @@ class RuntimeConnector implements RuntimeInterface {
       this.removeDisconnectListener = null;
     }
     await session.disconnect().catch(() => undefined);
+  }
+
+  private releaseOutputSubscriptions(): void {
+    for (const unsubscribe of [...this.outputSubscriptions]) unsubscribe();
   }
 }
 

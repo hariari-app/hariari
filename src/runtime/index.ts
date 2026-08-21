@@ -32,6 +32,7 @@ export async function runRuntimeProcess(configuration: RuntimeProcessConfigurati
     randomNonce: () => randomBytes(32).toString('base64url'),
     handshakeDeadlineMs: DEFAULT_HANDSHAKE_DEADLINE_MS,
     requestDeadlineMs: DEFAULT_REQUEST_DEADLINE_MS,
+    nodeModulesRoot: path.dirname(process.execPath),
   });
   const stop = (): void => {
     void server.stop();

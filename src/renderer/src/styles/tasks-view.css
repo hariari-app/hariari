@@ -19,6 +19,9 @@
   font-size: var(--font-xs);
   overflow-wrap: anywhere;
 }
+.tasks-action {
+  margin-left: var(--space-1);
+}
 .tasks-form {
   display: grid;
   gap: var(--space-1);

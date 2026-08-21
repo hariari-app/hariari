@@ -16,7 +16,7 @@ exports.default = async function runtimeAfterPack(context) {
   fs.writeFileSync(entitlementsPath, runtimeEntitlements());
   try {
     for (const manifestPath of findRuntimeManifests(context)) {
-      const { executablePath } = readArtifact(manifestPath);
+      const { executablePath, nativeAssetPaths } = readArtifact(manifestPath);
       const args = [
         '--force',
         '--options',
@@ -29,6 +29,10 @@ exports.default = async function runtimeAfterPack(context) {
       if (identity !== '-') args.push('--timestamp');
       args.push(executablePath);
       execFileSync('codesign', args, { stdio: 'inherit' });
+      for (const nativeAssetPath of nativeAssetPaths.filter(isMacNativeCode)) {
+        const nativeArgs = [...args.slice(0, -1), nativeAssetPath];
+        execFileSync('codesign', nativeArgs, { stdio: 'inherit' });
+      }
       execFileSync('codesign', ['--verify', '--strict', '--verbose=2', executablePath], {
         stdio: 'inherit',
       });
@@ -83,12 +87,24 @@ function findRuntimeManifests(context) {
 }
 
 function refreshRuntimeManifest(manifestPath) {
-  const { manifest, executablePath } = readArtifact(manifestPath);
+  const { manifest, executablePath, nativeAssetPaths } = readArtifact(manifestPath);
   const bytes = fs.readFileSync(executablePath);
   const refreshed = {
     ...manifest,
     sha256: createHash('sha256').update(bytes).digest('hex'),
     size: bytes.length,
+    nativeAssets: Array.isArray(manifest.nativeAssets)
+      ? manifest.nativeAssets.map((asset, index) => {
+          const assetPath = nativeAssetPaths[index];
+          if (!assetPath) throw new Error('Runtime native asset is missing');
+          const assetBytes = fs.readFileSync(assetPath);
+          return {
+            ...asset,
+            sha256: createHash('sha256').update(assetBytes).digest('hex'),
+            size: assetBytes.length,
+          };
+        })
+      : undefined,
   };
   const temporaryPath = `${manifestPath}.${process.pid}.tmp`;
   fs.writeFileSync(temporaryPath, `${JSON.stringify(refreshed, null, 2)}\n`);
@@ -107,8 +123,30 @@ function readArtifact(manifestPath) {
   if (!stats.isFile() || stats.isSymbolicLink()) {
     throw new Error('Packaged Runtime executable is invalid');
   }
-  return { manifest, executablePath };
+  const platformRoot = path.dirname(manifestPath);
+  const nativeAssetPaths = Array.isArray(manifest.nativeAssets)
+    ? manifest.nativeAssets.map((asset) => {
+        if (!asset || typeof asset.path !== 'string' || !asset.path.startsWith('node_modules/node-pty/')) {
+          throw new Error('Runtime native asset manifest is invalid');
+        }
+        const assetPath = path.resolve(platformRoot, asset.path);
+        if (!assetPath.startsWith(`${platformRoot}${path.sep}`)) {
+          throw new Error('Runtime native asset escaped the artifact root');
+        }
+        const assetStats = fs.lstatSync(assetPath);
+        if (!assetStats.isFile() || assetStats.isSymbolicLink()) {
+          throw new Error('Runtime native asset is invalid');
+        }
+        return assetPath;
+      })
+    : [];
+  return { manifest, executablePath, nativeAssetPaths };
+}
+
+function isMacNativeCode(assetPath) {
+  return assetPath.endsWith('.node') || assetPath.endsWith('spawn-helper');
 }
 
 exports.findRuntimeManifests = findRuntimeManifests;
 exports.refreshRuntimeManifest = refreshRuntimeManifest;
+exports.isMacNativeCode = isMacNativeCode;

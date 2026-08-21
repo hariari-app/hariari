@@ -93,6 +93,9 @@ export const IPC_CHANNELS = {
   RUNTIME_STATUS: 'runtime:status',
   TASKS_CREATE: 'tasks:create',
   TASKS_LIST: 'tasks:list',
+  TASKS_START: 'tasks:start',
+  TASKS_CANCEL: 'tasks:cancel',
+  TASKS_EXECUTION: 'tasks:execution',
   OPEN_EXTERNAL: 'shell:open-external',
 } as const;
 

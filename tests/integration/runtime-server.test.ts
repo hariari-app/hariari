@@ -33,9 +33,30 @@ describe('background Runtime server', () => {
   );
   it('reports incompatible only after authenticated disjoint ranges', verifiesIncompatibility);
   it('expires challenges and rejects their replay without version disclosure', rejectsReplay);
+  it('keeps an authenticated request session usable while idle', preservesIdleSession);
   it('closes exactly one listener when stopped during startup', stopsDuringStartup);
   it('closes exactly one listener after an accepted shutdown loses its reply', stopsAfterLostReply);
 });
+
+async function preservesIdleSession(): Promise<void> {
+  const requestDeadlineMs = 20;
+  const fixture = await startRuntime({
+    prefix: 'idle',
+    range: { min: 1, max: 1 },
+    runtimeVersion: '0.6.8',
+    buildId: 'build-19',
+    now: () => NOW,
+    requestDeadlineMs,
+  });
+  const connected = await connect(fixture, TOKEN, { min: 1, max: 1 });
+  if (connected.kind !== 'connected') throw new Error('expected connection');
+  await expect(connected.session.queryHealth(500)).resolves.toMatchObject({ status: 'ready' });
+
+  await new Promise((resolve) => setTimeout(resolve, requestDeadlineMs * 3));
+
+  await expect(connected.session.queryHealth(500)).resolves.toMatchObject({ status: 'ready' });
+  await connected.session.disconnect();
+}
 
 async function stopsDuringStartup(): Promise<void> {
   const listen = deferred<RuntimeTransportListener>();
@@ -200,6 +221,7 @@ interface RuntimeFixtureOptions {
   readonly buildId: string;
   readonly now: () => number;
   readonly handshakeDeadlineMs?: number;
+  readonly requestDeadlineMs?: number;
 }
 
 interface ServerFixture {
@@ -235,7 +257,7 @@ async function startRuntime(options: RuntimeFixtureOptions): Promise<ServerFixtu
     randomId,
     randomNonce: randomId,
     handshakeDeadlineMs: options.handshakeDeadlineMs ?? 500,
-    requestDeadlineMs: 500,
+    requestDeadlineMs: options.requestDeadlineMs ?? 500,
   });
   servers.push(server);
   await server.start();

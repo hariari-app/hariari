@@ -38,6 +38,10 @@ const UNAVAILABLE_DETAILS: Record<
   'unsupported-operation': 'Runtime does not support this operation.',
   'stale-instance': 'The Runtime instance changed.',
   'idempotency-conflict': 'The Runtime request conflicts with an earlier request.',
+  'not-found': 'The requested Runtime task was not found.',
+  'task-not-ready': 'The requested Runtime task cannot start now.',
+  'worktree-unavailable': 'The Runtime could not allocate a task worktree.',
+  'process-start-failed': 'The Runtime could not start the task process.',
   'runtime-stopping': 'The Runtime is stopping.',
   internal: 'The Runtime reported an internal error.',
 };

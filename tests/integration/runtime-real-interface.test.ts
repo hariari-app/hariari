@@ -21,9 +21,23 @@ import {
 } from '../../src/runtime/local-transport';
 import { RuntimeServer } from '../../src/runtime/runtime-server';
 import { ProtectedRuntimeTokenStore } from '../../src/runtime/token-store';
+import type { GenericCliExecutionAdapter } from '../../src/runtime/generic-cli-execution-adapter';
+import { FakeGenericCliExecutionAdapter } from './runtime-test-fakes';
+import { createDisposableGitRepository } from '../test-common/disposable-git-repository';
 
 const directories: string[] = [];
 const servers: RuntimeServer[] = [];
+const EXECUTION_APPEND_TRANSITIONS = [
+  { name: 'RunCreated', writeCall: 1, terminalState: 'completed' },
+  { name: 'AttemptCreated', writeCall: 2, terminalState: 'completed' },
+  { name: 'ContextAllocated', writeCall: 3, terminalState: 'failed' },
+  { name: 'AttemptStarted', writeCall: 4, terminalState: 'failed' },
+  { name: 'AttemptCompleted', writeCall: 5, terminalState: 'completed' },
+] as const;
+const EXECUTION_APPEND_FAILURE_MODES = ['zero-first', 'partial-then-zero', 'partial-then-error'] as const;
+
+type ExecutionAppendTransition = (typeof EXECUTION_APPEND_TRANSITIONS)[number];
+type ExecutionAppendFailureMode = (typeof EXECUTION_APPEND_FAILURE_MODES)[number];
 
 describe('real local Runtime Interface vertical', () => {
   afterEach(async () => {
@@ -50,7 +64,289 @@ describe('real local Runtime Interface vertical', () => {
   );
   it('reports malformed Task creates as non-retryable invalid requests', rejectsMalformedTasks);
   it('rejects an overlong Task idempotency key without losing transport', rejectsOverlongTaskKey);
+  it(
+    'runs one shell Task in a task-owned Git worktree and streams its live terminal output',
+    runsShellTaskTracer,
+  );
+  it(
+    'repairs a partial execution transition before the same start key retries and replays',
+    repairsPartialExecutionTransition,
+  );
+  registerExecutionAppendFailureTests();
+  it('keeps logical provider slugs creatable and fails their first start safely', failsLogicalProviderStart);
 });
+
+function registerExecutionAppendFailureTests(): void {
+  for (const mode of EXECUTION_APPEND_FAILURE_MODES) {
+    it.each(EXECUTION_APPEND_TRANSITIONS)(
+      `repairs $name ${mode} append failure through the public execution seam`,
+      async (transition) => verifiesExecutionAppendRecovery(transition, mode),
+    );
+  }
+}
+
+async function verifiesExecutionAppendRecovery(
+  transition: ExecutionAppendTransition,
+  mode: ExecutionAppendFailureMode,
+): Promise<void> {
+  const subject = await createFaultedExecutionSubject(transition, mode);
+  const request = { taskId: subject.task.id, idempotencyKey: 'faulted-execution-start' };
+  if (transition.name === 'AttemptCompleted') {
+    await expect(subject.runtime.startTask(request)).resolves.toMatchObject({
+      task: { executionState: 'running' },
+    });
+    subject.adapter.exit(subject.task.id);
+  } else {
+    await expect(subject.runtime.startTask(request)).rejects.toEqual(new RuntimePortError('internal', true));
+    const retried = await subject.runtime.startTask(request);
+    if (transition.terminalState === 'completed') subject.adapter.exit(subject.task.id);
+    else expect(retried).toMatchObject({ task: { executionState: 'failed' } });
+  }
+  await waitForTerminalExecution(subject.runtime, subject.task.id, transition.terminalState);
+  await expect(subject.runtime.startTask(request)).resolves.toMatchObject({
+    task: { executionState: transition.terminalState },
+  });
+  await assertExecutionReplay(subject.fixture, subject.runtime, subject.task.id, transition.terminalState);
+}
+
+async function createFaultedExecutionSubject(
+  transition: ExecutionAppendTransition,
+  mode: ExecutionAppendFailureMode,
+): Promise<{
+  readonly adapter: FakeGenericCliExecutionAdapter;
+  readonly fixture: RealRuntimeFixture;
+  readonly runtime: RuntimeInterface;
+  readonly task: { readonly id: string };
+}> {
+  const adapter = new FakeGenericCliExecutionAdapter();
+  const fixture = await createRealRuntimeFixture({ executionAdapter: adapter });
+  const runtime = fixture.createInterface();
+  await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  const task = await runtime.createTask({
+    objective: 'Recover one deterministic execution append.',
+    project: 'Hariari',
+    repository: 'fake-local-checkout',
+    baseRef: 'HEAD',
+    provider: 'shell',
+    idempotencyKey: 'faulted-execution-create',
+  });
+  corruptExecutionAppend(
+    path.join(fixture.runtimeDirectory, 'tasks', 'events.log'),
+    transition.writeCall,
+    mode,
+  );
+  return { adapter, fixture, runtime, task };
+}
+
+async function waitForTerminalExecution(
+  runtime: RuntimeInterface,
+  taskId: string,
+  state: 'completed' | 'failed',
+): Promise<void> {
+  await waitForCondition(async () => {
+    const execution = await runtime.getTaskExecution(taskId);
+    return execution.attempt?.state === state ? execution : null;
+  });
+}
+
+async function assertExecutionReplay(
+  fixture: RealRuntimeFixture,
+  runtime: RuntimeInterface,
+  taskId: string,
+  state: 'completed' | 'failed',
+): Promise<void> {
+  await runtime.disconnect();
+  await servers[0]?.stop();
+  const restarted = fixture.createInterface();
+  await expect(restarted.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  await expect(restarted.getTaskExecution(taskId)).resolves.toMatchObject({
+    task: { executionState: state },
+    attempt: { state },
+  });
+  await restarted.disconnect();
+}
+
+async function failsLogicalProviderStart(): Promise<void> {
+  const fixture = await createRealRuntimeFixture();
+  const runtime = fixture.createInterface();
+  await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  const task = await runtime.createTask({
+    objective: 'Do not launch an unallowlisted provider.',
+    project: 'Hariari',
+    repository: 'hariari-app/hariari',
+    baseRef: 'main',
+    provider: 'codex',
+    idempotencyKey: 'logical-provider-create',
+  });
+
+  await expect(
+    runtime.startTask({ taskId: task.id, idempotencyKey: 'logical-provider-start' }),
+  ).rejects.toEqual(new RuntimePortError('process-start-failed', true));
+  await expect(runtime.getTaskExecution(task.id)).resolves.toMatchObject({
+    task: { id: task.id, executionState: 'failed' },
+    run: { number: 1 },
+    attempt: { number: 1, state: 'failed' },
+    context: null,
+  });
+}
+
+async function repairsPartialExecutionTransition(): Promise<void> {
+  const fixture = await createRealRuntimeFixture();
+  const repository = createRuntimeGitRepository();
+  const runtime = fixture.createInterface();
+  await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  const task = await runtime.createTask({
+    objective: 'Repair the execution append before starting.',
+    project: 'Hariari',
+    repository: repository.path,
+    baseRef: 'HEAD',
+    provider: 'shell',
+    idempotencyKey: 'partial-execution-create',
+  });
+  const eventPath = path.join(fixture.runtimeDirectory, 'tasks', 'events.log');
+  corruptSecondExecutionAppend(eventPath);
+  const request = { taskId: task.id, idempotencyKey: 'partial-execution-start' };
+
+  await expect(runtime.startTask(request)).rejects.toEqual(new RuntimePortError('internal', true));
+  await expect(runtime.startTask(request)).resolves.toMatchObject({
+    task: { executionState: 'running' },
+    run: { number: 1 },
+    attempt: { number: 1 },
+  });
+  await waitForCondition(async () => {
+    const execution = await runtime.getTaskExecution(task.id);
+    return execution.attempt?.state === 'completed' ? execution : null;
+  });
+  await runtime.disconnect();
+
+  await servers[0]?.stop();
+  const restarted = fixture.createInterface();
+  await expect(restarted.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  await expect(restarted.getTaskExecution(task.id)).resolves.toMatchObject({
+    task: { executionState: 'completed' },
+    attempt: { state: 'completed', exitCode: 0 },
+    context: { baseCommit: repository.baseCommit },
+  });
+  await restarted.disconnect();
+}
+
+function corruptSecondExecutionAppend(eventPath: string): void {
+  const open = fs.promises.open.bind(fs.promises);
+  let writes = 0;
+  vi.spyOn(fs.promises, 'open').mockImplementation(async (file, flags, mode) => {
+    const handle = await open(file, flags, mode);
+    if (file !== eventPath || flags !== 'a') return handle;
+    return new Proxy(handle, {
+      get(target, property, receiver) {
+        if (property !== 'write') return Reflect.get(target, property, receiver);
+        return async (data: Buffer) => {
+          writes += 1;
+          if (writes === 2) return target.write(data.subarray(0, 1));
+          if (writes === 3) return { bytesWritten: 0, buffer: data };
+          return target.write(data);
+        };
+      },
+    });
+  });
+}
+
+function corruptExecutionAppend(
+  eventPath: string,
+  writeCall: number,
+  mode: ExecutionAppendFailureMode,
+): void {
+  const open = fs.promises.open.bind(fs.promises);
+  let writes = 0;
+  let partial = false;
+  vi.spyOn(fs.promises, 'open').mockImplementation(async (file, flags, permissions) => {
+    const handle = await open(file, flags, permissions);
+    if (file !== eventPath || flags !== 'a') return handle;
+    return new Proxy(handle, {
+      get(target, property, receiver) {
+        if (property !== 'write') return Reflect.get(target, property, receiver);
+        return async (data: Buffer) => {
+          writes += 1;
+          if (writes === writeCall && mode === 'zero-first') return { bytesWritten: 0, buffer: data };
+          if (writes === writeCall) {
+            partial = true;
+            return target.write(data.subarray(0, 1));
+          }
+          if (partial && writes === writeCall + 1) {
+            if (mode === 'partial-then-error') throw new Error('injected append error');
+            return { bytesWritten: 0, buffer: data };
+          }
+          return target.write(data);
+        };
+      },
+    });
+  });
+}
+
+async function runsShellTaskTracer(): Promise<void> {
+  const fixture = await createRealRuntimeFixture();
+  const repository = createRuntimeGitRepository();
+  const runtime = fixture.createInterface();
+  await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
+  const task = await runtime.createTask({
+    objective: 'Run the deterministic Generic CLI tracer.',
+    project: 'Hariari',
+    repository: repository.path,
+    baseRef: 'HEAD',
+    provider: 'shell',
+    idempotencyKey: 'shell-tracer-create',
+  });
+  const output: string[] = [];
+  const unsubscribe = await runtime.subscribeTaskOutput(task.id, (event) => {
+    if (event.kind === 'data') output.push(event.data);
+  });
+
+  const started = await runtime.startTask({
+    taskId: task.id,
+    idempotencyKey: 'shell-tracer-start',
+  });
+  await waitForCondition(async () => {
+    const execution = await runtime.getTaskExecution(task.id);
+    return execution.attempt?.state === 'completed' ? execution : null;
+  });
+  const completed = await runtime.getTaskExecution(task.id);
+  unsubscribe();
+
+  expect(started).toMatchObject({
+    task: { id: task.id, executionState: 'running' },
+    run: { number: 1 },
+    attempt: { number: 1, state: 'running' },
+    context: { branchName: expect.stringMatching(/^hariari\/task-/) },
+  });
+  expect(completed).toMatchObject({
+    task: { id: task.id, executionState: 'completed' },
+    attempt: { state: 'completed', exitCode: 0 },
+    context: { baseCommit: repository.baseCommit },
+  });
+  expect(output.join('')).toContain('hariari-runtime-tracer');
+  expect(JSON.stringify(completed.context)).not.toContain(repository.path);
+}
+
+function createRuntimeGitRepository(): { readonly path: string; readonly baseCommit: string } {
+  const repository = createDisposableGitRepository({
+    temporaryPrefix: 'hariari-runtime-task-repository-',
+    readmeContents: '# Runtime tracer\n',
+    commitMessage: 'initial runtime tracer fixture',
+    authorName: 'Runtime Test',
+    authorEmail: 'runtime@example.test',
+  });
+  directories.push(repository.root);
+  return repository;
+}
+
+async function waitForCondition<T>(read: () => Promise<T | null>): Promise<T> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const value = await read();
+    if (value !== null) return value;
+    await waitFor(10);
+  }
+  throw new Error('condition was not met');
+}
 
 async function replaysTaskAfterShortWrite(): Promise<void> {
   const fixture = await createRealRuntimeFixture();
@@ -287,6 +583,7 @@ interface RealRuntimeFixture {
 }
 
 interface RealRuntimeFixtureOptions {
+  readonly executionAdapter?: GenericCliExecutionAdapter;
   readonly gateShutdown?: boolean;
   readonly requestDeadlineMs?: number;
   readonly healthPollIntervalMs?: number;
@@ -317,6 +614,7 @@ async function createRealRuntimeFixture(
     randomId,
     launches,
     requestDeadlineMs: options.requestDeadlineMs,
+    executionAdapter: options.executionAdapter,
   });
   const artifacts: RuntimeArtifactPort = {
     resolve: async () => ({
@@ -325,28 +623,57 @@ async function createRealRuntimeFixture(
       buildId: 'build-19',
     }),
   };
-  const createInterface = (): RuntimeInterface =>
+  const createInterface = createFixtureInterface({
+    artifacts,
+    endpoints,
+    healthPollIntervalMs: options.healthPollIntervalMs ?? 100,
+    processes,
+    randomId,
+    runtimeDirectory,
+    tokens,
+    transport,
+  });
+  return { launches, createInterface, endpoint, runtimeDirectory, transport };
+}
+
+interface FixtureInterfaceOptions {
+  readonly artifacts: RuntimeArtifactPort;
+  readonly endpoints: LocalRuntimeEndpointPort;
+  readonly healthPollIntervalMs: number;
+  readonly processes: RuntimeProcessPort;
+  readonly randomId: () => string;
+  readonly runtimeDirectory: string;
+  readonly tokens: ProtectedRuntimeTokenStore;
+  readonly transport: NodeLocalRuntimeTransport;
+}
+
+function createFixtureInterface(options: FixtureInterfaceOptions): () => RuntimeInterface {
+  return () =>
     createRuntimeConnector({
-      clients: new NodeRuntimeClient({ transport, randomId, randomNonce: randomId }),
-      endpoints,
-      tokens,
-      processes,
-      leases: new FileRuntimeStartupLeasePort(runtimeDirectory),
-      artifacts,
+      clients: new NodeRuntimeClient({
+        transport: options.transport,
+        randomId: options.randomId,
+        randomNonce: options.randomId,
+      }),
+      endpoints: options.endpoints,
+      tokens: options.tokens,
+      processes: options.processes,
+      leases: new FileRuntimeStartupLeasePort(options.runtimeDirectory),
+      artifacts: options.artifacts,
       clientIdentity: { name: 'hariari-desktop', version: '0.6.8' },
       supportedProtocolRange: { min: 1, max: 2 },
       connectDeadlineMs: 500,
       startupDeadlineMs: 2_000,
       reconnectDelayMs: 25,
-      healthPollIntervalMs: options.healthPollIntervalMs ?? 100,
+      healthPollIntervalMs: options.healthPollIntervalMs,
       schedule: scheduleTestTask,
       now: Date.now,
       delay: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
     });
-  return { launches, createInterface, endpoint, runtimeDirectory, transport };
 }
 
 interface ProcessFixtureOptions {
+  readonly executionAdapter?: GenericCliExecutionAdapter;
   readonly tokens: ProtectedRuntimeTokenStore;
   readonly endpoint: RuntimeEndpoint;
   readonly transport: NodeLocalRuntimeTransport;
@@ -376,6 +703,7 @@ function createProcessPort(options: ProcessFixtureOptions): RuntimeProcessPort {
         randomNonce: options.randomId,
         handshakeDeadlineMs: 500,
         requestDeadlineMs: options.requestDeadlineMs ?? 500,
+        executionAdapter: options.executionAdapter,
       });
       servers.push(server);
       await server.start();

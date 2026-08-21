@@ -57,6 +57,44 @@ function registerRuntimeInterfaceTests(): void {
   registerInitialRetryTerminalStateTests();
   registerConnectionFailureTests();
   registerBoundarySecurityTest();
+  registerTaskExecutionIdentityTest();
+}
+
+function registerTaskExecutionIdentityTest(): void {
+  it('starts one created Task and returns its joined execution identity through RuntimeInterface', async () => {
+    const environment = new FakeRuntimeEnvironment();
+    environment.running = true;
+    const runtime = connector(environment);
+    const task = await runtime.createTask({
+      objective: 'Run one deterministic task.',
+      project: 'Hariari',
+      repository: 'local-checkout',
+      baseRef: 'main',
+      provider: 'shell',
+      idempotencyKey: 'create-execution-task',
+    });
+
+    const started = await runtime.startTask({
+      taskId: task.id,
+      idempotencyKey: 'start-execution-task',
+    });
+
+    expect(started).toMatchObject({
+      task: { id: task.id, executionState: 'running' },
+      run: { id: 'run-1', number: 1 },
+      attempt: { id: 'attempt-1', number: 1, state: 'running' },
+      context: {
+        id: 'context-1',
+        worktreeId: 'worktree-1',
+        processId: 'process-1',
+        ptyId: 'pty-1',
+      },
+    });
+    await expect(runtime.getTaskExecution(task.id)).resolves.toEqual(started);
+    await expect(
+      runtime.startTask({ taskId: task.id, idempotencyKey: 'start-execution-task' }),
+    ).resolves.toEqual(started);
+  });
 }
 
 function registerInitialHealthFailureTests(): void {

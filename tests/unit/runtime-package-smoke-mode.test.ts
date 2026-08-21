@@ -65,6 +65,22 @@ class SmokeRuntime implements RuntimeInterface {
   async listTasks(): Promise<readonly TaskView[]> {
     return [];
   }
+
+  async startTask(): Promise<never> {
+    throw new Error('not used by package smoke');
+  }
+
+  async cancelTask(): Promise<never> {
+    throw new Error('not used by package smoke');
+  }
+
+  async getTaskExecution(): Promise<never> {
+    throw new Error('not used by package smoke');
+  }
+
+  async subscribeTaskOutput(): Promise<never> {
+    throw new Error('not used by package smoke');
+  }
 }
 
 function connectedState(): RuntimeConnectionState {

@@ -1,13 +1,20 @@
 import {
   TASK_PROVIDERS,
+  type CancelTaskRequest,
   type CreateTaskRequest,
+  type StartTaskRequest,
+  type TaskExecutionView,
   type TaskView,
 } from '../../shared/runtime/runtime-interface';
+import { TaskExecutionPoller, taskExecutionModel } from './task-execution-model';
 import './styles/tasks-view.css';
 
 export interface TasksApi {
   create(request: CreateTaskRequest): Promise<TaskView>;
   list(): Promise<readonly TaskView[]>;
+  start(request: StartTaskRequest): Promise<TaskExecutionView>;
+  cancel(request: CancelTaskRequest): Promise<TaskExecutionView>;
+  execution(taskId: string): Promise<TaskExecutionView>;
 }
 
 interface TaskElements {
@@ -29,9 +36,38 @@ interface TaskElements {
 export function mountTasksView(container: HTMLElement, tasks: TasksApi): () => void {
   const view = createTaskElements();
   container.appendChild(view.root);
-  loadTasks(view.list, view.message, tasks);
-  view.form.addEventListener('submit', (event) => submitTask(event, view, tasks));
-  return () => view.root.remove();
+  let disposed = false;
+  let latest: readonly TaskExecutionView[] = [];
+  let authoritativeRefreshRequired = false;
+  let refreshSequence = 0;
+  const refresh = async (): Promise<void> => {
+    const sequence = ++refreshSequence;
+    try {
+      const views = await loadTaskExecutions(tasks);
+      if (disposed || sequence !== refreshSequence) return;
+      latest = views;
+      authoritativeRefreshRequired = false;
+      renderTasks(view.list, views, tasks, refreshAfterLifecycle, view.message);
+      poller.update(views);
+    } catch {
+      if (disposed || sequence !== refreshSequence) return;
+      view.message.textContent = 'Task execution could not be updated.';
+      if (authoritativeRefreshRequired) poller.retry();
+      else poller.update(latest);
+    }
+  };
+  const refreshAfterLifecycle = (): Promise<void> => {
+    authoritativeRefreshRequired = true;
+    return refresh();
+  };
+  const poller = new TaskExecutionPoller(refresh);
+  void refresh();
+  view.form.addEventListener('submit', (event) => submitTask(event, view, tasks, refresh));
+  return () => {
+    disposed = true;
+    poller.dispose();
+    view.root.remove();
+  };
 }
 
 function createTaskElements(): TaskElements {
@@ -76,16 +112,17 @@ function createProvider(): HTMLSelectElement {
   return provider;
 }
 
-function loadTasks(list: HTMLUListElement, message: HTMLElement, tasks: TasksApi): void {
-  void tasks
-    .list()
-    .then((views) => renderTasks(list, views))
-    .catch(() => {
-      message.textContent = 'Tasks are unavailable.';
-    });
+async function loadTaskExecutions(tasks: TasksApi): Promise<readonly TaskExecutionView[]> {
+  const taskViews = await tasks.list();
+  return Promise.all(taskViews.map((task) => tasks.execution(task.id)));
 }
 
-function submitTask(event: SubmitEvent, view: TaskElements, tasks: TasksApi): void {
+function submitTask(
+  event: SubmitEvent,
+  view: TaskElements,
+  tasks: TasksApi,
+  refresh: () => Promise<void>,
+): void {
   event.preventDefault();
   view.submit.disabled = true;
   view.message.textContent = '';
@@ -94,7 +131,7 @@ function submitTask(event: SubmitEvent, view: TaskElements, tasks: TasksApi): vo
     .then(async () => {
       view.form.reset();
       view.provider.value = 'codex';
-      renderTasks(view.list, await tasks.list());
+      await refresh();
     })
     .catch(() => {
       view.message.textContent = 'Task could not be created.';
@@ -115,8 +152,16 @@ function taskRequest(view: TaskElements): CreateTaskRequest {
   };
 }
 
-function renderTasks(list: HTMLUListElement, views: readonly TaskView[]): void {
-  list.replaceChildren(...views.map((task) => taskElement(task)));
+function renderTasks(
+  list: HTMLUListElement,
+  views: readonly TaskExecutionView[],
+  tasks: TasksApi,
+  refresh: () => Promise<void>,
+  message: HTMLElement,
+): void {
+  list.replaceChildren(
+    ...views.map((execution) => taskElement(execution, tasks, refresh, message)),
+  );
 }
 
 function field(labelText: string, name: string): HTMLInputElement {
@@ -129,9 +174,43 @@ function field(labelText: string, name: string): HTMLInputElement {
   return input;
 }
 
-function taskElement(task: TaskView): HTMLLIElement {
+function taskElement(
+  execution: TaskExecutionView,
+  tasks: TasksApi,
+  refresh: () => Promise<void>,
+  message: HTMLElement,
+): HTMLLIElement {
   const item = document.createElement('li');
   item.className = 'tasks-item';
-  item.textContent = `${task.objective} · ${task.provider} · ${task.project}`;
+  const task = execution.task;
+  const model = taskExecutionModel(execution);
+  const details = document.createElement('span');
+  details.textContent = `${task.objective} · ${task.provider} · ${task.project} · ${model.summary}`;
+  item.appendChild(details);
+  if (model.action) item.appendChild(taskAction(model.action, task.id, tasks, refresh, message));
   return item;
+}
+
+function taskAction(
+  action: Exclude<ReturnType<typeof taskExecutionModel>['action'], null>,
+  taskId: string,
+  tasks: TasksApi,
+  refresh: () => Promise<void>,
+  message: HTMLElement,
+): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'tasks-action';
+  button.textContent = action === 'start' ? 'Start' : 'Cancel';
+  button.addEventListener('click', () => {
+    button.disabled = true;
+    message.textContent = '';
+    const request = { taskId, idempotencyKey: crypto.randomUUID() };
+    const operation = action === 'start' ? tasks.start(request) : tasks.cancel(request);
+    void operation.then(refresh, () => {
+      message.textContent = 'Task execution could not be updated.';
+      return refresh();
+    });
+  });
+  return button;
 }

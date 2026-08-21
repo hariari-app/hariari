@@ -16,6 +16,12 @@ vi.mock('../../src/main/runtime/runtime-package-smoke', () => ({
 }));
 
 describe('Desktop Runtime update lifecycle', () => {
+  registersShutdownFenceTest();
+  registersUnconfirmedShutdownTest();
+  registersOrdinaryDisposalTest();
+});
+
+function registersShutdownFenceTest(): void {
   it('uses connected Runtime health as the shutdown fence and awaits endpoint release', async () => {
     const stopped = deferred<RuntimeShutdownResult>();
     const runtime = createRuntime(stopped.promise);
@@ -44,7 +50,9 @@ describe('Desktop Runtime update lifecycle', () => {
     expect(preparationSettled).toBe(true);
     lifecycle.dispose();
   });
+}
 
+function registersUnconfirmedShutdownTest(): void {
   it('rejects an unconfirmed shutdown and restores the Runtime connection for retry', async () => {
     const runtime = createRuntime(
       Promise.resolve({ state: 'unavailable', reason: 'stale-instance', retryable: false }),
@@ -63,7 +71,9 @@ describe('Desktop Runtime update lifecycle', () => {
     expect(runtime.connectOrStart).toHaveBeenCalledTimes(2);
     lifecycle.dispose();
   });
+}
 
+function registersOrdinaryDisposalTest(): void {
   it('disconnects without shutting down Runtime during ordinary disposal', () => {
     const runtime = createRuntime(
       Promise.resolve({ state: 'stopped', instanceId: 'runtime-instance-19' }),
@@ -79,7 +89,7 @@ describe('Desktop Runtime update lifecycle', () => {
     expect(runtime.disconnect).toHaveBeenCalledOnce();
     expect(runtime.shutdown).not.toHaveBeenCalled();
   });
-});
+}
 
 function createRuntime(shutdownResult: Promise<RuntimeShutdownResult>): RuntimeFake {
   const state: RuntimeConnectionState = {
@@ -105,6 +115,10 @@ function createRuntime(shutdownResult: Promise<RuntimeShutdownResult>): RuntimeF
     shutdown: vi.fn((_request: RuntimeShutdownRequest) => shutdownResult),
     createTask: vi.fn(),
     listTasks: vi.fn(),
+    startTask: vi.fn(),
+    cancelTask: vi.fn(),
+    getTaskExecution: vi.fn(),
+    subscribeTaskOutput: vi.fn(),
   };
 }
 
@@ -115,6 +129,10 @@ type RuntimeFake = RuntimeInterface & {
   shutdown: ReturnType<typeof vi.fn<RuntimeInterface['shutdown']>>;
   createTask: ReturnType<typeof vi.fn<RuntimeInterface['createTask']>>;
   listTasks: ReturnType<typeof vi.fn<RuntimeInterface['listTasks']>>;
+  startTask: ReturnType<typeof vi.fn<RuntimeInterface['startTask']>>;
+  cancelTask: ReturnType<typeof vi.fn<RuntimeInterface['cancelTask']>>;
+  getTaskExecution: ReturnType<typeof vi.fn<RuntimeInterface['getTaskExecution']>>;
+  subscribeTaskOutput: ReturnType<typeof vi.fn<RuntimeInterface['subscribeTaskOutput']>>;
 };
 
 class FakeIpcRegistry {

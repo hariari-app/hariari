@@ -27,6 +27,18 @@ interface RuntimeArtifactManifest {
   readonly protocolRange: { readonly min: 1; readonly max: 1 };
   readonly sha256: string;
   readonly size: number;
+  readonly nativeAssets: readonly NativeAssetManifest[];
+}
+
+interface NativeAssetManifest {
+  readonly path: string;
+  readonly sha256: string;
+  readonly size: number;
+}
+
+interface NativeAssetSource {
+  readonly manifest: NativeAssetManifest;
+  readonly sourcePath: string;
 }
 
 export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
@@ -52,7 +64,11 @@ export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
   private async resolveVerified(): Promise<RuntimeArtifact> {
     try {
       const source = await this.resolveSource();
-      const executablePath = await this.materialize(source.manifest, source.executablePath);
+      const executablePath = await this.materialize(
+        source.manifest,
+        source.executablePath,
+        source.nativeAssets,
+      );
       return {
         executablePath,
         runtimeVersion: source.manifest.runtimeVersion,
@@ -67,6 +83,7 @@ export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
   private async resolveSource(): Promise<{
     readonly manifest: RuntimeArtifactManifest;
     readonly executablePath: string;
+    readonly nativeAssets: readonly NativeAssetSource[];
   }> {
     if (!path.isAbsolute(this.options.resourcesPath)) throw new Error('Invalid resources root');
     const resourcesRoot = await fs.promises.realpath(this.options.resourcesPath);
@@ -101,12 +118,15 @@ export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
     const canonicalExecutablePath = await fs.promises.realpath(executablePath);
     assertConfined(canonicalPlatformRoot, canonicalExecutablePath);
     await verifyFile(canonicalExecutablePath, manifest);
-    return { manifest, executablePath: canonicalExecutablePath };
+    assertDarwinNodePtyClosure(manifest.nativeAssets, this.platform, this.arch);
+    const nativeAssets = await resolveNativeAssets(canonicalPlatformRoot, manifest.nativeAssets);
+    return { manifest, executablePath: canonicalExecutablePath, nativeAssets };
   }
 
   private async materialize(
     manifest: RuntimeArtifactManifest,
     sourcePath: string,
+    nativeAssets: readonly NativeAssetSource[],
   ): Promise<string> {
     const requestedRuntimeRoot = path.resolve(this.options.runtimeDirectory);
     const runtimeRoot = await prepareMaterializationRuntimeRoot(requestedRuntimeRoot);
@@ -127,35 +147,52 @@ export class PackagedRuntimeArtifactPort implements RuntimeArtifactPort {
       );
     const destinationPath = path.join(destinationDirectory, manifest.executable);
     assertConfined(binRoot, destinationPath);
-    if (await isValidMaterializedFile(destinationPath, manifest)) {
-      await preserveExecutableMode(destinationPath, this.platform);
-      return destinationPath;
+    if (!(await isValidMaterializedFile(destinationPath, manifest))) {
+      await this.materializeExecutable(sourcePath, destinationPath, canonicalBuildDirectory, manifest);
     }
+    await preserveExecutableMode(destinationPath, this.platform);
+    await materializeNativeAssets(destinationDirectory, nativeAssets, this.platform);
+    await syncDirectory(destinationDirectory);
+    await syncDirectory(canonicalBuildDirectory);
+    await verifyFile(destinationPath, manifest);
+    return destinationPath;
+  }
 
-    const temporaryPath = path.join(canonicalBuildDirectory, `.${randomUUID()}.tmp`);
-    assertConfined(canonicalBuildDirectory, temporaryPath);
+  private async materializeExecutable(
+    sourcePath: string,
+    destinationPath: string,
+    buildDirectory: string,
+    manifest: RuntimeArtifactManifest,
+  ): Promise<void> {
+    const temporaryPath = path.join(buildDirectory, `.${randomUUID()}.tmp`);
+    assertConfined(buildDirectory, temporaryPath);
     try {
       await fs.promises.copyFile(sourcePath, temporaryPath, fs.constants.COPYFILE_EXCL);
       await preserveExecutableMode(temporaryPath, this.platform);
-      const handle = await fs.promises.open(temporaryPath, 'r+');
-      try {
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
+      await syncFile(temporaryPath);
       await verifyFile(temporaryPath, manifest);
       try {
         await fs.promises.rename(temporaryPath, destinationPath);
       } catch (error) {
         if (!(await isValidMaterializedFile(destinationPath, manifest))) throw error;
       }
-      await syncDirectory(destinationDirectory);
-      await syncDirectory(canonicalBuildDirectory);
-      await verifyFile(destinationPath, manifest);
-      await preserveExecutableMode(destinationPath, this.platform);
-      return destinationPath;
     } finally {
       await fs.promises.unlink(temporaryPath).catch(() => undefined);
+    }
+  }
+}
+
+function assertDarwinNodePtyClosure(
+  nativeAssets: readonly NativeAssetManifest[],
+  platform: NodeJS.Platform,
+  arch: string,
+): void {
+  if (platform !== 'darwin') return;
+  const paths = new Set(nativeAssets.map((asset) => asset.path));
+  const root = `node_modules/node-pty/prebuilds/darwin-${arch}`;
+  for (const name of ['pty.node', 'spawn-helper']) {
+    if (!paths.has(`${root}/${name}`)) {
+      throw new Error(`Runtime node-pty asset closure is missing: ${name}`);
     }
   }
 }
@@ -195,11 +232,33 @@ function parseManifest(
     !SHA256_PATTERN.test(value.sha256) ||
     typeof value.size !== 'number' ||
     !Number.isSafeInteger(value.size) ||
-    value.size <= 0
+    value.size <= 0 ||
+    (value.nativeAssets !== undefined && !isNativeAssetList(value.nativeAssets))
   ) {
     throw new Error('Invalid Runtime manifest');
   }
-  return value as unknown as RuntimeArtifactManifest;
+  return {
+    ...(value as unknown as Omit<RuntimeArtifactManifest, 'nativeAssets'>),
+    nativeAssets: (value.nativeAssets as readonly NativeAssetManifest[] | undefined) ?? [],
+  };
+}
+
+function isNativeAssetList(value: unknown): value is readonly NativeAssetManifest[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (asset) =>
+        isRecord(asset) &&
+        typeof asset.path === 'string' &&
+        isSafeAssetPath(asset.path) &&
+        typeof asset.sha256 === 'string' &&
+        SHA256_PATTERN.test(asset.sha256) &&
+        typeof asset.size === 'number' &&
+        Number.isSafeInteger(asset.size) &&
+        asset.size > 0,
+    ) &&
+    new Set(value.map((asset) => asset.path)).size === value.length
+  );
 }
 
 async function ensureMaterializationDirectories(
@@ -259,9 +318,89 @@ async function isValidMaterializedFile(
   }
 }
 
+async function resolveNativeAssets(
+  sourceRoot: string,
+  manifests: readonly NativeAssetManifest[],
+): Promise<readonly NativeAssetSource[]> {
+  return Promise.all(
+    manifests.map(async (manifest) => {
+      const candidate = path.resolve(sourceRoot, manifest.path);
+      assertConfined(sourceRoot, candidate);
+      const stats = await fs.promises.lstat(candidate);
+      if (!stats.isFile() || stats.isSymbolicLink()) throw new Error('Invalid Runtime native asset');
+      const canonicalPath = await fs.promises.realpath(candidate);
+      assertConfined(sourceRoot, canonicalPath);
+      await verifyNativeFile(canonicalPath, manifest);
+      return { manifest, sourcePath: canonicalPath };
+    }),
+  );
+}
+
+async function materializeNativeAssets(
+  destinationRoot: string,
+  assets: readonly NativeAssetSource[],
+  platform: NodeJS.Platform,
+): Promise<void> {
+  for (const asset of assets) {
+    const destinationPath = path.resolve(destinationRoot, asset.manifest.path);
+    assertConfined(destinationRoot, destinationPath);
+    await ensurePrivateAssetDirectory(destinationRoot, path.dirname(destinationPath));
+    if (await isValidNativeAsset(destinationPath, asset.manifest)) continue;
+    const temporaryPath = path.join(path.dirname(destinationPath), `.${randomUUID()}.tmp`);
+    try {
+      await fs.promises.copyFile(asset.sourcePath, temporaryPath, fs.constants.COPYFILE_EXCL);
+      await preserveExecutableMode(temporaryPath, platform);
+      await verifyNativeFile(temporaryPath, asset.manifest);
+      try {
+        await fs.promises.rename(temporaryPath, destinationPath);
+      } catch (error) {
+        if (!(await isValidNativeAsset(destinationPath, asset.manifest))) throw error;
+      }
+    } finally {
+      await fs.promises.unlink(temporaryPath).catch(() => undefined);
+    }
+  }
+}
+
+async function ensurePrivateAssetDirectory(root: string, directory: string): Promise<void> {
+  const relative = path.relative(root, directory);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Invalid native asset path');
+  let current = root;
+  for (const segment of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    await createPrivateChildDirectory(current);
+  }
+}
+
+async function isValidNativeAsset(
+  filePath: string,
+  manifest: NativeAssetManifest,
+): Promise<boolean> {
+  try {
+    const stats = await fs.promises.lstat(filePath);
+    if (!stats.isFile() || stats.isSymbolicLink()) return false;
+    await verifyNativeFile(filePath, manifest);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function verifyFile(filePath: string, manifest: RuntimeArtifactManifest): Promise<void> {
+  await verifyDigest(filePath, manifest, 'Runtime artifact');
+}
+
+async function verifyNativeFile(filePath: string, manifest: NativeAssetManifest): Promise<void> {
+  await verifyDigest(filePath, manifest, 'Runtime native asset');
+}
+
+async function verifyDigest(
+  filePath: string,
+  manifest: { readonly size: number; readonly sha256: string },
+  label: string,
+): Promise<void> {
   const stats = await fs.promises.stat(filePath);
-  if (stats.size !== manifest.size) throw new Error('Runtime artifact size mismatch');
+  if (stats.size !== manifest.size) throw new Error(`${label} size mismatch`);
   const hash = createHash('sha256');
   await new Promise<void>((resolve, reject) => {
     const stream = fs.createReadStream(filePath);
@@ -270,12 +409,21 @@ async function verifyFile(filePath: string, manifest: RuntimeArtifactManifest): 
     stream.once('end', resolve);
   });
   if (hash.digest('hex') !== manifest.sha256) {
-    throw new Error('Runtime artifact digest mismatch');
+    throw new Error(`${label} digest mismatch`);
   }
 }
 
 async function preserveExecutableMode(filePath: string, platform: NodeJS.Platform): Promise<void> {
   if (platform !== 'win32') await fs.promises.chmod(filePath, 0o755);
+}
+
+async function syncFile(filePath: string): Promise<void> {
+  const handle = await fs.promises.open(filePath, 'r+');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
 }
 
 async function syncDirectory(directory: string): Promise<void> {
@@ -296,4 +444,8 @@ function assertConfined(root: string, candidate: string): void {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isSafeAssetPath(value: string): boolean {
+  return /^node_modules\/node-pty\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/.test(value);
 }
