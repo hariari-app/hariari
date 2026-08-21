@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NodeRuntimeClient } from '../../src/main/runtime/node-runtime-client';
 import { RuntimePortError, type RuntimeClientSession } from '../../src/main/runtime/runtime-ports';
-import type { TaskExecutionState } from '../../src/shared/runtime/runtime-interface';
+import type { TaskExecutionState, TaskOutputEvent } from '../../src/shared/runtime/runtime-interface';
 import { NodeLocalRuntimeTransport } from '../../src/runtime/local-transport';
 import { RuntimeServer } from '../../src/runtime/runtime-server';
 import { GenericCliExecutionError } from '../../src/runtime/generic-cli-execution-adapter';
@@ -28,11 +28,61 @@ function registerCancellationTests(): void {
     for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   });
   registerDurableCancellationTest();
+  registerDurablePtyReattachTest();
   registerTaskNotReadyTest();
   registerExitRaceTest();
   registerInFlightAllocationTest();
   registerFailedAllocationCancellationTest();
   registerCancellationAppendRepairTests();
+}
+
+function registerDurablePtyReattachTest(): void {
+  it('reconnects Desktop to one running PTY and replays persisted output before live output', async () => {
+    const subject = await createSubject(new FakeGenericCliExecutionAdapter());
+    const firstDesktop = subject.control;
+    const task = await createShellTask(firstDesktop, 'durable-pty-create');
+    const started = await firstDesktop.startTask({
+      taskId: task.id,
+      idempotencyKey: 'durable-pty-start',
+    });
+    const firstOutput: TaskOutputEvent[] = [];
+    const unsubscribeFirst = await firstDesktop.subscribeTaskOutput(task.id, (event) => {
+      firstOutput.push(event);
+    });
+    subject.adapter.emit(task.id, 'before-detach\n');
+    await waitForOutput(firstOutput, 1);
+    unsubscribeFirst();
+    await firstDesktop.disconnect();
+
+    const secondDesktop = await subject.connectDesktop();
+    await expect(secondDesktop.getTaskExecution(task.id)).resolves.toEqual(started);
+    const reattachedOutput: TaskOutputEvent[] = [];
+    const unsubscribeSecond = await secondDesktop.subscribeTaskOutput(task.id, (event) => {
+      reattachedOutput.push(event);
+    });
+    subject.adapter.emit(task.id, 'after-reattach\n');
+    await waitForOutput(reattachedOutput, 2);
+
+    expect(reattachedOutput).toEqual([
+      { kind: 'data', taskId: task.id, attemptId: started.attempt?.id, sequence: 1, data: 'before-detach\n' },
+      { kind: 'data', taskId: task.id, attemptId: started.attempt?.id, sequence: 2, data: 'after-reattach\n' },
+    ]);
+    unsubscribeSecond();
+    await secondDesktop.disconnect();
+    const thirdDesktop = await subject.connectDesktop();
+    const repeatedOutput: TaskOutputEvent[] = [];
+    const unsubscribeThird = await thirdDesktop.subscribeTaskOutput(task.id, (event) => {
+      repeatedOutput.push(event);
+    });
+    await waitForOutput(repeatedOutput, 2);
+    expect(repeatedOutput).toEqual(reattachedOutput);
+    expect(subject.adapter.startCount(task.id)).toBe(1);
+    unsubscribeThird();
+    await expect(
+      thirdDesktop.cancelTask({ taskId: task.id, idempotencyKey: 'durable-pty-cleanup' }),
+    ).resolves.toMatchObject({ task: { executionState: 'cancelled' } });
+    await thirdDesktop.disconnect();
+  });
 }
 
 function registerDurableCancellationTest(): void {
@@ -196,6 +246,7 @@ interface CancellationSubject {
   readonly control: RuntimeClientSession;
   readonly eventPath: string;
   readonly query: RuntimeClientSession;
+  connectDesktop(): Promise<RuntimeClientSession>;
   restart(): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -228,6 +279,7 @@ async function createSubject(
     get query() {
       return query;
     },
+    connectDesktop: () => connect(transport, endpoint, token, randomId),
     restart: async () => {
       await control.disconnect();
       await query.disconnect();
@@ -318,6 +370,15 @@ async function expectExecution(
 
 function waitForRuntimeUpdate(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 5));
+}
+
+async function waitForOutput(output: readonly TaskOutputEvent[], count: number): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    if (output.length === count) return;
+    await waitForRuntimeUpdate();
+  }
+  throw new Error(`Expected ${count} output events; received ${output.length}`);
 }
 
 function corruptCancellationAppend(

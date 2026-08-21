@@ -370,18 +370,20 @@ export class RuntimeServer {
     let acknowledged = false;
     let unsubscribe: (() => void) | null = null;
     try {
-      unsubscribe = this.executions.subscribe(taskId, (event) => {
+      const subscription = this.executions.subscribe(taskId, (event) => {
         if (!acknowledged) {
           if (pending.length < 64) pending.push(event);
           return;
         }
         writer.push(event, protocolVersion);
       });
+      unsubscribe = subscription.unsubscribe;
       await connection.writeFrame(
         success(request, protocolVersion, { subscribed: true }),
         this.options.requestDeadlineMs,
       );
       acknowledged = true;
+      for (const event of subscription.replay) writer.push(event, protocolVersion);
       for (const event of pending) writer.push(event, protocolVersion);
       await writer.settled();
     } catch (error) {
