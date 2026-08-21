@@ -1,9 +1,10 @@
 import type { RuntimeProtocolRange, TaskOutputEvent } from '../shared/runtime/runtime-interface';
-import type {
-  RuntimeFrameConnection,
-  RuntimeLocalEndpoint,
-  RuntimeLocalTransport,
-  RuntimeTransportListener,
+import {
+  RuntimeTransportError,
+  type RuntimeFrameConnection,
+  type RuntimeLocalEndpoint,
+  type RuntimeLocalTransport,
+  type RuntimeTransportListener,
 } from './local-transport';
 import {
   RUNTIME_HANDSHAKE_VERSION,
@@ -144,7 +145,13 @@ export class RuntimeServer {
       const selectedProtocol = await this.authenticate(connection);
       if (selectedProtocol === null) return;
       while (!this.isStopping()) {
-        const frame = await connection.readFrame(this.options.requestDeadlineMs);
+        let frame: Record<string, unknown>;
+        try {
+          frame = await connection.readFrame(this.options.requestDeadlineMs);
+        } catch (error) {
+          if (error instanceof RuntimeTransportError && error.code === 'deadline') continue;
+          throw error;
+        }
         const request = parseRequestFrame(frame);
         if (request.operation.name === TASK_OUTPUT_SUBSCRIBE_OPERATION) {
           await this.serveOutputSubscription(connection, request, selectedProtocol);
