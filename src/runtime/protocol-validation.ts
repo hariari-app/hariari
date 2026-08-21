@@ -1,10 +1,16 @@
 import {
   RUNTIME_IDENTIFIER_MAX_LENGTH,
   TASK_PROVIDERS,
+  type CancelTaskRequest,
   type CreateTaskRequest,
   type RuntimeHealth,
+  type RuntimeOperationFailureCode,
   type RuntimeProtocolRange,
   type RuntimeShutdownRequest,
+  type StartTaskRequest,
+  type TaskExecutionState,
+  type TaskExecutionView,
+  type TaskOutputEvent,
 } from '../shared/runtime/runtime-interface';
 import {
   RUNTIME_HANDSHAKE_VERSION,
@@ -12,7 +18,11 @@ import {
   RUNTIME_OPERATION_VERSION,
   RUNTIME_SHUTDOWN_OPERATION,
   TASK_CREATE_OPERATION,
+  TASK_CANCEL_OPERATION,
+  TASK_EXECUTION_OPERATION,
   TASK_LIST_OPERATION,
+  TASK_OUTPUT_SUBSCRIBE_OPERATION,
+  TASK_START_OPERATION,
   type RuntimeAuthenticateFrame,
   type RuntimeAuthenticatedReplyEnvelope,
   type RuntimeChallengeFrame,
@@ -20,6 +30,7 @@ import {
   type RuntimeOperationFrame,
   type RuntimeRequestFrame,
   type RuntimeResponseFrame,
+  type RuntimeOutputFrame,
   type RuntimeUnauthorizedFrame,
   type RuntimeWelcomeFrame,
 } from './protocol';
@@ -148,18 +159,13 @@ export function parseResponseFrame(value: unknown): RuntimeResponseFrame {
   if (frame.ok) return { ...base, ok: true, result: object(frame.result) };
   const error = object(frame.error);
   const code = error.code;
-  if (
-    code !== 'invalid-request' &&
-    code !== 'unsupported-operation' &&
-    code !== 'stale-instance' &&
-    code !== 'idempotency-conflict' &&
-    code !== 'runtime-stopping' &&
-    code !== 'internal'
-  ) {
-    invalid();
-  }
+  if (typeof code !== 'string' || !OPERATION_FAILURE_CODES.has(code)) invalid();
   if (typeof error.retryable !== 'boolean') invalid();
-  return { ...base, ok: false, error: { code, retryable: error.retryable } };
+  return {
+    ...base,
+    ok: false,
+    error: { code: code as RuntimeOperationFailureCode, retryable: error.retryable },
+  };
 }
 
 export function parseHealthResult(
@@ -197,6 +203,21 @@ export function parseCreateTaskRequest(request: RuntimeRequestFrame): CreateTask
   return parseTaskRequest({ ...request.payload, idempotencyKey: request.idempotencyKey });
 }
 
+export function parseStartTaskRequest(request: RuntimeRequestFrame): StartTaskRequest {
+  if (request.operation.name !== TASK_START_OPERATION || !request.idempotencyKey) invalid();
+  return { taskId: identifier(request.payload.taskId), idempotencyKey: request.idempotencyKey };
+}
+
+export function parseCancelTaskRequest(request: RuntimeRequestFrame): CancelTaskRequest {
+  if (request.operation.name !== TASK_CANCEL_OPERATION || !request.idempotencyKey) invalid();
+  return { taskId: identifier(request.payload.taskId), idempotencyKey: request.idempotencyKey };
+}
+
+export function parseTaskExecutionId(request: RuntimeRequestFrame, operationName: string): string {
+  if (request.operation.name !== operationName || request.idempotencyKey !== null) invalid();
+  return identifier(request.payload.taskId);
+}
+
 export function parseTaskRequest(value: unknown): CreateTaskRequest {
   const request = object(value);
   const provider = boundedString(request.provider, MAX_TASK_FIELD_LENGTH);
@@ -230,6 +251,40 @@ export function parseTaskList(value: Record<string, unknown>) {
   return value.tasks.map((task) => parseTaskView(object(task)));
 }
 
+export function parseTaskExecutionView(value: Record<string, unknown>): TaskExecutionView {
+  const taskValue = object(value.task);
+  const task = parseTaskView(taskValue);
+  const executionState = executionStateValue(taskValue.executionState);
+  const run = value.run === null ? null : parseRun(object(value.run));
+  const attempt = value.attempt === null ? null : parseAttempt(object(value.attempt));
+  const context = value.context === null ? null : parseContext(object(value.context));
+  if (executionState === 'ready' && (run !== null || attempt !== null || context !== null)) invalid();
+  if (executionState !== 'ready' && run === null) invalid();
+  if (executionState !== 'starting' && executionState !== 'ready' && attempt === null) invalid();
+  return { task: { ...task, executionState }, run, attempt, context };
+}
+
+export function parseOutputFrame(value: unknown, protocolVersion: number): RuntimeOutputFrame {
+  const frame = object(value);
+  if (frame.kind !== 'runtime.output' || positiveInteger(frame.protocolVersion) !== protocolVersion) invalid();
+  const taskId = identifier(frame.taskId);
+  const event = parseTaskOutputEvent(object(frame.event));
+  if (event.taskId !== taskId) invalid();
+  return { kind: 'runtime.output', protocolVersion, taskId, event };
+}
+
+export function parseTaskOutputEvent(value: Record<string, unknown>): TaskOutputEvent {
+  const kind = value.kind;
+  const base = {
+    taskId: identifier(value.taskId),
+    attemptId: identifier(value.attemptId),
+    sequence: positiveInteger(value.sequence),
+  };
+  if (kind === 'dropped') return { kind, ...base };
+  if (kind === 'data') return { kind, ...base, data: boundedString(value.data, 4 * 1024) };
+  invalid();
+}
+
 function requiredTaskField(value: unknown): string {
   const field = boundedString(value, MAX_TASK_FIELD_LENGTH);
   if (field.trim().length === 0) invalid();
@@ -258,10 +313,60 @@ function operation(value: unknown): RuntimeOperationFrame {
     name !== RUNTIME_HEALTH_OPERATION &&
     name !== RUNTIME_SHUTDOWN_OPERATION &&
     name !== TASK_CREATE_OPERATION &&
-    name !== TASK_LIST_OPERATION
+    name !== TASK_LIST_OPERATION &&
+    name !== TASK_START_OPERATION &&
+    name !== TASK_CANCEL_OPERATION &&
+    name !== TASK_EXECUTION_OPERATION &&
+    name !== TASK_OUTPUT_SUBSCRIBE_OPERATION
   )
     invalid();
   return { name, version: RUNTIME_OPERATION_VERSION };
+}
+
+function parseRun(value: Record<string, unknown>): { readonly id: string; readonly number: number } {
+  return { id: identifier(value.id), number: positiveInteger(value.number) };
+}
+
+function parseAttempt(value: Record<string, unknown>): NonNullable<TaskExecutionView['attempt']> {
+  const state = executionStateValue(value.state);
+  const exitCode = value.exitCode === undefined ? undefined : integer(value.exitCode);
+  return {
+    id: identifier(value.id),
+    number: positiveInteger(value.number),
+    state,
+    ...(exitCode === undefined ? {} : { exitCode }),
+  };
+}
+
+function parseContext(value: Record<string, unknown>): NonNullable<TaskExecutionView['context']> {
+  return {
+    id: identifier(value.id),
+    worktreeId: identifier(value.worktreeId),
+    branchName: boundedString(value.branchName, MAX_TASK_FIELD_LENGTH),
+    baseCommit: identifier(value.baseCommit),
+    processId: identifier(value.processId),
+    ptyId: identifier(value.ptyId),
+  };
+}
+
+function executionStateValue(value: unknown): TaskExecutionState {
+  if (
+    value !== 'ready' &&
+    value !== 'starting' &&
+    value !== 'running' &&
+    value !== 'completed' &&
+    value !== 'failed' &&
+    value !== 'cancelling' &&
+    value !== 'cancelled'
+  ) {
+    invalid();
+  }
+  return value;
+}
+
+function integer(value: unknown): number {
+  if (!Number.isSafeInteger(value)) invalid();
+  return value as number;
 }
 
 function protocolRange(value: unknown): RuntimeProtocolRange {
@@ -321,3 +426,16 @@ function shutdownReason(value: unknown): RuntimeShutdownRequest['reason'] {
 function invalid(): never {
   throw new RuntimeProtocolValidationError();
 }
+
+const OPERATION_FAILURE_CODES = new Set([
+  'invalid-request',
+  'unsupported-operation',
+  'stale-instance',
+  'idempotency-conflict',
+  'not-found',
+  'task-not-ready',
+  'worktree-unavailable',
+  'process-start-failed',
+  'runtime-stopping',
+  'internal',
+]);

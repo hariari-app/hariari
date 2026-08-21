@@ -1,10 +1,14 @@
 import type {
+  CancelTaskRequest,
   CreateTaskRequest,
   RuntimeHealth,
   RuntimeOperationFailureCode,
   RuntimeProtocolRange,
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
+  StartTaskRequest,
+  TaskExecutionView,
+  TaskOutputEvent,
   TaskView,
 } from '../../shared/runtime/runtime-interface';
 
@@ -56,6 +60,14 @@ export interface RuntimeClientSession {
   shutdown(request: RuntimeShutdownRequest, deadlineMs?: number): Promise<RuntimeShutdownResult>;
   createTask(request: CreateTaskRequest, deadlineMs?: number): Promise<TaskView>;
   listTasks(deadlineMs?: number): Promise<readonly TaskView[]>;
+  startTask(request: StartTaskRequest, deadlineMs?: number): Promise<TaskExecutionView>;
+  cancelTask(request: CancelTaskRequest, deadlineMs?: number): Promise<TaskExecutionView>;
+  getTaskExecution(taskId: string, deadlineMs?: number): Promise<TaskExecutionView>;
+  subscribeTaskOutput(
+    taskId: string,
+    listener: (event: TaskOutputEvent) => void,
+    deadlineMs?: number,
+  ): Promise<() => void>;
   disconnect(): Promise<void>;
   onDisconnect(listener: () => void): () => void;
 }

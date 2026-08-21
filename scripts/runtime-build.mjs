@@ -73,6 +73,7 @@ try {
 
   const bytes = fs.readFileSync(executablePath);
   const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const nativeAssets = copyNodePtyAssets(platformRoot);
   const manifest = {
     schemaVersion: 1,
     runtimeVersion: packageJson.version,
@@ -84,6 +85,7 @@ try {
     protocolRange: { min: 1, max: 1 },
     sha256,
     size: bytes.length,
+    nativeAssets,
   };
   fs.writeFileSync(
     path.join(platformRoot, 'runtime-manifest.json'),
@@ -92,6 +94,59 @@ try {
   process.stdout.write(`Built Runtime SEA ${platformKey} (${manifest.buildId})\n`);
 } finally {
   fs.rmSync(workingRoot, { recursive: true, force: true });
+}
+
+function copyNodePtyAssets(destinationRoot) {
+  const nodePtyRoot = path.dirname(require.resolve('node-pty/package.json'));
+  const assets = [];
+  copyNodePtyFile(nodePtyRoot, destinationRoot, 'package.json', assets);
+  copyNodePtyDirectory(nodePtyRoot, destinationRoot, 'lib', assets, (name) =>
+    name.endsWith('.js') && !name.includes('.test.'),
+  );
+  const prebuildRoot = path.join('prebuilds', platformKey);
+  if (fs.existsSync(path.join(nodePtyRoot, prebuildRoot))) {
+    copyNodePtyDirectory(nodePtyRoot, destinationRoot, prebuildRoot, assets, (name) =>
+      /\.(node|dll|exe)$/.test(name),
+    );
+  } else {
+    copyNodePtyFile(nodePtyRoot, destinationRoot, path.join('build', 'Release', 'pty.node'), assets);
+    const helper = path.join('build', 'Release', 'spawn-helper');
+    if (fs.existsSync(path.join(nodePtyRoot, helper))) {
+      copyNodePtyFile(nodePtyRoot, destinationRoot, helper, assets);
+    }
+  }
+  if (assets.length < 3) throw new Error('node-pty assets are unavailable for this Runtime platform');
+  return assets;
+}
+
+function copyNodePtyDirectory(nodePtyRoot, destinationRoot, relativeDirectory, assets, include) {
+  const sourceDirectory = path.join(nodePtyRoot, relativeDirectory);
+  for (const entry of fs.readdirSync(sourceDirectory, { withFileTypes: true })) {
+    const relativePath = path.join(relativeDirectory, entry.name);
+    if (entry.isDirectory()) {
+      copyNodePtyDirectory(nodePtyRoot, destinationRoot, relativePath, assets, include);
+    } else if (entry.isFile() && include(entry.name)) {
+      copyNodePtyFile(nodePtyRoot, destinationRoot, relativePath, assets);
+    } else if (entry.isSymbolicLink()) {
+      throw new Error('node-pty asset cannot be a symbolic link');
+    }
+  }
+}
+
+function copyNodePtyFile(nodePtyRoot, destinationRoot, relativePath, assets) {
+  const sourcePath = path.join(nodePtyRoot, relativePath);
+  const destinationPath = path.join(destinationRoot, 'node_modules', 'node-pty', relativePath);
+  const stats = fs.lstatSync(sourcePath);
+  if (!stats.isFile() || stats.isSymbolicLink()) throw new Error('node-pty asset is not a regular file');
+  fs.mkdirSync(path.dirname(destinationPath), { recursive: true, mode: 0o700 });
+  fs.copyFileSync(sourcePath, destinationPath);
+  fs.chmodSync(destinationPath, stats.mode & 0o777);
+  const bytes = fs.readFileSync(destinationPath);
+  assets.push({
+    path: path.posix.join('node_modules', 'node-pty', ...relativePath.split(path.sep)),
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    size: bytes.length,
+  });
 }
 
 function verifyBuiltinsOnly(metafile) {

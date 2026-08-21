@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type {
   RuntimeOperationFailureCode,
   RuntimeProtocolRange,
+  TaskOutputEvent,
 } from '../shared/runtime/runtime-interface';
 
 export const RUNTIME_HANDSHAKE_VERSION = 1 as const;
@@ -9,6 +10,10 @@ export const RUNTIME_HEALTH_OPERATION = 'runtime.health' as const;
 export const RUNTIME_SHUTDOWN_OPERATION = 'runtime.shutdown' as const;
 export const TASK_CREATE_OPERATION = 'task.create' as const;
 export const TASK_LIST_OPERATION = 'task.list' as const;
+export const TASK_START_OPERATION = 'task.start' as const;
+export const TASK_CANCEL_OPERATION = 'task.cancel' as const;
+export const TASK_EXECUTION_OPERATION = 'task.execution.get' as const;
+export const TASK_OUTPUT_SUBSCRIBE_OPERATION = 'task.output.subscribe' as const;
 export const RUNTIME_OPERATION_VERSION = 1 as const;
 
 export interface RuntimeChallengeFrame {
@@ -77,7 +82,11 @@ export type RuntimeOperationName =
   | typeof RUNTIME_HEALTH_OPERATION
   | typeof RUNTIME_SHUTDOWN_OPERATION
   | typeof TASK_CREATE_OPERATION
-  | typeof TASK_LIST_OPERATION;
+  | typeof TASK_LIST_OPERATION
+  | typeof TASK_START_OPERATION
+  | typeof TASK_CANCEL_OPERATION
+  | typeof TASK_EXECUTION_OPERATION
+  | typeof TASK_OUTPUT_SUBSCRIBE_OPERATION;
 
 export interface RuntimeOperationFrame {
   readonly name: RuntimeOperationName;
@@ -119,6 +128,13 @@ export type RuntimeResponseFrame =
       readonly ok: false;
       readonly error: RuntimeProtocolErrorFrame;
     };
+
+export interface RuntimeOutputFrame {
+  readonly kind: 'runtime.output';
+  readonly protocolVersion: number;
+  readonly taskId: string;
+  readonly event: TaskOutputEvent;
+}
 
 type RuntimeProvenReply = RuntimeWelcomeFrame | RuntimeIncompatibleFrame;
 export type RuntimeReplyWithoutProof =

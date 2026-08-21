@@ -52,11 +52,72 @@ export interface TaskView {
   readonly createdAt: string;
 }
 
+export type TaskExecutionState =
+  | 'ready'
+  | 'starting'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelling'
+  | 'cancelled';
+
+export interface StartTaskRequest {
+  readonly taskId: string;
+  readonly idempotencyKey: string;
+}
+
+export interface CancelTaskRequest {
+  readonly taskId: string;
+  readonly idempotencyKey: string;
+}
+
+export interface TaskExecutionView {
+  readonly task: TaskView & { readonly executionState: TaskExecutionState };
+  readonly run: { readonly id: string; readonly number: number } | null;
+  readonly attempt:
+    | {
+        readonly id: string;
+        readonly number: number;
+        readonly state: TaskExecutionState;
+        readonly exitCode?: number;
+      }
+    | null;
+  readonly context:
+    | {
+        readonly id: string;
+        readonly worktreeId: string;
+        readonly branchName: string;
+        readonly baseCommit: string;
+        readonly processId: string;
+        readonly ptyId: string;
+      }
+    | null;
+}
+
+export type TaskOutputEvent =
+  | {
+      readonly kind: 'data';
+      readonly taskId: string;
+      readonly attemptId: string;
+      readonly sequence: number;
+      readonly data: string;
+    }
+  | {
+      readonly kind: 'dropped';
+      readonly taskId: string;
+      readonly attemptId: string;
+      readonly sequence: number;
+    };
+
 export type RuntimeOperationFailureCode =
   | 'invalid-request'
   | 'unsupported-operation'
   | 'stale-instance'
   | 'idempotency-conflict'
+  | 'not-found'
+  | 'task-not-ready'
+  | 'worktree-unavailable'
+  | 'process-start-failed'
   | 'runtime-stopping'
   | 'internal';
 
@@ -115,4 +176,11 @@ export interface RuntimeInterface {
   shutdown(request: RuntimeShutdownRequest): Promise<RuntimeShutdownResult>;
   createTask(request: CreateTaskRequest): Promise<TaskView>;
   listTasks(): Promise<readonly TaskView[]>;
+  startTask(request: StartTaskRequest): Promise<TaskExecutionView>;
+  cancelTask(request: CancelTaskRequest): Promise<TaskExecutionView>;
+  getTaskExecution(taskId: string): Promise<TaskExecutionView>;
+  subscribeTaskOutput(
+    taskId: string,
+    listener: (event: TaskOutputEvent) => void,
+  ): Promise<() => void>;
 }

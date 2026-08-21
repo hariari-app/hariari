@@ -28,6 +28,10 @@ const PORT_ERROR_STATES: Record<
   'unsupported-operation': ['unsupported-operation', false],
   'stale-instance': ['stale-instance', false],
   'idempotency-conflict': ['idempotency-conflict', false],
+  'not-found': ['not-found', false],
+  'task-not-ready': ['task-not-ready', false],
+  'worktree-unavailable': ['worktree-unavailable', true],
+  'process-start-failed': ['process-start-failed', true],
   'runtime-stopping': ['runtime-stopping', true],
   internal: ['internal', true],
 };

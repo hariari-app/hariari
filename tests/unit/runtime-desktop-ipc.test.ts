@@ -326,4 +326,20 @@ class FakeRuntime implements RuntimeInterface {
   async listTasks(): Promise<readonly TaskView[]> {
     return this.tasks;
   }
+
+  async startTask(): Promise<never> {
+    throw new Error('not used by desktop IPC tests');
+  }
+
+  async cancelTask(): Promise<never> {
+    throw new Error('not used by desktop IPC tests');
+  }
+
+  async getTaskExecution(): Promise<never> {
+    throw new Error('not used by desktop IPC tests');
+  }
+
+  async subscribeTaskOutput(): Promise<never> {
+    throw new Error('not used by desktop IPC tests');
+  }
 }

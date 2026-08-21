@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,6 +32,7 @@ describe('host Node SEA Runtime artifact', () => {
     verifiesPackagedSeaLifecycle,
     20_000,
   );
+  it('runs the real worktree and PTY tracer from the packaged SEA', runsPackagedTaskTracer, 20_000);
 });
 
 async function verifiesPackagedSeaLifecycle(): Promise<void> {
@@ -54,6 +56,68 @@ async function verifiesPackagedSeaLifecycle(): Promise<void> {
   });
   expect(fixture.launches.value).toBe(1);
   await shutdownPackagedRuntime(second, reconnected);
+}
+
+async function runsPackagedTaskTracer(): Promise<void> {
+  const fixture = createSeaFixture();
+  const runtime = fixture.createInterface();
+  const connected = await runtime.connectOrStart();
+  assertConnected(connected, 'task tracer startup');
+  const repository = createDisposableGitRepository();
+  const task = await runtime.createTask({
+    objective: 'Run packaged Generic CLI tracer.',
+    project: 'Hariari',
+    repository: repository.path,
+    baseRef: 'HEAD',
+    provider: 'shell',
+    idempotencyKey: 'packaged-tracer-create',
+  });
+  const output: string[] = [];
+  const unsubscribe = await runtime.subscribeTaskOutput(task.id, (event) => {
+    if (event.kind === 'data') output.push(event.data);
+  });
+  await runtime.startTask({ taskId: task.id, idempotencyKey: 'packaged-tracer-start' });
+  await waitForTaskCompletion(runtime, task.id);
+  const completed = await runtime.getTaskExecution(task.id);
+  unsubscribe();
+
+  expect(completed).toMatchObject({
+    task: { executionState: 'completed' },
+    attempt: { state: 'completed', exitCode: 0 },
+    context: { baseCommit: repository.baseCommit },
+  });
+  expect(output.join('')).toContain('hariari-runtime-tracer');
+  await shutdownPackagedRuntime(runtime, connected);
+}
+
+function createDisposableGitRepository(): { readonly path: string; readonly baseCommit: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hariari-packaged-runtime-task-'));
+  roots.push(root);
+  const repository = path.join(root, 'repository');
+  fs.mkdirSync(repository);
+  execFileSync('git', ['init'], { cwd: repository, stdio: 'pipe' });
+  execFileSync('git', ['config', 'user.email', 'runtime@example.test'], {
+    cwd: repository,
+    stdio: 'pipe',
+  });
+  execFileSync('git', ['config', 'user.name', 'Runtime Test'], { cwd: repository, stdio: 'pipe' });
+  fs.writeFileSync(path.join(repository, 'README.md'), '# Packaged Runtime\n');
+  execFileSync('git', ['add', 'README.md'], { cwd: repository, stdio: 'pipe' });
+  execFileSync('git', ['commit', '-m', 'initial packaged fixture'], { cwd: repository, stdio: 'pipe' });
+  return {
+    path: repository,
+    baseCommit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8' }).trim(),
+  };
+}
+
+async function waitForTaskCompletion(runtime: RuntimeInterface, taskId: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const execution = await runtime.getTaskExecution(taskId);
+    if (execution.attempt?.state === 'completed') return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('packaged task tracer did not complete');
 }
 
 async function preflightPackagedArtifact(artifacts: PackagedRuntimeArtifactPort): Promise<void> {
