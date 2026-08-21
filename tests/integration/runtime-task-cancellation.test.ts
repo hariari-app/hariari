@@ -6,7 +6,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NodeRuntimeClient } from '../../src/main/runtime/node-runtime-client';
 import { RuntimePortError, type RuntimeClientSession } from '../../src/main/runtime/runtime-ports';
 import type { TaskExecutionState, TaskOutputEvent } from '../../src/shared/runtime/runtime-interface';
-import { NodeLocalRuntimeTransport } from '../../src/runtime/local-transport';
+import {
+  NodeLocalRuntimeTransport,
+  type RuntimeFrameConnection,
+  type RuntimeLocalEndpoint,
+  type RuntimeLocalTransport,
+  type RuntimeTransportListener,
+} from '../../src/runtime/local-transport';
 import { RuntimeServer } from '../../src/runtime/runtime-server';
 import { GenericCliExecutionError } from '../../src/runtime/generic-cli-execution-adapter';
 import { FakeGenericCliExecutionAdapter } from './runtime-test-fakes';
@@ -30,12 +36,59 @@ function registerCancellationTests(): void {
   });
   registerDurableCancellationTest();
   registerDurablePtyReattachTest();
+  registerOutputBackpressureTests();
   registerOutputAppendDurabilityTests();
   registerTaskNotReadyTest();
   registerExitRaceTest();
   registerInFlightAllocationTest();
   registerFailedAllocationCancellationTest();
   registerCancellationAppendRepairTests();
+}
+
+function registerOutputBackpressureTests(): void {
+  it('replays more than one writer queue before later live output without gaps or duplicate reconnects', async () => {
+    const transport = new GatedOutboundTransport();
+    const subject = await createSubject(new FakeGenericCliExecutionAdapter(), transport);
+    const task = await startShellTask(subject.control, 'replay-backpressure');
+    emitOutputRange(subject.adapter, task.id, 1, 80);
+    const secondDesktop = await reconnectDesktop(subject);
+    const outputGate = transport.blockFirstOutput();
+    const replayed: TaskOutputEvent[] = [];
+    const unsubscribe = await secondDesktop.subscribeTaskOutput(task.id, (event) => replayed.push(event));
+    await outputGate.started.promise;
+    emitOutputRange(subject.adapter, task.id, 81, 10);
+    outputGate.release();
+    await waitForOutput(replayed, 90);
+    expectOutputRange(replayed, task.id, task.attempt?.id, 90);
+    unsubscribe();
+    await secondDesktop.disconnect();
+
+    const thirdDesktop = await subject.connectDesktop();
+    const repeated: TaskOutputEvent[] = [];
+    const unsubscribeThird = await thirdDesktop.subscribeTaskOutput(task.id, (event) => repeated.push(event));
+    await waitForOutput(repeated, 90);
+    expect(repeated).toEqual(replayed);
+    expect(subject.adapter.startCount(task.id)).toBe(1);
+    unsubscribeThird();
+    await thirdDesktop.disconnect();
+  });
+
+  it('keeps live output arriving during a delayed acknowledgement in durable sequence order', async () => {
+    const transport = new GatedOutboundTransport();
+    const subject = await createSubject(new FakeGenericCliExecutionAdapter(), transport);
+    const task = await startShellTask(subject.control, 'acknowledgement-backpressure');
+    const acknowledgementGate = transport.blockNextResponse();
+    const output: TaskOutputEvent[] = [];
+    const subscription = subject.control.subscribeTaskOutput(task.id, (event) => output.push(event));
+    await acknowledgementGate.started.promise;
+    emitOutputRange(subject.adapter, task.id, 1, 80);
+    acknowledgementGate.release();
+    const unsubscribe = await subscription;
+    emitOutputRange(subject.adapter, task.id, 81, 10);
+    await waitForOutput(output, 90);
+    expectOutputRange(output, task.id, task.attempt?.id, 90);
+    unsubscribe();
+  });
 }
 
 function registerOutputAppendDurabilityTests(): void {
@@ -289,6 +342,7 @@ interface CancellationSubject {
 
 async function createSubject(
   adapter: FakeGenericCliExecutionAdapter,
+  transport: RuntimeLocalTransport = new NodeLocalRuntimeTransport(),
 ): Promise<CancellationSubject> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hariari-runtime-cancellation-'));
   roots.push(root);
@@ -299,7 +353,6 @@ async function createSubject(
     runtimeDirectory,
   };
   const token = new Uint8Array(32).fill(31);
-  const transport = new NodeLocalRuntimeTransport();
   let id = 0;
   const randomId = (): string => `cancellation-${++id}-${randomUUID()}`;
   let server = serverFor(adapter, transport, endpoint, token, randomId);
@@ -337,7 +390,7 @@ async function createSubject(
 
 function serverFor(
   adapter: FakeGenericCliExecutionAdapter,
-  transport: NodeLocalRuntimeTransport,
+  transport: RuntimeLocalTransport,
   endpoint: { readonly kind: 'unix'; readonly address: string; readonly runtimeDirectory: string },
   token: Uint8Array,
   randomId: () => string,
@@ -359,7 +412,7 @@ function serverFor(
 }
 
 async function connect(
-  transport: NodeLocalRuntimeTransport,
+  transport: RuntimeLocalTransport,
   endpoint: { readonly kind: 'unix'; readonly address: string; readonly runtimeDirectory: string },
   token: Uint8Array,
   randomId: () => string,
@@ -386,6 +439,46 @@ function createShellTask(session: RuntimeClientSession, idempotencyKey: string) 
     provider: 'shell',
     idempotencyKey,
   });
+}
+
+async function startShellTask(session: RuntimeClientSession, idempotencyKey: string) {
+  const task = await createShellTask(session, `${idempotencyKey}-create`);
+  const started = await session.startTask({ taskId: task.id, idempotencyKey: `${idempotencyKey}-start` });
+  if (!started.attempt) throw new Error('expected a running attempt');
+  return { id: task.id, attempt: started.attempt };
+}
+
+async function reconnectDesktop(subject: CancellationSubject): Promise<RuntimeClientSession> {
+  await subject.control.disconnect();
+  return subject.connectDesktop();
+}
+
+function emitOutputRange(
+  adapter: FakeGenericCliExecutionAdapter,
+  taskId: string,
+  firstSequence: number,
+  count: number,
+): void {
+  for (let sequence = firstSequence; sequence < firstSequence + count; sequence += 1) {
+    adapter.emit(taskId, `output-${sequence}\n`);
+  }
+}
+
+function expectOutputRange(
+  output: readonly TaskOutputEvent[],
+  taskId: string,
+  attemptId: string,
+  count: number,
+): void {
+  expect(output).toEqual(
+    Array.from({ length: count }, (_, index) => ({
+      kind: 'data',
+      taskId,
+      attemptId,
+      sequence: index + 1,
+      data: `output-${index + 1}\n`,
+    })),
+  );
 }
 
 async function expectExecution(
@@ -469,4 +562,83 @@ function deferred(): { readonly promise: Promise<void>; resolve(): void } {
     resolve = settle;
   });
   return { promise, resolve };
+}
+
+class GatedOutboundTransport implements RuntimeLocalTransport {
+  private readonly transport = new NodeLocalRuntimeTransport();
+  private gate: OutboundGate | null = null;
+
+  connect(endpoint: RuntimeLocalEndpoint, deadlineMs: number): Promise<RuntimeFrameConnection> {
+    return this.transport.connect(endpoint, deadlineMs);
+  }
+
+  async listen(
+    endpoint: RuntimeLocalEndpoint,
+    onConnection: (connection: RuntimeFrameConnection) => Promise<void>,
+  ): Promise<RuntimeTransportListener> {
+    return this.transport.listen(endpoint, (connection) => onConnection(new GatedOutboundConnection(connection, this)));
+  }
+
+  blockNextResponse(): OutboundGate {
+    return this.installGate('response');
+  }
+
+  blockFirstOutput(): OutboundGate {
+    return this.installGate('output');
+  }
+
+  takeGate(frame: Record<string, unknown>): OutboundGate | null {
+    const gate = this.gate;
+    if (!gate || (gate.kind === 'response' ? frame.kind !== 'runtime.response' : frame.kind !== 'runtime.output')) {
+      return null;
+    }
+    this.gate = null;
+    return gate;
+  }
+
+  private installGate(kind: OutboundGate['kind']): OutboundGate {
+    if (this.gate) throw new Error('an outbound gate is already armed');
+    const gate = new OutboundGate(kind);
+    this.gate = gate;
+    return gate;
+  }
+}
+
+class GatedOutboundConnection implements RuntimeFrameConnection {
+  constructor(
+    private readonly connection: RuntimeFrameConnection,
+    private readonly transport: GatedOutboundTransport,
+  ) {}
+
+  readFrame(deadlineMs: number): Promise<Record<string, unknown>> {
+    return this.connection.readFrame(deadlineMs);
+  }
+
+  async writeFrame(frame: Record<string, unknown>, deadlineMs: number): Promise<void> {
+    const gate = this.transport.takeGate(frame);
+    if (gate) {
+      gate.started.resolve();
+      await gate.released.promise;
+    }
+    await this.connection.writeFrame(frame, deadlineMs);
+  }
+
+  onClose(listener: () => void): () => void {
+    return this.connection.onClose(listener);
+  }
+
+  close(): void {
+    this.connection.close();
+  }
+}
+
+class OutboundGate {
+  readonly started = deferred();
+  readonly released = deferred();
+
+  constructor(readonly kind: 'response' | 'output') {}
+
+  release(): void {
+    this.released.resolve();
+  }
 }

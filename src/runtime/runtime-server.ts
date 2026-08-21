@@ -372,7 +372,7 @@ export class RuntimeServer {
     try {
       const subscription = this.executions.subscribe(taskId, (event) => {
         if (!acknowledged) {
-          if (pending.length < 64) pending.push(event);
+          pending.push(event);
           return;
         }
         writer.push(event, protocolVersion);
@@ -538,19 +538,6 @@ class OutputWriter {
 
   push(event: TaskOutputEvent, protocolVersion: number): void {
     if (this.closed) return;
-    if (this.queued.length >= 64) {
-      this.queued.shift();
-      this.queued.push({
-        protocolVersion,
-        event: {
-          kind: 'dropped',
-          taskId: event.taskId,
-          attemptId: event.attemptId,
-          sequence: event.sequence,
-        },
-      });
-      return;
-    }
     this.queued.push({ event, protocolVersion });
     void this.flush();
   }
