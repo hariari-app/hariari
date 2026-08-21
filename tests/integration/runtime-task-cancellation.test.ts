@@ -8,6 +8,7 @@ import { RuntimePortError, type RuntimeClientSession } from '../../src/main/runt
 import type { TaskExecutionState } from '../../src/shared/runtime/runtime-interface';
 import { NodeLocalRuntimeTransport } from '../../src/runtime/local-transport';
 import { RuntimeServer } from '../../src/runtime/runtime-server';
+import { GenericCliExecutionError } from '../../src/runtime/generic-cli-execution-adapter';
 import { FakeGenericCliExecutionAdapter } from './runtime-test-fakes';
 
 const roots: string[] = [];
@@ -30,6 +31,7 @@ function registerCancellationTests(): void {
   registerTaskNotReadyTest();
   registerExitRaceTest();
   registerInFlightAllocationTest();
+  registerFailedAllocationCancellationTest();
   registerCancellationAppendRepairTests();
 }
 
@@ -117,6 +119,41 @@ function registerInFlightAllocationTest(): void {
   });
 }
 
+function registerFailedAllocationCancellationTest(): void {
+  it('preserves cancellation when process start fails after context allocation', async () => {
+    const gate = deferred();
+    const adapter = new FakeGenericCliExecutionAdapter({
+      beforeStart: gate.promise,
+      startError: (request) =>
+        new GenericCliExecutionError('process-start-failed', {
+          id: request.identities.contextId,
+          worktreeId: request.identities.worktreeId,
+          branchName: `hariari/task-${request.task.id}/run-1/attempt-1`,
+          baseCommit: 'fake-base-commit',
+          processId: request.identities.processId,
+          ptyId: request.identities.ptyId,
+        }),
+    });
+    const subject = await createSubject(adapter);
+    const task = await createShellTask(subject.control, 'cancel-failed-allocation');
+    const start = subject.control.startTask({
+      taskId: task.id,
+      idempotencyKey: 'start-cancel-failed-allocation',
+    });
+
+    await adapter.waitForStart(task.id);
+    await subject.query.cancelTask({ taskId: task.id, idempotencyKey: 'cancel-failed-allocation' });
+    gate.resolve();
+    await expect(start).rejects.toEqual(new RuntimePortError('process-start-failed', true));
+    await expectExecution(subject.query, task.id, 'cancelled');
+    await expect(subject.query.getTaskExecution(task.id)).resolves.toMatchObject({
+      task: { executionState: 'cancelled' },
+      attempt: { state: 'cancelled' },
+      context: { baseCommit: 'fake-base-commit' },
+    });
+  });
+}
+
 function registerCancellationAppendRepairTests(): void {
   for (const mode of FAILURE_MODES) {
     for (const transition of CANCELLATION_TRANSITIONS) {
@@ -184,9 +221,13 @@ async function createSubject(
   let query = await connect(transport, endpoint, token, randomId);
   const subject: CancellationSubject = {
     adapter,
-    control,
+    get control() {
+      return control;
+    },
     eventPath: path.join(runtimeDirectory, 'tasks', 'events.log'),
-    query,
+    get query() {
+      return query;
+    },
     restart: async () => {
       await control.disconnect();
       await query.disconnect();
@@ -195,7 +236,6 @@ async function createSubject(
       await server.start();
       control = await connect(transport, endpoint, token, randomId);
       query = await connect(transport, endpoint, token, randomId);
-      Object.assign(subject, { control, query });
     },
     dispose: async () => {
       await control.disconnect();

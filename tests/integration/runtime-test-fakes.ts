@@ -35,6 +35,7 @@ const DEFAULT_TOKEN = new Uint8Array(32).fill(7);
 /** Deterministic execution Adapter for public-seam Runtime lifecycle tests. */
 export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapter {
   private readonly executions = new Map<string, FakeGenericCliExecution>();
+  private readonly startCounts = new Map<string, number>();
   private readonly starts = new Map<string, DeferredSignal>();
   private readonly stops = new Map<string, DeferredSignal>();
 
@@ -42,12 +43,16 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
     private readonly options: {
       readonly autoExitOnStop?: boolean;
       readonly beforeStart?: Promise<void>;
+      readonly startError?: (request: GenericCliStartRequest) => Error;
     } = {},
   ) {}
 
   async start(request: GenericCliStartRequest): Promise<GenericCliExecution> {
+    this.startCounts.set(request.task.id, this.startCount(request.task.id) + 1);
     this.signalFor(this.starts, request.task.id).resolve();
     await this.options.beforeStart;
+    const startError = this.options.startError?.(request);
+    if (startError) throw startError;
     const execution = new FakeGenericCliExecution(
       request,
       this.options.autoExitOnStop ?? true,
@@ -59,6 +64,10 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
 
   waitForStart(taskId: string): Promise<void> {
     return this.signalFor(this.starts, taskId).promise;
+  }
+
+  startCount(taskId: string): number {
+    return this.startCounts.get(taskId) ?? 0;
   }
 
   waitForStop(taskId: string): Promise<void> {

@@ -197,8 +197,10 @@ function taskAction(
     message.textContent = '';
     const request = { taskId, idempotencyKey: crypto.randomUUID() };
     const operation = action === 'start' ? tasks.start(request) : tasks.cancel(request);
-    void operation.then(refresh).catch(() => {
+    void operation.then(refresh).catch(async () => {
       message.textContent = 'Task execution could not be updated.';
+      await refresh();
+      button.disabled = false;
     });
   });
   return button;

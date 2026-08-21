@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,6 +23,7 @@ import { RuntimeServer } from '../../src/runtime/runtime-server';
 import { ProtectedRuntimeTokenStore } from '../../src/runtime/token-store';
 import type { GenericCliExecutionAdapter } from '../../src/runtime/generic-cli-execution-adapter';
 import { FakeGenericCliExecutionAdapter } from './runtime-test-fakes';
+import { createDisposableGitRepository } from './disposable-git-repository';
 
 const directories: string[] = [];
 const servers: RuntimeServer[] = [];
@@ -192,7 +192,7 @@ async function failsLogicalProviderStart(): Promise<void> {
 
 async function repairsPartialExecutionTransition(): Promise<void> {
   const fixture = await createRealRuntimeFixture();
-  const repository = createDisposableGitRepository();
+  const repository = createRuntimeGitRepository();
   const runtime = fixture.createInterface();
   await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
   const task = await runtime.createTask({
@@ -284,7 +284,7 @@ function corruptExecutionAppend(
 
 async function runsShellTaskTracer(): Promise<void> {
   const fixture = await createRealRuntimeFixture();
-  const repository = createDisposableGitRepository();
+  const repository = createRuntimeGitRepository();
   const runtime = fixture.createInterface();
   await expect(runtime.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
   const task = await runtime.createTask({
@@ -326,28 +326,15 @@ async function runsShellTaskTracer(): Promise<void> {
   expect(JSON.stringify(completed.context)).not.toContain(repository.path);
 }
 
-function createDisposableGitRepository(): { readonly path: string; readonly baseCommit: string } {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hariari-runtime-task-repository-'));
-  directories.push(root);
-  const repository = path.join(root, 'repository');
-  fs.mkdirSync(repository);
-  execFileSync('git', ['init'], { cwd: repository, stdio: 'pipe' });
-  execFileSync('git', ['config', 'user.email', 'runtime@example.test'], {
-    cwd: repository,
-    stdio: 'pipe',
+function createRuntimeGitRepository(): { readonly path: string; readonly baseCommit: string } {
+  return createDisposableGitRepository({
+    roots: directories,
+    temporaryPrefix: 'hariari-runtime-task-repository-',
+    readmeContents: '# Runtime tracer\n',
+    commitMessage: 'initial runtime tracer fixture',
+    authorName: 'Runtime Test',
+    authorEmail: 'runtime@example.test',
   });
-  execFileSync('git', ['config', 'user.name', 'Runtime Test'], { cwd: repository, stdio: 'pipe' });
-  fs.writeFileSync(path.join(repository, 'README.md'), '# Runtime tracer\n');
-  execFileSync('git', ['add', 'README.md'], { cwd: repository, stdio: 'pipe' });
-  execFileSync('git', ['commit', '-m', 'initial runtime tracer fixture'], {
-    cwd: repository,
-    stdio: 'pipe',
-  });
-  const baseCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
-    cwd: repository,
-    encoding: 'utf8',
-  }).trim();
-  return { path: repository, baseCommit };
 }
 
 async function waitForCondition<T>(read: () => Promise<T | null>): Promise<T> {

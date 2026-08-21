@@ -128,10 +128,10 @@ interface StoredExecution {
   readonly taskId: string;
   readonly idempotencyKey: string;
   readonly fingerprint: string;
-  run: StoredRun;
-  attempt: StoredAttempt | null;
-  context: StoredContext | null;
-  cancellation: { readonly idempotencyKey: string; readonly fingerprint: string } | null;
+  readonly run: StoredRun;
+  readonly attempt: StoredAttempt | null;
+  readonly context: StoredContext | null;
+  readonly cancellation: { readonly idempotencyKey: string; readonly fingerprint: string } | null;
 }
 
 export interface ExecutionReservation {
@@ -448,7 +448,7 @@ export class TaskModule {
   private applyAttemptCreated(event: AttemptCreatedEvent): void {
     const execution = this.executionFor(event.taskId);
     if (execution.attempt) throw new TaskStorageError('internal');
-    execution.attempt = event.attempt;
+    this.replaceExecution(execution, { ...execution, attempt: event.attempt });
   }
 
   private applyContextAllocated(event: ContextAllocatedEvent): void {
@@ -460,7 +460,7 @@ export class TaskModule {
     ) {
       throw new TaskStorageError('internal');
     }
-    execution.context = event.context;
+    this.replaceExecution(execution, { ...execution, context: event.context });
   }
 
   private applyAttemptStarted(event: AttemptStartedEvent): void {
@@ -468,7 +468,10 @@ export class TaskModule {
     if (!execution.attempt || !execution.context || execution.attempt.state !== 'starting') {
       throw new TaskStorageError('internal');
     }
-    execution.attempt = { ...execution.attempt, state: 'running' };
+    this.replaceExecution(execution, {
+      ...execution,
+      attempt: { ...execution.attempt, state: 'running' },
+    });
   }
 
   private applyCancellationRequested(event: CancellationRequestedEvent): void {
@@ -476,11 +479,14 @@ export class TaskModule {
     if (!execution.attempt || isTerminal(execution.attempt.state) || execution.cancellation) {
       throw new TaskStorageError('internal');
     }
-    execution.cancellation = {
-      idempotencyKey: event.idempotencyKey,
-      fingerprint: event.fingerprint,
-    };
-    execution.attempt = { ...execution.attempt, state: 'cancelling' };
+    this.replaceExecution(execution, {
+      ...execution,
+      cancellation: {
+        idempotencyKey: event.idempotencyKey,
+        fingerprint: event.fingerprint,
+      },
+      attempt: { ...execution.attempt, state: 'cancelling' },
+    });
   }
 
   private applyTerminal(
@@ -490,11 +496,25 @@ export class TaskModule {
   ): void {
     const execution = this.executionFor(taskId);
     if (!execution.attempt || isTerminal(execution.attempt.state)) throw new TaskStorageError('internal');
-    execution.attempt = {
-      ...execution.attempt,
-      state,
-      ...(exitCode === undefined ? {} : { exitCode }),
-    };
+    this.replaceExecution(execution, {
+      ...execution,
+      attempt: {
+        ...execution.attempt,
+        state,
+        ...(exitCode === undefined ? {} : { exitCode }),
+      },
+    });
+  }
+
+  private replaceExecution(current: StoredExecution, replacement: StoredExecution): void {
+    if (
+      this.executions.get(current.taskId) !== current ||
+      this.executionKeys.get(current.idempotencyKey) !== current
+    ) {
+      throw new TaskStorageError('internal');
+    }
+    this.executions.set(replacement.taskId, replacement);
+    this.executionKeys.set(replacement.idempotencyKey, replacement);
   }
 
   private taskById(taskId: string): TaskView {

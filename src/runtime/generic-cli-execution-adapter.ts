@@ -7,7 +7,10 @@ import type { TaskView } from '../shared/runtime/runtime-interface';
 const TRACER_TEXT = 'hariari-runtime-tracer';
 
 export class GenericCliExecutionError extends Error {
-  constructor(readonly code: 'worktree-unavailable' | 'process-start-failed') {
+  constructor(
+    readonly code: 'worktree-unavailable' | 'process-start-failed',
+    readonly context: GenericCliExecution['context'] | null = null,
+  ) {
     super(`Generic CLI execution failed: ${code}`);
     this.name = 'GenericCliExecutionError';
   }
@@ -105,6 +108,7 @@ export class LocalGenericCliExecutionAdapter implements GenericCliExecutionAdapt
     branchName: string,
     baseCommit: string,
   ): GenericCliExecution {
+    const context = executionContext(request, branchName, baseCommit);
     try {
       const command = tracerCommand();
       const pty = this.getPty().spawn(command.file, command.args, {
@@ -114,9 +118,9 @@ export class LocalGenericCliExecutionAdapter implements GenericCliExecutionAdapt
         cwd: worktreePath,
         env: runtimeEnvironment(),
       });
-      return bufferedPtyExecution(pty, request, branchName, baseCommit);
+      return bufferedPtyExecution(pty, request, context);
     } catch {
-      throw new GenericCliExecutionError('process-start-failed');
+      throw new GenericCliExecutionError('process-start-failed', context);
     }
   }
 
@@ -131,12 +135,11 @@ export class LocalGenericCliExecutionAdapter implements GenericCliExecutionAdapt
 function bufferedPtyExecution(
   pty: PtyProcess,
   request: GenericCliStartRequest,
-  branchName: string,
-  baseCommit: string,
+  context: GenericCliExecution['context'],
 ): GenericCliExecution {
   const lifecycle = new BufferedPtyLifecycle(pty, request);
   return {
-    context: executionContext(request, branchName, baseCommit),
+    context,
     activateOutput: () => lifecycle.activateOutput(),
     activateExit: () => lifecycle.activateExit(),
     stop: () => lifecycle.stop(),

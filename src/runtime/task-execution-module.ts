@@ -1,6 +1,7 @@
 import type {
   CancelTaskRequest,
   StartTaskRequest,
+  TaskExecutionState,
   TaskExecutionView,
   TaskOutputEvent,
 } from '../shared/runtime/runtime-interface';
@@ -13,6 +14,11 @@ import { TaskModule, TaskStorageError } from './task-module';
 
 const MAX_OUTPUT_CHARS = 4 * 1024;
 
+interface InFlightStart {
+  readonly idempotencyKey: string;
+  readonly promise: Promise<TaskExecutionView>;
+}
+
 export class TaskExecutionError extends Error {
   constructor(readonly code: 'worktree-unavailable' | 'process-start-failed' | 'internal') {
     super(`Task execution failed: ${code}`);
@@ -22,7 +28,7 @@ export class TaskExecutionError extends Error {
 
 /** Runtime-owned execution module: adapter lifecycle, transient output, and durable transitions. */
 export class TaskExecutionModule {
-  private readonly starts = new Map<string, Promise<TaskExecutionView>>();
+  private readonly starts = new Map<string, InFlightStart>();
   private readonly settlements = new Map<string, Promise<void>>();
   private readonly exitWaits = new Map<string, ExitWait>();
   private readonly active = new Map<string, GenericCliExecution>();
@@ -35,19 +41,39 @@ export class TaskExecutionModule {
     private readonly randomId: () => string,
   ) {}
 
-  async start(request: StartTaskRequest): Promise<TaskExecutionView> {
+  start(request: StartTaskRequest): Promise<TaskExecutionView> {
+    const inFlight = this.starts.get(request.taskId);
+    if (inFlight) return this.followInFlightStart(request, inFlight);
+    const promise = this.startOwned(request);
+    const owned = { idempotencyKey: request.idempotencyKey, promise };
+    this.starts.set(request.taskId, owned);
+    void promise.then(
+      () => this.releaseStart(request.taskId, owned),
+      () => this.releaseStart(request.taskId, owned),
+    );
+    return promise;
+  }
+
+  private async startOwned(request: StartTaskRequest): Promise<TaskExecutionView> {
     const reservation = await this.tasks.reserveExecution(request);
-    if (!reservation.created) {
-      const start = this.starts.get(request.taskId);
-      return start ? start : reservation.execution;
-    }
-    const start = this.startReserved(request, reservation.execution);
-    this.starts.set(request.taskId, start);
-    try {
-      return await start;
-    } finally {
-      this.starts.delete(request.taskId);
-    }
+    return reservation.created
+      ? this.startReserved(request, reservation.execution)
+      : reservation.execution;
+  }
+
+  private followInFlightStart(
+    request: StartTaskRequest,
+    inFlight: InFlightStart,
+  ): Promise<TaskExecutionView> {
+    if (inFlight.idempotencyKey === request.idempotencyKey) return inFlight.promise;
+    return inFlight.promise.then(
+      () => this.start(request),
+      () => this.start(request),
+    );
+  }
+
+  private releaseStart(taskId: string, owned: InFlightStart): void {
+    if (this.starts.get(taskId) === owned) this.starts.delete(taskId);
   }
 
   async cancel(request: CancelTaskRequest): Promise<TaskExecutionView> {
@@ -119,18 +145,50 @@ export class TaskExecutionModule {
       active.activateOutput();
       return started;
     } catch (error) {
-      if (active) {
-        await active.stop().catch(() => undefined);
-        active.dispose();
-        this.active.delete(request.taskId);
-      }
-      const view = this.tasks.execution(request.taskId);
-      if (view.attempt?.state === 'cancelling') await this.tasks.cancel(request.taskId).catch(() => undefined);
-      else await this.tasks.fail(request.taskId).catch(() => undefined);
-      this.resolveExitWait(request.taskId);
-      if (error instanceof GenericCliExecutionError) throw new TaskExecutionError(error.code);
-      if (error instanceof TaskStorageError) throw new TaskExecutionError('internal');
-      throw new TaskExecutionError('internal');
+      return this.failStart(request.taskId, active, error);
+    }
+  }
+
+  private async failStart(
+    taskId: string,
+    active: GenericCliExecution | null,
+    error: unknown,
+  ): Promise<never> {
+    if (active) {
+      await active.stop().catch(() => undefined);
+      active.dispose();
+      this.active.delete(taskId);
+    }
+    if (error instanceof GenericCliExecutionError && error.context) {
+      await this.allocateFailedContext(taskId, error.context);
+    }
+    try {
+      await this.persistStartFailure(taskId);
+    } finally {
+      this.resolveExitWait(taskId);
+    }
+    if (error instanceof GenericCliExecutionError) throw new TaskExecutionError(error.code);
+    throw new TaskExecutionError('internal');
+  }
+
+  private async allocateFailedContext(
+    taskId: string,
+    context: GenericCliExecution['context'],
+  ): Promise<void> {
+    try {
+      await this.tasks.allocateContext(taskId, context);
+    } catch (error) {
+      if (this.tasks.execution(taskId).context) return;
+      if (!(error instanceof TaskStorageError)) throw error;
+      await this.tasks.allocateContext(taskId, context);
+    }
+  }
+
+  private async persistStartFailure(taskId: string): Promise<void> {
+    try {
+      await this.tasks.fail(taskId);
+    } catch {
+      await this.tasks.fail(taskId);
     }
   }
 
@@ -216,7 +274,7 @@ function sanitizeOutput(value: string): string {
     .slice(0, MAX_OUTPUT_CHARS);
 }
 
-function isTerminal(state: string): boolean {
+function isTerminal(state: TaskExecutionState): boolean {
   return state === 'completed' || state === 'failed' || state === 'cancelled';
 }
 

@@ -1,6 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,6 +20,7 @@ import type {
 } from '../../src/shared/runtime/runtime-interface';
 import { NodeLocalRuntimeTransport } from '../../src/runtime/local-transport';
 import { ProtectedRuntimeTokenStore } from '../../src/runtime/token-store';
+import { createDisposableGitRepository } from './disposable-git-repository';
 
 const roots: string[] = [];
 const children: ChildProcess[] = [];
@@ -84,7 +84,7 @@ async function runsPackagedTaskTracer(): Promise<void> {
   const runtime = fixture.createInterface();
   const connected = await runtime.connectOrStart();
   assertConnected(connected, 'task tracer startup');
-  const repository = createDisposableGitRepository();
+  const repository = createPackagedGitRepository();
   const task = await runtime.createTask({
     objective: 'Run packaged Generic CLI tracer.',
     project: 'Hariari',
@@ -111,24 +111,15 @@ async function runsPackagedTaskTracer(): Promise<void> {
   await shutdownPackagedRuntime(runtime, connected);
 }
 
-function createDisposableGitRepository(): { readonly path: string; readonly baseCommit: string } {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hariari-packaged-runtime-task-'));
-  roots.push(root);
-  const repository = path.join(root, 'repository');
-  fs.mkdirSync(repository);
-  execFileSync('git', ['init'], { cwd: repository, stdio: 'pipe' });
-  execFileSync('git', ['config', 'user.email', 'runtime@example.test'], {
-    cwd: repository,
-    stdio: 'pipe',
+function createPackagedGitRepository(): { readonly path: string; readonly baseCommit: string } {
+  return createDisposableGitRepository({
+    roots,
+    temporaryPrefix: 'hariari-packaged-runtime-task-',
+    readmeContents: '# Packaged Runtime\n',
+    commitMessage: 'initial packaged fixture',
+    authorName: 'Runtime Test',
+    authorEmail: 'runtime@example.test',
   });
-  execFileSync('git', ['config', 'user.name', 'Runtime Test'], { cwd: repository, stdio: 'pipe' });
-  fs.writeFileSync(path.join(repository, 'README.md'), '# Packaged Runtime\n');
-  execFileSync('git', ['add', 'README.md'], { cwd: repository, stdio: 'pipe' });
-  execFileSync('git', ['commit', '-m', 'initial packaged fixture'], { cwd: repository, stdio: 'pipe' });
-  return {
-    path: repository,
-    baseCommit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8' }).trim(),
-  };
 }
 
 async function waitForTaskCompletion(runtime: RuntimeInterface, taskId: string): Promise<void> {
