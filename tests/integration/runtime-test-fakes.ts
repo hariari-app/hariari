@@ -30,9 +30,15 @@ import type {
   GenericCliExecutionAdapter,
   GenericCliStartRequest,
   ExecutionLaunchPlan,
+  ExecutionRecoveryObservation,
+  ExecutionResourceObservation,
   PrivateExecutionBinding,
+  PrivateRecoveryBinding,
 } from '../../src/runtime/generic-cli-execution-adapter';
-import { executionStartRequest } from '../../src/runtime/generic-cli-execution-adapter';
+import {
+  executionStartRequest,
+  recoveryObservation,
+} from '../../src/runtime/generic-cli-execution-adapter';
 import {
   NodeLocalRuntimeTransport,
   type RuntimeFrameConnection,
@@ -45,6 +51,7 @@ const DEFAULT_TOKEN = new Uint8Array(32).fill(7);
 export class ObservedRuntimeTransport extends NodeLocalRuntimeTransport {
   private readonly requestCounts = new Map<string, number>();
   private readonly requestWaiters = new Map<string, Set<() => void>>();
+  private readonly responseDrops = new Set<string>();
 
   override listen(
     endpoint: RuntimeLocalEndpoint,
@@ -63,6 +70,10 @@ export class ObservedRuntimeTransport extends NodeLocalRuntimeTransport {
     });
   }
 
+  dropNextResponse(operation: string): void {
+    this.responseDrops.add(operation);
+  }
+
   private observe(connection: RuntimeFrameConnection): RuntimeFrameConnection {
     return {
       readFrame: async (deadlineMs) => {
@@ -70,7 +81,14 @@ export class ObservedRuntimeTransport extends NodeLocalRuntimeTransport {
         this.record(frame);
         return frame;
       },
-      writeFrame: (frame, deadlineMs) => connection.writeFrame(frame, deadlineMs),
+      writeFrame: (frame, deadlineMs) => {
+        const operation = responseOperation(frame);
+        if (operation && this.responseDrops.delete(operation)) {
+          connection.close();
+          return Promise.resolve();
+        }
+        return connection.writeFrame(frame, deadlineMs);
+      },
       onClose: (listener) => connection.onClose(listener),
       close: () => connection.close(),
     };
@@ -89,6 +107,13 @@ export class ObservedRuntimeTransport extends NodeLocalRuntimeTransport {
   }
 }
 
+function responseOperation(frame: Record<string, unknown>): string | null {
+  if (frame.kind !== 'runtime.response') return null;
+  const operation = frame.operation;
+  if (!operation || typeof operation !== 'object' || !('name' in operation)) return null;
+  return typeof operation.name === 'string' ? operation.name : null;
+}
+
 /** Deterministic execution Adapter for public-seam Runtime lifecycle tests. */
 export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapter {
   private readonly executions = new Map<string, FakeGenericCliExecution>();
@@ -97,6 +122,8 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
   private readonly stopCounts = new Map<string, number>();
   private readonly starts = new Map<string, DeferredSignal>();
   private readonly stops = new Map<string, DeferredSignal>();
+  private recoveryResources: readonly ExecutionResourceObservation[] | null = null;
+  private readonly recoveryObservations = new Map<string, number>();
 
   constructor(
     private readonly options: {
@@ -120,6 +147,27 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
     const execution = this.executions.get(binding.task.id);
     if (!execution || execution.context.id !== binding.context.id) return 'unknown';
     return execution.isRunning() ? 'live' : 'lost';
+  }
+
+  async observeRecovery(binding: PrivateRecoveryBinding): Promise<ExecutionRecoveryObservation> {
+    this.recoveryObservations.set(
+      binding.task.id,
+      this.recoveryObservationCount(binding.task.id) + 1,
+    );
+    if (this.recoveryResources) return { resources: this.recoveryResources };
+    const execution = this.executions.get(binding.task.id);
+    return recoveryObservation(
+      binding,
+      binding.context && execution?.context.id === binding.context.id ? execution : null,
+    );
+  }
+
+  setRecoveryResources(resources: readonly ExecutionResourceObservation[]): void {
+    this.recoveryResources = resources;
+  }
+
+  recoveryObservationCount(taskId: string): number {
+    return this.recoveryObservations.get(taskId) ?? 0;
   }
 
   async launch(plan: ExecutionLaunchPlan): Promise<GenericCliExecution> {
@@ -617,6 +665,14 @@ class FakeRuntimeSession implements RuntimeClientSession {
   }
 
   async forkProviderSession(_request: ProviderSessionActionRequest): Promise<TaskExecutionView> {
+    throw new RuntimePortError('unsupported-operation', false);
+  }
+
+  async reconcileTask(): Promise<never> {
+    throw new RuntimePortError('unsupported-operation', false);
+  }
+
+  async recoverTask(): Promise<never> {
     throw new RuntimePortError('unsupported-operation', false);
   }
 

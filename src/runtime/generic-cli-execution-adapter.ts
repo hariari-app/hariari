@@ -4,9 +4,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type {
   ProviderSessionCapabilities,
+  RecoveryResourceKind,
   TaskProvider,
   TaskView,
 } from '../shared/runtime/runtime-interface';
+import {
+  observeLocalRecovery,
+  observePendingLocalRecovery,
+} from './local-recovery-observer';
+import {
+  observeLostRecoveryOwnership,
+  recordRecoveryOwnership,
+} from './local-recovery-markers';
 
 const TRACER_TEXT = 'hariari-runtime-tracer';
 
@@ -23,10 +32,25 @@ export class GenericCliExecutionError extends Error {
 export interface ExecutionAdapter {
   capabilities(task: TaskView): Promise<ProviderSessionCapabilities>;
   observe(binding: PrivateExecutionBinding): Promise<ExecutionObservation>;
+  observeRecovery(binding: PrivateRecoveryBinding): Promise<ExecutionRecoveryObservation>;
   launch(plan: ExecutionLaunchPlan): Promise<ActiveExecution>;
 }
 
 export type ExecutionObservation = 'live' | 'lost' | 'unknown';
+
+export interface ExecutionResourceObservation {
+  readonly kind: RecoveryResourceKind;
+  readonly expected: boolean;
+  readonly state: 'active' | 'inactive' | 'absent' | 'unknown';
+  readonly identity: 'matching' | 'different' | 'unknown';
+  readonly fingerprint: 'matching' | 'changed' | 'unknown';
+  readonly copies: number;
+  readonly adoptable: boolean;
+}
+
+export interface ExecutionRecoveryObservation {
+  readonly resources: readonly ExecutionResourceObservation[];
+}
 
 export interface ExecutionStartRequest {
   readonly task: TaskView;
@@ -64,6 +88,22 @@ export interface PrivateExecutionBinding {
   readonly attempt: { readonly id: string; readonly number: number };
   readonly context: ActiveExecution['context'];
   readonly providerSession: PrivateProviderSession | null;
+}
+
+export interface PrivateRecoveryBinding {
+  readonly task: TaskView;
+  readonly run: { readonly id: string; readonly number: number };
+  readonly attempt: { readonly id: string; readonly number: number };
+  readonly context: ActiveExecution['context'] | null;
+  readonly providerSession: PrivateProviderSession | null;
+  readonly runtimeWorktrees: readonly {
+    readonly taskId: string;
+    readonly worktreeId: string;
+  }[];
+}
+
+export interface PrivateAllocatedRecoveryBinding extends PrivateExecutionBinding {
+  readonly runtimeWorktrees: PrivateRecoveryBinding['runtimeWorktrees'];
 }
 
 export type ExecutionLaunchPlan =
@@ -154,8 +194,20 @@ export class LocalGenericCliExecutionAdapter implements ExecutionAdapter {
 
   async observe(binding: PrivateExecutionBinding): Promise<ExecutionObservation> {
     const active = this.executions.get(binding.context.id);
-    if (!active) return 'unknown';
+    if (!active) return observeLostRecoveryOwnership(
+      this.worktreeRootDirectory(), binding,
+    );
     return active.isRunning() ? 'live' : 'lost';
+  }
+
+  async observeRecovery(binding: PrivateRecoveryBinding): Promise<ExecutionRecoveryObservation> {
+    if (!binding.context) return observePendingLocalRecovery(binding, this.worktreeRoot);
+    const allocated: PrivateAllocatedRecoveryBinding = { ...binding, context: binding.context };
+    return observeLocalRecovery(
+      allocated,
+      recoveryObservation(allocated, this.executions.get(allocated.context.id) ?? null),
+      this.worktreeRoot,
+    );
   }
 
   async launch(plan: ExecutionLaunchPlan): Promise<GenericCliExecution> {
@@ -174,19 +226,26 @@ export class LocalGenericCliExecutionAdapter implements ExecutionAdapter {
     worktreePath: string,
     context: GenericCliExecution['context'],
   ): GenericCliExecution {
+    let pty: PtyProcess | null = null;
     try {
       const command = tracerCommand();
-      const pty = this.getPty().spawn(command.file, command.args, {
+      pty = this.getPty().spawn(command.file, command.args, {
         name: 'xterm-256color',
         cols: 120,
         rows: 30,
         cwd: worktreePath,
         env: runtimeEnvironment(),
       });
+      recordRecoveryOwnership(this.worktreeRootDirectory(), request.task.id, context, pty.pid);
       return bufferedPtyExecution(pty, request, context);
     } catch {
+      try { pty?.kill(); } catch { /* Failed start remains fail-closed. */ }
       throw new GenericCliExecutionError('process-start-failed', context);
     }
+  }
+
+  private worktreeRootDirectory(): string {
+    return path.dirname(this.worktreeRoot);
   }
 
   private readonly nodeModulesRoot: string | undefined;
@@ -200,6 +259,104 @@ export class LocalGenericCliExecutionAdapter implements ExecutionAdapter {
 export type GenericCliExecutionAdapter = ExecutionAdapter;
 export type GenericCliStartRequest = ExecutionStartRequest;
 export type GenericCliExecution = ActiveExecution;
+
+export function recoveryObservation(
+  binding: PrivateRecoveryBinding,
+  active: ActiveExecution | null,
+): ExecutionRecoveryObservation {
+  if (!binding.context) return unallocatedRecoveryObservation(binding);
+  const allocated: PrivateExecutionBinding = { ...binding, context: binding.context };
+  if (!active) return unknownRecoveryObservation(allocated);
+  const lifecycle = active.isRunning() ? 'active' : 'inactive';
+  return { resources: [
+    providerObservation(allocated, active, lifecycle),
+    contextObservation('process', allocated.context.processId, active.context.processId, lifecycle),
+    contextObservation('pty', allocated.context.ptyId, active.context.ptyId, lifecycle),
+    contextObservation('worktree', allocated.context.worktreeId, active.context.worktreeId, 'active'),
+    branchObservation(allocated, active),
+  ] };
+}
+
+function unallocatedRecoveryObservation(
+  binding: PrivateRecoveryBinding,
+): ExecutionRecoveryObservation {
+  return { resources: [
+    binding.task.provider === 'shell'
+      ? { ...knownResource('provider-session', false, 'absent'), copies: 0 }
+      : unknownResource('provider-session', true),
+    unknownResource('process', false),
+    unknownResource('pty', false),
+    unknownResource('worktree', false),
+    unknownResource('branch', false),
+  ] };
+}
+
+function unknownRecoveryObservation(
+  binding: PrivateExecutionBinding,
+): ExecutionRecoveryObservation {
+  return { resources: [
+    binding.providerSession
+      ? unknownResource('provider-session', true)
+      : { ...knownResource('provider-session', false, 'absent'), copies: 0 },
+    unknownResource('process', true),
+    unknownResource('pty', true),
+    unknownResource('worktree', true),
+    unknownResource('branch', true),
+  ] };
+}
+
+function providerObservation(
+  binding: PrivateExecutionBinding,
+  active: ActiveExecution,
+  state: 'active' | 'inactive',
+): ExecutionResourceObservation {
+  if (!binding.providerSession) {
+    return { ...knownResource('provider-session', false, 'absent'), copies: 0 };
+  }
+  return {
+    ...knownResource('provider-session', true, state),
+    identity: active.providerSession?.nativeSessionId === binding.providerSession.nativeSessionId
+      ? 'matching' : 'different',
+  };
+}
+
+function contextObservation(
+  kind: Extract<RecoveryResourceKind, 'process' | 'pty' | 'worktree'>,
+  expected: string,
+  observed: string,
+  state: 'active' | 'inactive',
+): ExecutionResourceObservation {
+  return { ...knownResource(kind, true, state),
+    identity: expected === observed ? 'matching' : 'different' };
+}
+
+function branchObservation(
+  binding: PrivateExecutionBinding,
+  active: ActiveExecution,
+): ExecutionResourceObservation {
+  return {
+    ...knownResource('branch', true, 'active'),
+    identity: binding.context.branchName === active.context.branchName ? 'matching' : 'different',
+    fingerprint: binding.context.baseCommit === active.context.baseCommit ? 'matching' : 'changed',
+  };
+}
+
+function knownResource(
+  kind: RecoveryResourceKind,
+  expected: boolean,
+  state: 'active' | 'inactive' | 'absent',
+): ExecutionResourceObservation {
+  return { kind, expected, state, identity: 'matching', fingerprint: 'matching',
+    copies: state === 'absent' ? 0 : 1, adoptable: false };
+}
+
+function unknownResource(
+  kind: RecoveryResourceKind,
+  expected: boolean,
+): ExecutionResourceObservation {
+  return { kind, expected, state: 'unknown', identity: 'unknown', fingerprint: 'unknown',
+    copies: 0, adoptable: false };
+}
 
 export function executionStartRequest(plan: ExecutionLaunchPlan): ExecutionStartRequest {
   const instruction: ProviderStartInstruction = plan.kind === 'new'

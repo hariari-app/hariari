@@ -5,9 +5,13 @@ import type {
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
   StartTaskRequest,
+  ReconcileTaskRequest,
+  RecoverTaskRequest,
   ProviderSessionActionRequest,
   TaskExecutionView,
   TaskOutputEvent,
+  TaskRecoveryView,
+  TaskRecoveryDecisionView,
   TaskView,
 } from '../../shared/runtime/runtime-interface';
 import {
@@ -28,6 +32,8 @@ import {
   TASK_START_OPERATION,
   PROVIDER_SESSION_FORK_OPERATION,
   PROVIDER_SESSION_RESUME_OPERATION,
+  TASK_RECONCILE_OPERATION,
+  TASK_RECOVER_OPERATION,
   createClientProof,
   selectHighestMutualVersion,
   verifyServerProof,
@@ -47,6 +53,8 @@ import {
   parseOutputFrame,
   parseStoppedResult,
   parseTaskExecutionView,
+  parseTaskRecoveryView,
+  parseTaskRecoveryDecisionView,
   parseTaskList,
   parseTaskView,
 } from '../../runtime/protocol-validation';
@@ -379,6 +387,22 @@ class NodeRuntimeClientSession implements RuntimeClientSession {
   }
   forkProviderSession(request: ProviderSessionActionRequest, deadlineMs = 2_000): Promise<TaskExecutionView> {
     return this.providerSessionAction(PROVIDER_SESSION_FORK_OPERATION, request, deadlineMs);
+  }
+  reconcileTask(request: ReconcileTaskRequest, deadlineMs = 2_000): Promise<TaskRecoveryView> {
+    return this.enqueue(async () => parseTaskRecoveryView(await this.request(
+      TASK_RECONCILE_OPERATION,
+      { taskId: request.taskId },
+      request.idempotencyKey,
+      deadlineMs,
+    )));
+  }
+  recoverTask(request: RecoverTaskRequest, deadlineMs = 2_000): Promise<TaskRecoveryDecisionView> {
+    return this.enqueue(async () => parseTaskRecoveryDecisionView(await this.request(
+      TASK_RECOVER_OPERATION,
+      { taskId: request.taskId, recoveryId: request.recoveryId },
+      request.idempotencyKey,
+      deadlineMs,
+    )));
   }
   private providerSessionAction(
     operation: typeof PROVIDER_SESSION_RESUME_OPERATION | typeof PROVIDER_SESSION_FORK_OPERATION,

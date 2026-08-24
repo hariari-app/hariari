@@ -3,8 +3,12 @@ import type {
   CreateTaskRequest,
   StartTaskRequest,
   ProviderSessionActionRequest,
+  ReconcileTaskRequest,
+  RecoverTaskRequest,
   TaskExecutionState,
   TaskExecutionView,
+  TaskRecoveryView,
+  TaskRecoveryDecisionView,
   TaskView,
 } from '../shared/runtime/runtime-interface';
 import {
@@ -34,10 +38,19 @@ import {
 } from './provider-session-lifecycle';
 import { TaskEventStore, TaskEventStoreError } from './task-event-store';
 import {
+  canonicalExecutionFingerprint,
+  canonicalTaskFingerprint,
+} from './task-fingerprints';
+import {
   privateExecutionProjection,
   projectExecution,
   type PrivateTaskExecutionView,
 } from './task-execution-projection';
+import { TaskRecoveryJournal } from './task-recovery-journal';
+import {
+  isTerminalExecutionState,
+  resumeParentExecution,
+} from './task-execution-rules';
 
 type TaskFailureCode = 'idempotency-conflict' | 'not-found' | 'task-not-ready'
   | 'unsupported-operation' | 'internal';
@@ -103,6 +116,7 @@ export class TaskModule {
   private readonly executions = new Map<string, StoredExecution>();
   private readonly executionKeys = new Map<string, StoredExecution>();
   private readonly providerLifecycle: ProviderSessionLifecycle;
+  private readonly recoveryJournal: TaskRecoveryJournal;
   private mutation: Promise<void> = Promise.resolve();
 
   constructor(
@@ -115,6 +129,13 @@ export class TaskModule {
     this.providerLifecycle = new ProviderSessionLifecycle({
       view: (taskId) => this.lifecycleView(taskId),
       append: (event) => this.appendVisible(event),
+    });
+    this.recoveryJournal = new TaskRecoveryJournal({
+      append: (event) => this.appendVisible(event),
+      assertWritable: () => this.throwIfPoisoned(),
+      fail: (code) => { throw new TaskStorageError(code); },
+      serialize: (operation) => this.enqueue(operation),
+      taskExists: (taskId) => this.taskIds.has(taskId),
     });
   }
 
@@ -158,6 +179,12 @@ export class TaskModule {
 
   list(): readonly TaskView[] {
     return [...this.tasks.values()];
+  }
+
+  recoveryWorktrees(): readonly { readonly taskId: string; readonly worktreeId: string }[] {
+    return [...this.executions.values()].flatMap((execution) =>
+      [...new Set(execution.executionContexts.map((context) => context.worktreeId))]
+        .map((worktreeId) => ({ taskId: execution.taskId, worktreeId })));
   }
 
   reserveExecution(request: StartTaskRequest): Promise<ExecutionReservation> {
@@ -211,7 +238,8 @@ export class TaskModule {
       this.throwIfPoisoned();
       const task = this.taskById(request.taskId);
       const execution = this.executionFor(task.id);
-      const parent = requiredResumeParent(execution, request.providerSessionId);
+      const parent = resumeParentExecution(execution, request.providerSessionId);
+      if (!parent) throw new TaskStorageError('task-not-ready');
       if (parent.attempt.state === 'running') await this.appendVisible({
           type: 'AttemptSupersessionRequested', version: 1, taskId: task.id,
           actionKey: request.idempotencyKey, parentAttemptId: parent.attempt.id,
@@ -322,7 +350,7 @@ export class TaskModule {
       const planned = execution.plannedAction;
       if (!planned || planned.kind !== kind || planned.actionKey !== request.idempotencyKey ||
         planned.sourceSessionId !== request.providerSessionId) return null;
-      if (isTerminal(execution.attempt?.state)) return { execution: this.viewFor(task, execution), repair: null };
+      if (isTerminalExecutionState(execution.attempt?.state)) return { execution: this.viewFor(task, execution), repair: null };
       const repair = this.providerRepair(execution);
       if (!repair) throw new TaskStorageError('internal');
       return { execution: this.viewFor(task, execution), repair };
@@ -338,7 +366,7 @@ export class TaskModule {
       this.throwIfPoisoned();
       const task = this.taskById(taskId);
       const execution = this.executionFor(task.id);
-      if (execution.attempt?.state === 'cancelling' || isTerminal(execution.attempt?.state)) {
+      if (execution.attempt?.state === 'cancelling' || isTerminalExecutionState(execution.attempt?.state)) {
         return this.viewFor(task, execution);
       }
       await this.appendVisible({ type: 'AttemptStarted', version: 1, taskId });
@@ -361,7 +389,7 @@ export class TaskModule {
       const execution = this.executions.get(task.id);
       if (!execution?.attempt) throw new TaskStorageError('task-not-ready');
       const fingerprint = canonicalExecutionFingerprint(request.taskId);
-      if (isTerminal(execution.attempt.state)) return this.viewFor(task, execution);
+      if (isTerminalExecutionState(execution.attempt.state)) return this.viewFor(task, execution);
       if (execution.cancellation) {
         if (execution.cancellation.idempotencyKey !== request.idempotencyKey) {
           throw new TaskStorageError('task-not-ready');
@@ -396,6 +424,32 @@ export class TaskModule {
     return this.privateViewFor(task, this.executions.get(task.id) ?? null);
   }
 
+  reconciliation(request: ReconcileTaskRequest): TaskRecoveryView | null {
+    return this.recoveryJournal.reconciliation(request);
+  }
+
+  recordReconciliation(
+    request: ReconcileTaskRequest,
+    recovery: TaskRecoveryView,
+  ): Promise<TaskRecoveryView> {
+    return this.recoveryJournal.recordReconciliation(request, recovery);
+  }
+
+  recovery(request: RecoverTaskRequest): TaskRecoveryView {
+    return this.recoveryJournal.recovery(request);
+  }
+
+  recoveryDecision(request: RecoverTaskRequest): TaskRecoveryDecisionView | null {
+    return this.recoveryJournal.decision(request);
+  }
+
+  recordRecoveryDecision(
+    request: RecoverTaskRequest,
+    result: TaskRecoveryDecisionView,
+  ): Promise<TaskRecoveryDecisionView> {
+    return this.recoveryJournal.recordDecision(request, result);
+  }
+
   private transition(
     taskId: string,
     event: Exclude<
@@ -420,7 +474,7 @@ export class TaskModule {
       this.throwIfPoisoned();
       const task = this.taskById(taskId);
       const execution = this.executionFor(task.id);
-      if (isTerminal(execution.attempt?.state)) return this.viewFor(task, execution);
+      if (isTerminalExecutionState(execution.attempt?.state)) return this.viewFor(task, execution);
       const cancelled = requested === 'cancelled' || execution.attempt?.state === 'cancelling';
       const event = cancelled
         ? { type: 'AttemptCancelled' as const, version: 1 as const, taskId }
@@ -478,6 +532,10 @@ export class TaskModule {
         return;
       case 'AttemptForked':
         this.applyAttemptForked(event);
+        return;
+      case 'TaskReconciled':
+      case 'TaskRecoveryDecided':
+        this.recoveryJournal.replay(event);
         return;
     }
   }
@@ -561,7 +619,7 @@ export class TaskModule {
     if (!execution.attempt || !execution.providerSession ||
       execution.attempt.id !== event.parentAttemptId ||
       execution.providerSession.id !== event.parentSessionId ||
-      isTerminal(execution.attempt.state)) throw new TaskStorageError('internal');
+      isTerminalExecutionState(execution.attempt.state)) throw new TaskStorageError('internal');
     this.replaceAttempt(execution, { ...execution.attempt, state: 'superseding' });
     const updated = this.executionFor(event.taskId);
     this.replaceExecution(updated, { ...updated, supersession: {
@@ -605,7 +663,7 @@ export class TaskModule {
 
   private applyCancellationRequested(event: CancellationRequestedEvent): void {
     const execution = this.executionFor(event.taskId);
-    if (!execution.attempt || isTerminal(execution.attempt.state) || execution.cancellation) {
+    if (!execution.attempt || isTerminalExecutionState(execution.attempt.state) || execution.cancellation) {
       throw new TaskStorageError('internal');
     }
     this.replaceExecution(execution, {
@@ -623,7 +681,7 @@ export class TaskModule {
     exitCode?: number,
   ): void {
     const execution = this.executionFor(taskId);
-    if (!execution.attempt || isTerminal(execution.attempt.state)) throw new TaskStorageError('internal');
+    if (!execution.attempt || isTerminalExecutionState(execution.attempt.state)) throw new TaskStorageError('internal');
     this.replaceAttempt(execution, {
       ...execution.attempt,
       state,
@@ -737,40 +795,4 @@ export class TaskModule {
       throw error;
     }
   }
-}
-
-function requiredResumeParent(execution: StoredExecution, providerSessionId: string): {
-  readonly attempt: StoredAttempt;
-  readonly context: StoredContext;
-  readonly session: StoredProviderSession;
-} {
-  if (!execution.attempt || !execution.context || !execution.providerSession ||
-    execution.providerSession.id !== providerSessionId ||
-    !['running', 'superseding', 'superseded'].includes(execution.attempt.state)) {
-    throw new TaskStorageError('task-not-ready');
-  }
-  return {
-    attempt: execution.attempt,
-    context: execution.context,
-    session: execution.providerSession,
-  };
-}
-
-function canonicalTaskFingerprint(request: CreateTaskRequest): string {
-  return JSON.stringify([
-    request.objective,
-    request.project,
-    request.repository,
-    request.baseRef,
-    request.provider,
-  ]);
-}
-
-function canonicalExecutionFingerprint(taskId: string): string {
-  return JSON.stringify([taskId]);
-}
-
-function isTerminal(state: TaskExecutionState | undefined): boolean {
-  return state === 'completed' || state === 'failed' ||
-    state === 'cancelled' || state === 'superseded';
 }

@@ -230,6 +230,10 @@ function serialSession(
       enqueue(() => session.resumeProviderSession(request, deadlineMs)),
     forkProviderSession: (request, deadlineMs) =>
       enqueue(() => session.forkProviderSession(request, deadlineMs)),
+    reconcileTask: (request, deadlineMs) =>
+      enqueue(() => session.reconcileTask(request, deadlineMs)),
+    recoverTask: (request, deadlineMs) =>
+      enqueue(() => session.recoverTask(request, deadlineMs)),
     cancelTask: (request, deadlineMs) => enqueue(() => session.cancelTask(request, deadlineMs)),
     getTaskExecution: (taskId, deadlineMs) =>
       enqueue(() => session.getTaskExecution(taskId, deadlineMs)),
@@ -296,6 +300,10 @@ function orderedShutdownClient(client: RuntimeClientPort, gate: ShutdownGate): R
             connection.session.resumeProviderSession(request, deadlineMs),
           forkProviderSession: (request, deadlineMs) =>
             connection.session.forkProviderSession(request, deadlineMs),
+          reconcileTask: (request, deadlineMs) =>
+            connection.session.reconcileTask(request, deadlineMs),
+          recoverTask: (request, deadlineMs) =>
+            connection.session.recoverTask(request, deadlineMs),
           cancelTask: (request, deadlineMs) => connection.session.cancelTask(request, deadlineMs),
           getTaskExecution: (taskId, deadlineMs) =>
             connection.session.getTaskExecution(taskId, deadlineMs),
@@ -328,6 +336,8 @@ function gatedShutdownSession(
       session.resumeProviderSession(request, deadlineMs),
     forkProviderSession: (request, deadlineMs) =>
       session.forkProviderSession(request, deadlineMs),
+    reconcileTask: (request, deadlineMs) => session.reconcileTask(request, deadlineMs),
+    recoverTask: (request, deadlineMs) => session.recoverTask(request, deadlineMs),
     cancelTask: (request, deadlineMs) => session.cancelTask(request, deadlineMs),
     getTaskExecution: (taskId, deadlineMs) => session.getTaskExecution(taskId, deadlineMs),
     subscribeTaskOutput: (taskId, listener, deadlineMs) =>

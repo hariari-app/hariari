@@ -78,6 +78,74 @@ export interface ProviderSessionActionRequest {
   readonly idempotencyKey: string;
 }
 
+export interface ReconcileTaskRequest {
+  readonly taskId: string;
+  readonly idempotencyKey: string;
+}
+
+export interface RecoverTaskRequest {
+  readonly taskId: string;
+  readonly recoveryId: string;
+  readonly idempotencyKey: string;
+}
+
+export const RECOVERY_RESOURCE_KINDS = [
+  'provider-session', 'process', 'pty', 'worktree', 'branch',
+] as const;
+export type RecoveryResourceKind = (typeof RECOVERY_RESOURCE_KINDS)[number];
+
+export const RECOVERY_CLASSIFICATIONS = [
+  'healthy', 'stale', 'missing', 'duplicated', 'externally-modified',
+  'orphaned', 'unknown',
+] as const;
+export type RecoveryClassification = (typeof RECOVERY_CLASSIFICATIONS)[number];
+
+export const RECOVERY_DECISIONS = ['resume', 'fork', 'adopt', 'archive', 'fail'] as const;
+export type RecoveryDecision = (typeof RECOVERY_DECISIONS)[number];
+export const RECOVERY_ATTENTION_REASON = 'ambiguous-recovery' as const;
+
+export function isRecoveryResourceKind(value: unknown): value is RecoveryResourceKind {
+  return typeof value === 'string' && RECOVERY_RESOURCE_KINDS.some((kind) => kind === value);
+}
+
+export function isRecoveryClassification(value: unknown): value is RecoveryClassification {
+  return typeof value === 'string' &&
+    RECOVERY_CLASSIFICATIONS.some((classification) => classification === value);
+}
+
+export function isRecoveryDecision(value: unknown): value is RecoveryDecision {
+  return typeof value === 'string' && RECOVERY_DECISIONS.some((decision) => decision === value);
+}
+
+export function recoveryNeedsAttention(decision: RecoveryDecision): boolean {
+  return decision === 'fail';
+}
+
+export interface TaskRecoveryView {
+  readonly id: string;
+  readonly taskId: string;
+  readonly desiredState: TaskExecutionState;
+  readonly status: 'ready' | 'attention';
+  readonly decision: RecoveryDecision;
+  readonly resources: readonly {
+    readonly kind: RecoveryResourceKind;
+    readonly classification: RecoveryClassification;
+  }[];
+  readonly attention: {
+    readonly id: string;
+    readonly reason: typeof RECOVERY_ATTENTION_REASON;
+  } | null;
+}
+
+export interface TaskRecoveryDecisionView {
+  readonly id: string;
+  readonly taskId: string;
+  readonly recoveryId: string;
+  readonly decision: RecoveryDecision;
+  readonly status: 'decided' | 'attention';
+  readonly attention: TaskRecoveryView['attention'];
+}
+
 export interface TaskAttemptView {
   readonly id: string;
   readonly number: number;
@@ -203,6 +271,8 @@ export interface RuntimeInterface {
   startTask(request: StartTaskRequest): Promise<TaskExecutionView>;
   resumeProviderSession(request: ProviderSessionActionRequest): Promise<TaskExecutionView>;
   forkProviderSession(request: ProviderSessionActionRequest): Promise<TaskExecutionView>;
+  reconcileTask(request: ReconcileTaskRequest): Promise<TaskRecoveryView>;
+  recoverTask(request: RecoverTaskRequest): Promise<TaskRecoveryDecisionView>;
   cancelTask(request: CancelTaskRequest): Promise<TaskExecutionView>;
   getTaskExecution(taskId: string): Promise<TaskExecutionView>;
   subscribeTaskOutput(

@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type {
   CancelTaskRequest,
+  ReconcileTaskRequest,
+  RecoverTaskRequest,
   StartTaskRequest,
   ProviderSessionActionRequest,
-  TaskExecutionState,
   TaskExecutionView,
   TaskOutputEvent,
+  TaskRecoveryView,
+  TaskRecoveryDecisionView,
 } from '../shared/runtime/runtime-interface';
 import {
   GenericCliExecutionError,
@@ -20,7 +23,9 @@ import {
   type PlannedProviderRepair,
 } from './task-module';
 import type { PrivateTaskExecutionView } from './task-execution-projection';
+import { isTerminalExecutionState } from './task-execution-rules';
 import { TaskOutputLog } from './task-output-log';
+import { RecoveryReconciler } from './recovery-reconciler';
 
 const MAX_OUTPUT_CHARS = 4 * 1024;
 
@@ -41,7 +46,7 @@ interface PlannedAttachment {
 }
 
 export class TaskExecutionError extends Error {
-  constructor(readonly code: 'worktree-unavailable' | 'process-start-failed' | 'internal') {
+  constructor(readonly code: 'worktree-unavailable' | 'process-start-failed' | 'task-not-ready' | 'internal') {
     super(`Task execution failed: ${code}`);
     this.name = 'TaskExecutionError';
   }
@@ -58,6 +63,7 @@ export class TaskExecutionModule {
   private readonly outputSequences = new Map<string, number>();
   private readonly outputPoisoned = new Set<string>();
   private readonly outputLog: TaskOutputLog;
+  private readonly recovery: RecoveryReconciler;
 
   constructor(
     private readonly tasks: TaskModule,
@@ -65,6 +71,7 @@ export class TaskExecutionModule {
     private readonly randomId: () => string,
   ) {
     this.outputLog = new TaskOutputLog(tasks.runtimeDirectory);
+    this.recovery = new RecoveryReconciler(randomId);
   }
 
   start(request: StartTaskRequest): Promise<TaskExecutionView> {
@@ -269,6 +276,25 @@ export class TaskExecutionModule {
 
   get(taskId: string): TaskExecutionView {
     return this.tasks.execution(taskId);
+  }
+
+  async reconcile(request: ReconcileTaskRequest): Promise<TaskRecoveryView> {
+    const existing = this.tasks.reconciliation(request);
+    if (existing) return existing;
+    const desired = this.tasks.privateExecution(request.taskId);
+    const binding = recoveryBinding(desired, this.tasks.recoveryWorktrees());
+    const observation = await this.adapter.observeRecovery(binding);
+    return this.tasks.recordReconciliation(
+      request,
+      this.recovery.reconcile(desired, observation),
+    );
+  }
+
+  recover(request: RecoverTaskRequest): Promise<TaskRecoveryDecisionView> {
+    const existing = this.tasks.recoveryDecision(request);
+    if (existing) return Promise.resolve(existing);
+    const recovery = this.tasks.recovery(request);
+    return this.tasks.recordRecoveryDecision(request, this.recovery.commit(recovery));
   }
 
   subscribe(
@@ -500,7 +526,7 @@ export class TaskExecutionModule {
   private persistTerminalWithRepair(taskId: string, transition: TerminalTransition): Promise<void> {
     return this.persistWithOneShotRepair(
       taskId,
-      (view) => isTerminal(view.attempt?.state),
+      (view) => isTerminalExecutionState(view.attempt?.state),
       () => this.persistTerminal(taskId, transition),
     );
   }
@@ -528,7 +554,7 @@ export class TaskExecutionModule {
 
   private async persistTerminal(taskId: string, transition: TerminalTransition): Promise<void> {
     const view = this.tasks.execution(taskId);
-    if (!view.attempt || isTerminal(view.attempt.state)) return;
+    if (!view.attempt || isTerminalExecutionState(view.attempt.state)) return;
     if (view.attempt.state === 'superseding') {
       await this.tasks.completeProviderSupersession(taskId, view.attempt.id);
     } else if (view.attempt.state === 'cancelling') await this.tasks.cancel(taskId);
@@ -629,6 +655,25 @@ function bindingFor(
   };
 }
 
+function recoveryBinding(
+  desired: PrivateTaskExecutionView,
+  runtimeWorktrees: import('./generic-cli-execution-adapter').PrivateRecoveryBinding['runtimeWorktrees'],
+): import('./generic-cli-execution-adapter').PrivateRecoveryBinding {
+  if (!desired.run || !desired.attempt) {
+    throw new TaskExecutionError('task-not-ready');
+  }
+  return {
+    task: desired.task,
+    run: desired.run,
+    attempt: desired.attempt,
+    context: desired.context,
+    providerSession: desired.providerSession && desired.context
+      ? providerSource(desired.providerSession, desired.context)
+      : null,
+    runtimeWorktrees,
+  };
+}
+
 function sanitizeOutput(value: string): string {
   return [...value.slice(0, MAX_OUTPUT_CHARS * 2)]
     .filter((character) => {
@@ -639,10 +684,6 @@ function sanitizeOutput(value: string): string {
     .slice(0, MAX_OUTPUT_CHARS);
 }
 
-function isTerminal(state: TaskExecutionState | undefined): boolean {
-  return state === 'completed' || state === 'failed' ||
-    state === 'cancelled' || state === 'superseded';
-}
 
 class ExitWait {
   private resolvePromise: () => void = () => undefined;

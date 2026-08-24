@@ -9,9 +9,13 @@ import {
   type RuntimeShutdownRequest,
   type StartTaskRequest,
   type ProviderSessionActionRequest,
+  type ReconcileTaskRequest,
+  type RecoverTaskRequest,
   type TaskExecutionState,
   type TaskExecutionView,
   type TaskOutputEvent,
+  type TaskRecoveryView,
+  type TaskRecoveryDecisionView,
 } from '../shared/runtime/runtime-interface';
 import {
   RUNTIME_HANDSHAKE_VERSION,
@@ -26,6 +30,8 @@ import {
   TASK_START_OPERATION,
   PROVIDER_SESSION_FORK_OPERATION,
   PROVIDER_SESSION_RESUME_OPERATION,
+  TASK_RECONCILE_OPERATION,
+  TASK_RECOVER_OPERATION,
   type RuntimeAuthenticateFrame,
   type RuntimeAuthenticatedReplyEnvelope,
   type RuntimeChallengeFrame,
@@ -37,6 +43,10 @@ import {
   type RuntimeUnauthorizedFrame,
   type RuntimeWelcomeFrame,
 } from './protocol';
+import {
+  parseRecoveryDecisionView,
+  parseRecoveryView,
+} from './recovery-view-parser';
 
 const MAX_VERSION_LENGTH = 128;
 const MAX_PROOF_LENGTH = 128;
@@ -228,6 +238,23 @@ export function parseProviderSessionActionRequest(
   };
 }
 
+export function parseReconcileTaskRequest(request: RuntimeRequestFrame): ReconcileTaskRequest {
+  if (request.operation.name !== TASK_RECONCILE_OPERATION || !request.idempotencyKey) invalid();
+  return {
+    taskId: identifier(request.payload.taskId),
+    idempotencyKey: request.idempotencyKey,
+  };
+}
+
+export function parseRecoverTaskRequest(request: RuntimeRequestFrame): RecoverTaskRequest {
+  if (request.operation.name !== TASK_RECOVER_OPERATION || !request.idempotencyKey) invalid();
+  return {
+    taskId: identifier(request.payload.taskId),
+    recoveryId: identifier(request.payload.recoveryId),
+    idempotencyKey: request.idempotencyKey,
+  };
+}
+
 export function parseTaskLifecycleRequest(value: unknown): StartTaskRequest {
   const request = object(value);
   return {
@@ -303,6 +330,24 @@ export function parseTaskExecutionView(value: Record<string, unknown>): TaskExec
   };
 }
 
+export function parseTaskRecoveryView(value: Record<string, unknown>): TaskRecoveryView {
+  try {
+    return parseRecoveryView(value);
+  } catch {
+    invalid();
+  }
+}
+
+export function parseTaskRecoveryDecisionView(
+  value: Record<string, unknown>,
+): TaskRecoveryDecisionView {
+  try {
+    return parseRecoveryDecisionView(value);
+  } catch {
+    invalid();
+  }
+}
+
 export function parseOutputFrame(value: unknown, protocolVersion: number): RuntimeOutputFrame {
   const frame = object(value);
   if (frame.kind !== 'runtime.output' || positiveInteger(frame.protocolVersion) !== protocolVersion) invalid();
@@ -356,6 +401,8 @@ function operation(value: unknown): RuntimeOperationFrame {
     name !== TASK_START_OPERATION &&
     name !== PROVIDER_SESSION_RESUME_OPERATION &&
     name !== PROVIDER_SESSION_FORK_OPERATION &&
+    name !== TASK_RECONCILE_OPERATION &&
+    name !== TASK_RECOVER_OPERATION &&
     name !== TASK_CANCEL_OPERATION &&
     name !== TASK_EXECUTION_OPERATION &&
     name !== TASK_OUTPUT_SUBSCRIBE_OPERATION

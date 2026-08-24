@@ -13,6 +13,8 @@ export const TASK_LIST_OPERATION = 'task.list' as const;
 export const TASK_START_OPERATION = 'task.start' as const;
 export const PROVIDER_SESSION_RESUME_OPERATION = 'provider-session.resume' as const;
 export const PROVIDER_SESSION_FORK_OPERATION = 'provider-session.fork' as const;
+export const TASK_RECONCILE_OPERATION = 'task.reconcile' as const;
+export const TASK_RECOVER_OPERATION = 'task.recover' as const;
 export const TASK_CANCEL_OPERATION = 'task.cancel' as const;
 export const TASK_EXECUTION_OPERATION = 'task.execution.get' as const;
 export const TASK_OUTPUT_SUBSCRIBE_OPERATION = 'task.output.subscribe' as const;
@@ -88,6 +90,8 @@ export type RuntimeOperationName =
   | typeof TASK_START_OPERATION
   | typeof PROVIDER_SESSION_RESUME_OPERATION
   | typeof PROVIDER_SESSION_FORK_OPERATION
+  | typeof TASK_RECONCILE_OPERATION
+  | typeof TASK_RECOVER_OPERATION
   | typeof TASK_CANCEL_OPERATION
   | typeof TASK_EXECUTION_OPERATION
   | typeof TASK_OUTPUT_SUBSCRIBE_OPERATION;
