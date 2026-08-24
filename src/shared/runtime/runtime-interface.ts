@@ -59,7 +59,9 @@ export type TaskExecutionState =
   | 'completed'
   | 'failed'
   | 'cancelling'
-  | 'cancelled';
+  | 'cancelled'
+  | 'superseding'
+  | 'superseded';
 
 export interface StartTaskRequest {
   readonly taskId: string;
@@ -70,8 +72,11 @@ export interface CancelTaskRequest {
   readonly taskId: string;
   readonly idempotencyKey: string;
 }
-export interface ResumeClaudeSessionRequest { readonly taskId: string; readonly providerSessionId: string; readonly repository: string; readonly worktreeId: string; readonly branchName: string; readonly idempotencyKey: string; }
-export interface ForkClaudeSessionRequest { readonly taskId: string; readonly providerSessionId: string; readonly idempotencyKey: string; }
+export interface ProviderSessionActionRequest {
+  readonly taskId: string;
+  readonly providerSessionId: string;
+  readonly idempotencyKey: string;
+}
 
 export interface TaskAttemptView {
   readonly id: string;
@@ -80,15 +85,26 @@ export interface TaskAttemptView {
   readonly exitCode?: number;
 }
 
-export interface ClaudeProviderSessionView {
+export interface ProviderSessionCapabilities {
+  readonly resume: boolean;
+  readonly fork: boolean;
+}
+
+export interface ExecutionContextView {
   readonly id: string;
-  readonly provider: 'claude';
-  readonly nativeSessionId: string;
-  readonly taskId: string;
+  readonly worktreeId: string;
+  readonly branchName: string;
+  readonly baseCommit: string;
+}
+
+export interface ProviderSessionView {
+  readonly id: string;
+  readonly provider: TaskProvider;
   readonly attemptId: string;
   readonly executionContextId: string;
-  readonly capabilities: { readonly resume: boolean; readonly fork: boolean };
+  readonly capabilities: ProviderSessionCapabilities;
   readonly parentId: string | null;
+  readonly lineage: 'new' | 'native-resume' | 'fork';
 }
 
 export interface TaskExecutionView {
@@ -96,18 +112,10 @@ export interface TaskExecutionView {
   readonly run: { readonly id: string; readonly number: number } | null;
   readonly attempt: TaskAttemptView | null;
   readonly attempts: readonly TaskAttemptView[];
-  readonly context:
-    | {
-        readonly id: string;
-        readonly worktreeId: string;
-        readonly branchName: string;
-        readonly baseCommit: string;
-        readonly processId: string;
-        readonly ptyId: string;
-      }
-    | null;
-  readonly providerSession?: ClaudeProviderSessionView | null;
-  readonly providerSessions: readonly ClaudeProviderSessionView[];
+  readonly context: ExecutionContextView | null;
+  readonly executionContexts: readonly ExecutionContextView[];
+  readonly providerSession?: ProviderSessionView | null;
+  readonly providerSessions: readonly ProviderSessionView[];
 }
 
 export type TaskOutputEvent =
@@ -193,8 +201,8 @@ export interface RuntimeInterface {
   createTask(request: CreateTaskRequest): Promise<TaskView>;
   listTasks(): Promise<readonly TaskView[]>;
   startTask(request: StartTaskRequest): Promise<TaskExecutionView>;
-  resumeClaudeSession(request: ResumeClaudeSessionRequest): Promise<TaskExecutionView>;
-  forkClaudeSession(request: ForkClaudeSessionRequest): Promise<TaskExecutionView>;
+  resumeProviderSession(request: ProviderSessionActionRequest): Promise<TaskExecutionView>;
+  forkProviderSession(request: ProviderSessionActionRequest): Promise<TaskExecutionView>;
   cancelTask(request: CancelTaskRequest): Promise<TaskExecutionView>;
   getTaskExecution(taskId: string): Promise<TaskExecutionView>;
   subscribeTaskOutput(

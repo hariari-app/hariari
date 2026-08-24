@@ -105,6 +105,9 @@ function registerTaskExecutionAuthorityTest(): void {
     expect(started).not.toHaveProperty('attempt.privatePid');
     expect(started).not.toHaveProperty('context.command');
     expect(started).not.toHaveProperty('context.environment');
+    expect(started).not.toHaveProperty('providerSession.nativeSessionId');
+    expect(started).not.toHaveProperty('providerSession.token');
+    expect(started).not.toHaveProperty('providerSession.cleanup');
     expect(ipc.channels()).toEqual(taskChannels());
     registration.dispose();
   });
@@ -389,11 +392,11 @@ class FakeRuntime implements RuntimeInterface {
     return this.execution;
   }
 
-  async resumeClaudeSession(): Promise<TaskExecutionView> {
+  async resumeProviderSession(): Promise<TaskExecutionView> {
     throw new Error('not exposed through Desktop IPC');
   }
 
-  async forkClaudeSession(): Promise<TaskExecutionView> {
+  async forkProviderSession(): Promise<TaskExecutionView> {
     throw new Error('not exposed through Desktop IPC');
   }
 
@@ -430,7 +433,7 @@ function privateExecution(): TaskExecutionView {
       project: 'Hariari',
       repository: 'hariari-app/hariari',
       baseRef: 'main',
-      provider: 'shell',
+      provider: 'claude',
       createdAt: '2026-08-21T10:00:00.000Z',
       executionState: 'running',
       storagePath: '/private/tasks/events.log',
@@ -453,7 +456,13 @@ function privateExecution(): TaskExecutionView {
       command: 'private command',
       environment: 'private env',
     } as TaskExecutionView['context'],
-    providerSessions: [],
+    executionContexts: [{
+      id: 'context-1', worktreeId: 'worktree-1', branchName: 'hariari/task-1',
+      baseCommit: 'base-1', processId: 'process-1', ptyId: 'pty-1',
+      command: 'private command', environment: 'private env',
+    } as NonNullable<TaskExecutionView['context']>],
+    providerSession: privateProviderSession(),
+    providerSessions: [privateProviderSession()],
   };
 }
 
@@ -465,7 +474,7 @@ function publicExecution(): TaskExecutionView {
       project: 'Hariari',
       repository: 'hariari-app/hariari',
       baseRef: 'main',
-      provider: 'shell',
+      provider: 'claude',
       createdAt: '2026-08-21T10:00:00.000Z',
       executionState: 'running',
     },
@@ -477,9 +486,29 @@ function publicExecution(): TaskExecutionView {
       worktreeId: 'worktree-1',
       branchName: 'hariari/task-1',
       baseCommit: 'base-1',
-      processId: 'process-1',
-      ptyId: 'pty-1',
     },
-    providerSessions: [],
+    executionContexts: [{
+      id: 'context-1', worktreeId: 'worktree-1', branchName: 'hariari/task-1',
+      baseCommit: 'base-1',
+    }],
+    providerSession: publicProviderSession(),
+    providerSessions: [publicProviderSession()],
+  };
+}
+
+function privateProviderSession(): NonNullable<TaskExecutionView['providerSession']> {
+  return {
+    id: 'provider-session-1', provider: 'claude', attemptId: 'attempt-1',
+    executionContextId: 'context-1', capabilities: { resume: true, fork: true },
+    parentId: null, lineage: 'new', nativeSessionId: 'private-native-id',
+    token: 'private-token', cleanup: () => undefined,
+  } as NonNullable<TaskExecutionView['providerSession']>;
+}
+
+function publicProviderSession(): NonNullable<TaskExecutionView['providerSession']> {
+  return {
+    id: 'provider-session-1', provider: 'claude', attemptId: 'attempt-1',
+    executionContextId: 'context-1', capabilities: { resume: true, fork: true },
+    parentId: null, lineage: 'new',
   };
 }

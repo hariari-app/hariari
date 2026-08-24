@@ -19,6 +19,8 @@ import {
   TASK_START_OPERATION,
   CLAUDE_RESUME_OPERATION,
   CLAUDE_FORK_OPERATION,
+  PROVIDER_SESSION_FORK_OPERATION,
+  PROVIDER_SESSION_RESUME_OPERATION,
   createAuthenticatedReplyEnvelope,
   createServerProof,
   selectHighestMutualVersion,
@@ -39,6 +41,7 @@ import {
   parseStartTaskRequest,
   parseResumeClaudeSessionRequest,
   parseForkClaudeSessionRequest,
+  parseProviderSessionActionRequest,
   parseTaskExecutionId,
   parseShutdownRequest,
 } from './protocol-validation';
@@ -285,6 +288,12 @@ export class RuntimeServer {
     }
     if (request.operation.name === CLAUDE_RESUME_OPERATION) return this.handleClaudeResume(request, protocolVersion);
     if (request.operation.name === CLAUDE_FORK_OPERATION) return this.handleClaudeFork(request, protocolVersion);
+    if (request.operation.name === PROVIDER_SESSION_RESUME_OPERATION) {
+      return this.handleProviderSessionAction(request, protocolVersion, 'resume');
+    }
+    if (request.operation.name === PROVIDER_SESSION_FORK_OPERATION) {
+      return this.handleProviderSessionAction(request, protocolVersion, 'fork');
+    }
     if (request.operation.name === TASK_CANCEL_OPERATION) {
       return this.handleExecutionRequest(request, protocolVersion, (parsed) =>
         this.executions.cancel(parsed),
@@ -297,10 +306,60 @@ export class RuntimeServer {
   }
 
   private async handleClaudeResume(request: RuntimeRequestFrame, protocolVersion: number): Promise<RuntimeResponseFrame> {
-    try { return success(request, protocolVersion, (await this.executions.resumeClaude(parseResumeClaudeSessionRequest(request))) as unknown as Record<string, unknown>); } catch (error) { return executionFailure(request, protocolVersion, error); }
+    try {
+      const parsed = parseResumeClaudeSessionRequest(request);
+      await this.assertLegacyClaudeScope(parsed);
+      const execution = await this.executions.resumeProvider(parsed);
+      return success(request, protocolVersion, execution as unknown as Record<string, unknown>);
+    } catch (error) {
+      return executionFailure(request, protocolVersion, error);
+    }
   }
   private async handleClaudeFork(request: RuntimeRequestFrame, protocolVersion: number): Promise<RuntimeResponseFrame> {
-    try { return success(request, protocolVersion, (await this.executions.forkClaude(parseForkClaudeSessionRequest(request))) as unknown as Record<string, unknown>); } catch (error) { return executionFailure(request, protocolVersion, error); }
+    try {
+      const parsed = parseForkClaudeSessionRequest(request);
+      const execution = await this.executions.forkProvider(parsed);
+      return success(request, protocolVersion, execution as unknown as Record<string, unknown>);
+    } catch (error) {
+      return executionFailure(request, protocolVersion, error);
+    }
+  }
+
+  private async assertLegacyClaudeScope(
+    request: ReturnType<typeof parseResumeClaudeSessionRequest>,
+  ): Promise<void> {
+    const fingerprint = legacyResumeFingerprint(request);
+    let execution;
+    try {
+      execution = this.tasks.privateExecution(request.taskId);
+    } catch (error) {
+      if (!(error instanceof TaskStorageError) || error.code !== 'not-found') throw error;
+      return this.tasks.rejectProviderAlias(request, 'resume', fingerprint, 'not-found');
+    }
+    if (execution.task.repository !== request.repository ||
+      execution.context?.worktreeId !== request.worktreeId ||
+      execution.context.branchName !== request.branchName ||
+      execution.providerSession?.id !== request.providerSessionId) {
+      await this.tasks.rejectProviderAlias(
+        request, 'resume', fingerprint, 'not-found',
+      );
+    }
+  }
+
+  private async handleProviderSessionAction(
+    request: RuntimeRequestFrame,
+    protocolVersion: number,
+    action: 'resume' | 'fork',
+  ): Promise<RuntimeResponseFrame> {
+    try {
+      const parsed = parseProviderSessionActionRequest(request);
+      const execution = action === 'resume'
+        ? await this.executions.resumeProvider(parsed)
+        : await this.executions.forkProvider(parsed);
+      return success(request, protocolVersion, execution as unknown as Record<string, unknown>);
+    } catch (error) {
+      return executionFailure(request, protocolVersion, error);
+    }
   }
 
   private handleHealth(request: RuntimeRequestFrame, protocolVersion: number): RuntimeResponseFrame {
@@ -469,6 +528,15 @@ export class RuntimeServer {
       )
       .catch(() => undefined);
   }
+}
+
+function legacyResumeFingerprint(
+  request: ReturnType<typeof parseResumeClaudeSessionRequest>,
+): string {
+  return JSON.stringify([
+    'resume', request.taskId, request.providerSessionId,
+    request.repository, request.worktreeId, request.branchName,
+  ]);
 }
 
 async function ownedListener(

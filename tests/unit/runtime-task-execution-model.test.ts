@@ -13,7 +13,7 @@ describe('Task execution renderer model', () => {
       state: 'running',
       action: 'cancel',
       summary:
-        'running · run run-1 · attempt attempt-1 · context context-1 · worktree worktree-1 · branch hariari/task-1 · process process-1 · PTY pty-1',
+        'running · run run-1 · attempt attempt-1 · context context-1 · worktree worktree-1 · branch hariari/task-1',
     });
     expect(taskExecutionModel(executionView('ready')).action).toBe('start');
     expect(taskExecutionModel(executionView('cancelled')).action).toBeNull();
@@ -65,10 +65,9 @@ function executionView(state: TaskExecutionView['task']['executionState']): Task
           worktreeId: 'worktree-1',
           branchName: 'hariari/task-1',
           baseCommit: 'base-1',
-          processId: 'process-1',
-          ptyId: 'pty-1',
         }
       : null,
+    executionContexts: [],
     providerSessions: [],
   };
 }

@@ -6,8 +6,7 @@ import type {
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
   StartTaskRequest,
-  ResumeClaudeSessionRequest,
-  ForkClaudeSessionRequest,
+  ProviderSessionActionRequest,
   TaskExecutionView,
   TaskOutputEvent,
   TaskView,
@@ -30,7 +29,10 @@ import type {
   GenericCliExecution,
   GenericCliExecutionAdapter,
   GenericCliStartRequest,
+  ExecutionLaunchPlan,
+  PrivateExecutionBinding,
 } from '../../src/runtime/generic-cli-execution-adapter';
+import { executionStartRequest } from '../../src/runtime/generic-cli-execution-adapter';
 import {
   NodeLocalRuntimeTransport,
   type RuntimeFrameConnection,
@@ -90,6 +92,7 @@ export class ObservedRuntimeTransport extends NodeLocalRuntimeTransport {
 /** Deterministic execution Adapter for public-seam Runtime lifecycle tests. */
 export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapter {
   private readonly executions = new Map<string, FakeGenericCliExecution>();
+  private readonly executionsByAttempt = new Map<string, FakeGenericCliExecution>();
   private readonly startCounts = new Map<string, number>();
   private readonly starts = new Map<string, DeferredSignal>();
   private readonly stops = new Map<string, DeferredSignal>();
@@ -98,14 +101,33 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
     private readonly options: {
       readonly autoExitOnStop?: boolean;
       readonly beforeStart?: Promise<void> | ((request: GenericCliStartRequest) => Promise<void> | undefined);
-      readonly startError?: (request: GenericCliStartRequest) => Error;
+      readonly startError?: (request: GenericCliStartRequest) => Error | undefined;
+      readonly stopError?: Error;
+      readonly stopReturnsBeforeExit?: boolean;
       readonly claudeCapabilities?: { readonly resume: boolean; readonly fork: boolean };
     } = {},
     private readonly provider: 'shell' | 'claude' = 'shell',
   ) {}
 
-  async start(request: GenericCliStartRequest): Promise<GenericCliExecution> {
+  async capabilities(_task: TaskView): Promise<{ readonly resume: boolean; readonly fork: boolean }> {
+    return this.provider === 'claude'
+      ? this.options.claudeCapabilities ?? { resume: true, fork: true }
+      : { resume: false, fork: false };
+  }
+
+  async observe(binding: PrivateExecutionBinding): Promise<'live' | 'lost' | 'unknown'> {
+    const execution = this.executions.get(binding.task.id);
+    if (!execution || execution.context.id !== binding.context.id) return 'unknown';
+    return execution.isRunning() ? 'live' : 'lost';
+  }
+
+  async launch(plan: ExecutionLaunchPlan): Promise<GenericCliExecution> {
+    const request = executionStartRequest(plan);
     if (request.task.provider !== this.provider) throw new Error(`unexpected ${request.task.provider} provider`);
+    if (plan.kind === 'native-resume') {
+      const source = this.executions.get(request.task.id);
+      if (source && !source.isRunning()) source.dispose();
+    }
     this.requests.push(request);
     this.startCounts.set(request.task.id, this.startCount(request.task.id) + 1);
     this.signalFor(this.starts, request.task.id).resolve();
@@ -118,8 +140,11 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
       this.options.autoExitOnStop ?? true,
       () => this.signalFor(this.stops, request.task.id).resolve(),
       this.options.claudeCapabilities ?? { resume: true, fork: true },
+      this.options.stopError,
+      this.options.stopReturnsBeforeExit ?? false,
     );
     this.executions.set(request.task.id, execution);
+    this.executionsByAttempt.set(request.attempt.id, execution);
     return execution;
   }
 
@@ -143,12 +168,30 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
     this.executionFor(taskId).exit(exitCode);
   }
 
+  exitAttempt(attemptId: string, exitCode = 0): void {
+    const execution = this.executionsByAttempt.get(attemptId);
+    if (!execution) throw new Error(`No fake execution for ${attemptId}`);
+    execution.exit(exitCode);
+  }
+
   lose(taskId: string): void {
     this.executionFor(taskId).lose();
   }
 
+  forget(taskId: string): void {
+    this.executions.delete(taskId);
+  }
+
   startsFor(taskId: string): readonly GenericCliStartRequest[] {
     return this.requests.filter((request) => request.task.id === taskId);
+  }
+
+  hasRunning(taskId: string): boolean {
+    return this.executions.get(taskId)?.isRunning() ?? false;
+  }
+
+  isDisposed(attemptId: string): boolean {
+    return this.executionsByAttempt.get(attemptId)?.isDisposed() ?? true;
   }
 
   private readonly requests: GenericCliStartRequest[] = [];
@@ -195,6 +238,7 @@ class FakeGenericCliExecution implements GenericCliExecution {
   private exitCode: number | null = null;
   private stopRequested = false;
   private lost = false;
+  private disposed = false;
   private resolveExit: () => void = () => undefined;
   private readonly exited = new Promise<void>((resolve) => {
     this.resolveExit = resolve;
@@ -205,6 +249,8 @@ class FakeGenericCliExecution implements GenericCliExecution {
     private readonly autoExitOnStop: boolean,
     private readonly onStop: () => void,
     private readonly claudeCapabilities: { readonly resume: boolean; readonly fork: boolean },
+    private readonly stopError: Error | undefined,
+    private readonly stopReturnsBeforeExit: boolean,
   ) {
     this.context = {
       id: request.identities.contextId,
@@ -244,12 +290,23 @@ class FakeGenericCliExecution implements GenericCliExecution {
     if (!this.stopRequested && this.exitCode === null) {
       this.stopRequested = true;
       this.onStop();
+      if (this.stopError) throw this.stopError;
+      if (this.stopReturnsBeforeExit) {
+        this.lost = true;
+        return;
+      }
       if (this.autoExitOnStop) queueMicrotask(() => this.exit(143));
     }
     await this.exited;
   }
 
-  dispose(): void {}
+  dispose(): void {
+    this.disposed = true;
+  }
+
+  isDisposed(): boolean {
+    return this.disposed;
+  }
 
   emit(data: string): void {
     if (!this.active) throw new Error('Fake output was activated too early');
@@ -535,9 +592,11 @@ class FakeRuntimeSession implements RuntimeClientSession {
         worktreeId: 'worktree-1',
         branchName: 'hariari/task-1/run-1/attempt-1',
         baseCommit: 'base-1',
-        processId: 'process-1',
-        ptyId: 'pty-1',
       },
+      executionContexts: [{
+        id: 'context-1', worktreeId: 'worktree-1',
+        branchName: 'hariari/task-1/run-1/attempt-1', baseCommit: 'base-1',
+      }],
       providerSessions: [],
     };
     this.environment.executions.set(task.id, view);
@@ -545,11 +604,11 @@ class FakeRuntimeSession implements RuntimeClientSession {
     return view;
   }
 
-  async resumeClaudeSession(_request: ResumeClaudeSessionRequest): Promise<TaskExecutionView> {
+  async resumeProviderSession(_request: ProviderSessionActionRequest): Promise<TaskExecutionView> {
     throw new RuntimePortError('unsupported-operation', false);
   }
 
-  async forkClaudeSession(_request: ForkClaudeSessionRequest): Promise<TaskExecutionView> {
+  async forkProviderSession(_request: ProviderSessionActionRequest): Promise<TaskExecutionView> {
     throw new RuntimePortError('unsupported-operation', false);
   }
 

@@ -166,6 +166,7 @@ function executionView(task: TaskView, state: TaskExecutionState): TaskExecution
     attempt: state === 'ready' ? null : { id: 'attempt-1', number: 1, state },
     attempts: state === 'ready' ? [] : [{ id: 'attempt-1', number: 1, state }],
     context: null,
+    executionContexts: [],
     providerSessions: [],
   };
 }

@@ -86,8 +86,6 @@ function registerTaskExecutionIdentityTest(): void {
       context: {
         id: 'context-1',
         worktreeId: 'worktree-1',
-        processId: 'process-1',
-        ptyId: 'pty-1',
       },
     });
     await expect(runtime.getTaskExecution(task.id)).resolves.toEqual(started);

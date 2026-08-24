@@ -138,29 +138,28 @@ function sanitizeTaskExecution(execution: TaskExecutionView): TaskExecutionView 
       worktreeId: execution.context.worktreeId,
       branchName: execution.context.branchName,
       baseCommit: execution.context.baseCommit,
-      processId: execution.context.processId,
-      ptyId: execution.context.ptyId,
     },
-    providerSession: execution.providerSession && {
-      id: execution.providerSession.id,
-      provider: execution.providerSession.provider,
-      nativeSessionId: execution.providerSession.nativeSessionId,
-      taskId: execution.providerSession.taskId,
-      attemptId: execution.providerSession.attemptId,
-      executionContextId: execution.providerSession.executionContextId,
-      capabilities: { ...execution.providerSession.capabilities },
-      parentId: execution.providerSession.parentId,
-    },
-    providerSessions: execution.providerSessions.map((session) => ({
-      id: session.id,
-      provider: session.provider,
-      nativeSessionId: session.nativeSessionId,
-      taskId: session.taskId,
-      attemptId: session.attemptId,
-      executionContextId: session.executionContextId,
-      capabilities: { ...session.capabilities },
-      parentId: session.parentId,
+    executionContexts: execution.executionContexts.map((context) => ({
+      id: context.id,
+      worktreeId: context.worktreeId,
+      branchName: context.branchName,
+      baseCommit: context.baseCommit,
     })),
+    ...(execution.providerSession === undefined ? {} : {
+      providerSession: execution.providerSession && sanitizeProviderSession(execution.providerSession),
+    }),
+    providerSessions: execution.providerSessions.map(sanitizeProviderSession),
+  };
+}
+
+function sanitizeProviderSession(
+  session: NonNullable<TaskExecutionView['providerSession']>,
+): NonNullable<TaskExecutionView['providerSession']> {
+  return {
+    id: session.id, provider: session.provider, attemptId: session.attemptId,
+    executionContextId: session.executionContextId,
+    capabilities: { ...session.capabilities }, parentId: session.parentId,
+    lineage: session.lineage,
   };
 }
 

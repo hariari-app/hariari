@@ -24,8 +24,6 @@ export function taskExecutionModel(view: TaskExecutionView): TaskExecutionModel 
       `context ${context?.id ?? 'none'}`,
       `worktree ${context?.worktreeId ?? 'none'}`,
       `branch ${context?.branchName ?? 'none'}`,
-      `process ${context?.processId ?? 'none'}`,
-      `PTY ${context?.ptyId ?? 'none'}`,
     ].join(' · '),
   };
 }
@@ -80,5 +78,6 @@ function executionAction(state: TaskExecutionState): TaskExecutionAction {
 }
 
 function isNonterminal(state: TaskExecutionState): boolean {
-  return state === 'starting' || state === 'running' || state === 'cancelling';
+  return state === 'starting' || state === 'running' ||
+    state === 'cancelling' || state === 'superseding';
 }

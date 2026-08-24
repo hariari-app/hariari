@@ -2,7 +2,11 @@ import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { TaskView } from '../shared/runtime/runtime-interface';
+import type {
+  ProviderSessionCapabilities,
+  TaskProvider,
+  TaskView,
+} from '../shared/runtime/runtime-interface';
 
 const TRACER_TEXT = 'hariari-runtime-tracer';
 
@@ -17,8 +21,12 @@ export class GenericCliExecutionError extends Error {
 }
 
 export interface ExecutionAdapter {
-  start(request: ExecutionStartRequest): Promise<ActiveExecution>;
+  capabilities(task: TaskView): Promise<ProviderSessionCapabilities>;
+  observe(binding: PrivateExecutionBinding): Promise<ExecutionObservation>;
+  launch(plan: ExecutionLaunchPlan): Promise<ActiveExecution>;
 }
+
+export type ExecutionObservation = 'live' | 'lost' | 'unknown';
 
 export interface ExecutionStartRequest {
   readonly task: TaskView;
@@ -34,6 +42,37 @@ export interface ExecutionStartRequest {
   readonly onOutput: (data: string) => void;
   readonly onExit: (exitCode: number) => void;
 }
+
+export type PlannedExecutionContext = Omit<ExecutionStartRequest, 'instruction'>;
+
+export interface PrivateProviderSession {
+  readonly id: string;
+  readonly provider: TaskProvider;
+  readonly nativeSessionId: string;
+  readonly taskId: string;
+  readonly attemptId: string;
+  readonly executionContextId: string;
+  readonly capabilities: ProviderSessionCapabilities;
+  readonly parentId: string | null;
+  readonly lineage: 'new' | 'native-resume' | 'fork';
+  readonly context: ActiveExecution['context'];
+}
+
+export interface PrivateExecutionBinding {
+  readonly task: TaskView;
+  readonly run: { readonly id: string; readonly number: number };
+  readonly attempt: { readonly id: string; readonly number: number };
+  readonly context: ActiveExecution['context'];
+  readonly providerSession: PrivateProviderSession | null;
+}
+
+export type ExecutionLaunchPlan =
+  | { readonly kind: 'new'; readonly nativeSessionId: string | null;
+      readonly plannedContext: PlannedExecutionContext }
+  | { readonly kind: 'native-resume'; readonly source: PrivateProviderSession;
+      readonly plannedContext: PlannedExecutionContext }
+  | { readonly kind: 'fork'; readonly source: PrivateProviderSession;
+      readonly plannedContext: PlannedExecutionContext };
 
 export type ProviderStartInstruction =
   | { readonly kind: 'new'; readonly nativeSessionId: string | null }
@@ -107,12 +146,27 @@ export class LocalGenericCliExecutionAdapter implements ExecutionAdapter {
     this.nodeModulesRoot = options.nodeModulesRoot;
   }
 
-  async start(request: GenericCliStartRequest): Promise<GenericCliExecution> {
+  private readonly executions = new Map<string, GenericCliExecution>();
+
+  async capabilities(_task: TaskView): Promise<ProviderSessionCapabilities> {
+    return { resume: false, fork: false };
+  }
+
+  async observe(binding: PrivateExecutionBinding): Promise<ExecutionObservation> {
+    const active = this.executions.get(binding.context.id);
+    if (!active) return 'unknown';
+    return active.isRunning() ? 'live' : 'lost';
+  }
+
+  async launch(plan: ExecutionLaunchPlan): Promise<GenericCliExecution> {
+    const request = executionStartRequest(plan);
     if (request.task.provider !== 'shell' || request.instruction.kind !== 'new') {
       throw new GenericCliExecutionError('process-start-failed');
     }
     const allocation = await allocateLocalExecutionContext(request, this.worktreeRoot);
-    return this.startPty(request, allocation.worktreePath, allocation.context);
+    const active = this.startPty(request, allocation.worktreePath, allocation.context);
+    this.executions.set(active.context.id, active);
+    return active;
   }
 
   private startPty(
@@ -146,6 +200,17 @@ export class LocalGenericCliExecutionAdapter implements ExecutionAdapter {
 export type GenericCliExecutionAdapter = ExecutionAdapter;
 export type GenericCliStartRequest = ExecutionStartRequest;
 export type GenericCliExecution = ActiveExecution;
+
+export function executionStartRequest(plan: ExecutionLaunchPlan): ExecutionStartRequest {
+  const instruction: ProviderStartInstruction = plan.kind === 'new'
+    ? { kind: 'new', nativeSessionId: plan.nativeSessionId }
+    : plan.kind === 'native-resume'
+      ? { kind: 'resume-claude', nativeSessionId: plan.source.nativeSessionId,
+          context: plan.source.context }
+      : { kind: 'fork-claude', parentNativeSessionId: plan.source.nativeSessionId,
+          context: plan.source.context };
+  return { ...plan.plannedContext, instruction };
+}
 
 function bufferedPtyExecution(
   pty: PtyProcess,

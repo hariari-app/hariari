@@ -8,8 +8,7 @@ import {
   type RuntimeProtocolRange,
   type RuntimeShutdownRequest,
   type StartTaskRequest,
-  type ResumeClaudeSessionRequest,
-  type ForkClaudeSessionRequest,
+  type ProviderSessionActionRequest,
   type TaskExecutionState,
   type TaskExecutionView,
   type TaskOutputEvent,
@@ -27,6 +26,8 @@ import {
   TASK_START_OPERATION,
   CLAUDE_RESUME_OPERATION,
   CLAUDE_FORK_OPERATION,
+  PROVIDER_SESSION_FORK_OPERATION,
+  PROVIDER_SESSION_RESUME_OPERATION,
   type RuntimeAuthenticateFrame,
   type RuntimeAuthenticatedReplyEnvelope,
   type RuntimeChallengeFrame,
@@ -38,6 +39,16 @@ import {
   type RuntimeUnauthorizedFrame,
   type RuntimeWelcomeFrame,
 } from './protocol';
+
+interface LegacyClaudeResumeRequest {
+  readonly taskId: string; readonly providerSessionId: string;
+  readonly repository: string; readonly worktreeId: string; readonly branchName: string;
+  readonly idempotencyKey: string;
+}
+
+interface LegacyClaudeForkRequest {
+  readonly taskId: string; readonly providerSessionId: string; readonly idempotencyKey: string;
+}
 
 const MAX_VERSION_LENGTH = 128;
 const MAX_PROOF_LENGTH = 128;
@@ -216,13 +227,26 @@ export function parseCancelTaskRequest(request: RuntimeRequestFrame): CancelTask
   if (request.operation.name !== TASK_CANCEL_OPERATION || !request.idempotencyKey) invalid();
   return { taskId: identifier(request.payload.taskId), idempotencyKey: request.idempotencyKey };
 }
-export function parseResumeClaudeSessionRequest(request: RuntimeRequestFrame): ResumeClaudeSessionRequest {
+export function parseResumeClaudeSessionRequest(request: RuntimeRequestFrame): LegacyClaudeResumeRequest {
   if (request.operation.name !== CLAUDE_RESUME_OPERATION || !request.idempotencyKey) invalid();
   return { taskId: identifier(request.payload.taskId), providerSessionId: identifier(request.payload.providerSessionId), repository: requiredTaskField(request.payload.repository), worktreeId: identifier(request.payload.worktreeId), branchName: requiredTaskField(request.payload.branchName), idempotencyKey: request.idempotencyKey };
 }
-export function parseForkClaudeSessionRequest(request: RuntimeRequestFrame): ForkClaudeSessionRequest {
+export function parseForkClaudeSessionRequest(request: RuntimeRequestFrame): LegacyClaudeForkRequest {
   if (request.operation.name !== CLAUDE_FORK_OPERATION || !request.idempotencyKey) invalid();
   return { taskId: identifier(request.payload.taskId), providerSessionId: identifier(request.payload.providerSessionId), idempotencyKey: request.idempotencyKey };
+}
+
+export function parseProviderSessionActionRequest(
+  request: RuntimeRequestFrame,
+): ProviderSessionActionRequest {
+  const operation = request.operation.name;
+  if ((operation !== PROVIDER_SESSION_RESUME_OPERATION &&
+    operation !== PROVIDER_SESSION_FORK_OPERATION) || !request.idempotencyKey) invalid();
+  return {
+    taskId: identifier(request.payload.taskId),
+    providerSessionId: identifier(request.payload.providerSessionId),
+    idempotencyKey: request.idempotencyKey,
+  };
 }
 
 export function parseTaskLifecycleRequest(value: unknown): StartTaskRequest {
@@ -283,15 +307,21 @@ export function parseTaskExecutionView(value: Record<string, unknown>): TaskExec
   const attempt = value.attempt === null ? null : parseAttempt(object(value.attempt));
   const attempts = array(value.attempts).map((entry) => parseAttempt(object(entry)));
   const context = value.context === null ? null : parseContext(object(value.context));
+  const executionContexts = value.executionContexts === undefined
+    ? (context ? [context] : [])
+    : array(value.executionContexts).map((entry) => parseContext(object(entry)));
   const providerSession = value.providerSession === undefined || value.providerSession === null ? null : parseProviderSession(object(value.providerSession));
   const providerSessions = array(value.providerSessions).map((entry) => parseProviderSession(object(entry)));
   if (executionState === 'ready' && (run !== null || attempt !== null || context !== null)) invalid();
   if (executionState !== 'ready' && run === null) invalid();
   if (executionState !== 'starting' && executionState !== 'ready' && attempt === null) invalid();
-  if (providerSession && (!attempt || !context || providerSession.taskId !== task.id || providerSession.attemptId !== attempt.id || providerSession.executionContextId !== context.id)) invalid();
+  if (providerSession && (!attempt || !context || providerSession.attemptId !== attempt.id || providerSession.executionContextId !== context.id)) invalid();
   if ((attempt === null) !== (attempts.length === 0) || (attempt && !attempts.some((entry) => entry.id === attempt.id))) invalid();
   if (providerSession && !providerSessions.some((entry) => entry.id === providerSession.id)) invalid();
-  return { task: { ...task, executionState }, run, attempt, attempts, context, providerSession, providerSessions };
+  return {
+    task: { ...task, executionState }, run, attempt, attempts, context,
+    executionContexts, providerSession, providerSessions,
+  };
 }
 
 export function parseOutputFrame(value: unknown, protocolVersion: number): RuntimeOutputFrame {
@@ -345,6 +375,8 @@ function operation(value: unknown): RuntimeOperationFrame {
     name !== TASK_CREATE_OPERATION &&
     name !== TASK_LIST_OPERATION &&
     name !== TASK_START_OPERATION &&
+    name !== PROVIDER_SESSION_RESUME_OPERATION &&
+    name !== PROVIDER_SESSION_FORK_OPERATION &&
     name !== CLAUDE_RESUME_OPERATION &&
     name !== CLAUDE_FORK_OPERATION &&
     name !== TASK_CANCEL_OPERATION &&
@@ -376,15 +408,25 @@ function parseContext(value: Record<string, unknown>): NonNullable<TaskExecution
     worktreeId: identifier(value.worktreeId),
     branchName: boundedString(value.branchName, MAX_TASK_FIELD_LENGTH),
     baseCommit: identifier(value.baseCommit),
-    processId: identifier(value.processId),
-    ptyId: identifier(value.ptyId),
   };
 }
 
 function parseProviderSession(value: Record<string, unknown>): NonNullable<TaskExecutionView['providerSession']> {
   const capabilities = object(value.capabilities);
-  if (value.provider !== 'claude' || typeof capabilities.resume !== 'boolean' || typeof capabilities.fork !== 'boolean') invalid();
-  return { id: identifier(value.id), provider: 'claude', nativeSessionId: identifier(value.nativeSessionId), taskId: identifier(value.taskId), attemptId: identifier(value.attemptId), executionContextId: identifier(value.executionContextId), capabilities: { resume: capabilities.resume, fork: capabilities.fork }, parentId: optionalIdentifier(value.parentId) };
+  const provider = boundedString(value.provider, MAX_TASK_FIELD_LENGTH);
+  if (!TASK_PROVIDER_SET.has(provider) || typeof capabilities.resume !== 'boolean' || typeof capabilities.fork !== 'boolean') invalid();
+  const lineage = value.lineage === undefined
+    ? (value.parentId === null ? 'new' : 'fork')
+    : providerLineage(value.lineage);
+  return { id: identifier(value.id), provider: provider as TaskExecutionView['task']['provider'],
+    attemptId: identifier(value.attemptId), executionContextId: identifier(value.executionContextId),
+    capabilities: { resume: capabilities.resume, fork: capabilities.fork },
+    parentId: optionalIdentifier(value.parentId), lineage };
+}
+
+function providerLineage(value: unknown): NonNullable<TaskExecutionView['providerSession']>['lineage'] {
+  if (value !== 'new' && value !== 'native-resume' && value !== 'fork') invalid();
+  return value;
 }
 
 function executionStateValue(value: unknown): TaskExecutionState {
@@ -395,7 +437,9 @@ function executionStateValue(value: unknown): TaskExecutionState {
     value !== 'completed' &&
     value !== 'failed' &&
     value !== 'cancelling' &&
-    value !== 'cancelled'
+    value !== 'cancelled' &&
+    value !== 'superseding' &&
+    value !== 'superseded'
   ) {
     invalid();
   }

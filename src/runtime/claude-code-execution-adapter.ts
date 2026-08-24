@@ -6,12 +6,17 @@ import {
   existingLocalWorktreePath,
   loadNodePty,
   runtimeEnvironment,
+  executionStartRequest,
   type ActiveExecution,
   type ExecutionAdapter,
+  type ExecutionLaunchPlan,
+  type ExecutionObservation,
+  type PrivateExecutionBinding,
   type ExecutionStartRequest,
   type PtyPort,
   type PtyProcess,
 } from './generic-cli-execution-adapter';
+import type { ProviderSessionCapabilities, TaskView } from '../shared/runtime/runtime-interface';
 
 const STRUCTURED_MODE = ['--print', '--verbose', '--output-format', 'stream-json'] as const;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -40,7 +45,8 @@ export class ClaudeCodeExecutionAdapter implements ExecutionAdapter {
   private readonly worktreeRoot: string;
   private readonly executable: ClaudeExecutablePort;
   private pty: PtyPort | null;
-  private capabilities: Promise<ClaudeCapabilities> | null = null;
+  private capabilityProbe: Promise<ClaudeCapabilities> | null = null;
+  private readonly executions = new Map<string, ActiveExecution>();
 
   constructor(private readonly options: ClaudeCodeExecutionAdapterOptions) {
     this.executablePath = options.executablePath ?? 'claude';
@@ -49,17 +55,42 @@ export class ClaudeCodeExecutionAdapter implements ExecutionAdapter {
     this.pty = options.pty ?? null;
   }
 
-  async start(request: ExecutionStartRequest): Promise<ActiveExecution> {
+  async capabilities(task: TaskView): Promise<ProviderSessionCapabilities> {
+    if (task.provider !== 'claude') return { resume: false, fork: false };
+    const capabilities = await this.discoverCapabilities();
+    return { resume: capabilities.resume, fork: capabilities.fork };
+  }
+
+  async observe(binding: PrivateExecutionBinding): Promise<ExecutionObservation> {
+    const active = this.executions.get(binding.context.id);
+    if (!active) return 'unknown';
+    return active.isRunning() ? 'live' : 'lost';
+  }
+
+  async launch(plan: ExecutionLaunchPlan): Promise<ActiveExecution> {
+    const request = executionStartRequest(plan);
     if (request.task.provider !== 'claude') throw new GenericCliExecutionError('process-start-failed');
+    this.releaseLostSource(plan);
     const capabilities = await this.discoverCapabilities();
     this.assertSupported(request, capabilities);
     const allocation = await this.allocate(request);
-    return this.spawn(request, allocation.context, allocation.worktreePath, capabilities);
+    const active = await this.spawn(request, allocation.context, allocation.worktreePath, capabilities);
+    this.executions.set(active.context.id, active);
+    return active;
+  }
+
+  private releaseLostSource(plan: ExecutionLaunchPlan): void {
+    if (plan.kind !== 'native-resume') return;
+    const source = this.executions.get(plan.source.context.id);
+    if (source && !source.isRunning()) {
+      source.dispose();
+      this.executions.delete(plan.source.context.id);
+    }
   }
 
   private discoverCapabilities(): Promise<ClaudeCapabilities> {
-    this.capabilities ??= probeCapabilities(this.executable);
-    return this.capabilities;
+    this.capabilityProbe ??= probeCapabilities(this.executable);
+    return this.capabilityProbe;
   }
 
   private assertSupported(request: ExecutionStartRequest, capabilities: ClaudeCapabilities): void {

@@ -11,6 +11,8 @@ export const RUNTIME_SHUTDOWN_OPERATION = 'runtime.shutdown' as const;
 export const TASK_CREATE_OPERATION = 'task.create' as const;
 export const TASK_LIST_OPERATION = 'task.list' as const;
 export const TASK_START_OPERATION = 'task.start' as const;
+export const PROVIDER_SESSION_RESUME_OPERATION = 'provider-session.resume' as const;
+export const PROVIDER_SESSION_FORK_OPERATION = 'provider-session.fork' as const;
 export const CLAUDE_RESUME_OPERATION = 'claude.resume' as const;
 export const CLAUDE_FORK_OPERATION = 'claude.fork' as const;
 export const TASK_CANCEL_OPERATION = 'task.cancel' as const;
@@ -86,6 +88,8 @@ export type RuntimeOperationName =
   | typeof TASK_CREATE_OPERATION
   | typeof TASK_LIST_OPERATION
   | typeof TASK_START_OPERATION
+  | typeof PROVIDER_SESSION_RESUME_OPERATION
+  | typeof PROVIDER_SESSION_FORK_OPERATION
   | typeof CLAUDE_RESUME_OPERATION
   | typeof CLAUDE_FORK_OPERATION
   | typeof TASK_CANCEL_OPERATION

@@ -2,8 +2,11 @@ import {
   GenericCliExecutionError,
   type ActiveExecution,
   type ExecutionAdapter,
-  type ExecutionStartRequest,
+  type ExecutionLaunchPlan,
+  type ExecutionObservation,
+  type PrivateExecutionBinding,
 } from './generic-cli-execution-adapter';
+import type { ProviderSessionCapabilities, TaskView } from '../shared/runtime/runtime-interface';
 
 export interface ProviderExecutionAdapters {
   readonly shell: ExecutionAdapter;
@@ -14,9 +17,21 @@ export interface ProviderExecutionAdapters {
 export class ProviderExecutionAdapterRouter implements ExecutionAdapter {
   constructor(private readonly adapters: ProviderExecutionAdapters) {}
 
-  start(request: ExecutionStartRequest): Promise<ActiveExecution> {
-    if (request.task.provider === 'shell') return this.adapters.shell.start(request);
-    if (request.task.provider === 'claude') return this.adapters.claude.start(request);
+  capabilities(task: TaskView): Promise<ProviderSessionCapabilities> {
+    return this.adapterFor(task.provider).capabilities(task);
+  }
+
+  observe(binding: PrivateExecutionBinding): Promise<ExecutionObservation> {
+    return this.adapterFor(binding.task.provider).observe(binding);
+  }
+
+  launch(plan: ExecutionLaunchPlan): Promise<ActiveExecution> {
+    return this.adapterFor(plan.plannedContext.task.provider).launch(plan);
+  }
+
+  private adapterFor(provider: TaskView['provider']): ExecutionAdapter {
+    if (provider === 'shell') return this.adapters.shell;
+    if (provider === 'claude') return this.adapters.claude;
     throw new GenericCliExecutionError('process-start-failed');
   }
 }
