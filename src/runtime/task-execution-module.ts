@@ -148,6 +148,9 @@ export class TaskExecutionModule {
       { taskId: request.taskId, idempotencyKey: request.idempotencyKey },
       recovery.execution, recovery.repair,
     );
+    if (await this.adapter.observe(bindingFor(prepared)) === 'unknown') {
+      return this.tasks.rejectProviderAction(prepared, 'task-not-ready');
+    }
     await this.tasks.acceptProviderAction(prepared, 'fork');
     if (current.attempt?.state !== 'superseded') {
       if (current.attempt?.state === 'running') {

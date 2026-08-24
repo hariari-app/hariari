@@ -94,6 +94,7 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
   private readonly executions = new Map<string, FakeGenericCliExecution>();
   private readonly executionsByAttempt = new Map<string, FakeGenericCliExecution>();
   private readonly startCounts = new Map<string, number>();
+  private readonly stopCounts = new Map<string, number>();
   private readonly starts = new Map<string, DeferredSignal>();
   private readonly stops = new Map<string, DeferredSignal>();
 
@@ -138,7 +139,10 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
     const execution = new FakeGenericCliExecution(
       request,
       this.options.autoExitOnStop ?? true,
-      () => this.signalFor(this.stops, request.task.id).resolve(),
+      () => {
+        this.stopCounts.set(request.task.id, this.stopCount(request.task.id) + 1);
+        this.signalFor(this.stops, request.task.id).resolve();
+      },
       this.options.claudeCapabilities ?? { resume: true, fork: true },
       this.options.stopError,
       this.options.stopReturnsBeforeExit ?? false,
@@ -154,6 +158,10 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
 
   startCount(taskId: string): number {
     return this.startCounts.get(taskId) ?? 0;
+  }
+
+  stopCount(taskId: string): number {
+    return this.stopCounts.get(taskId) ?? 0;
   }
 
   waitForStop(taskId: string): Promise<void> {

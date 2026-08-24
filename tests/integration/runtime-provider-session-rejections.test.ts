@@ -13,7 +13,7 @@ describe('authenticated provider-session semantic rejections', () => {
   it('durably rejects a noncurrent parent fork', rejectsNoncurrentFork);
   it('durably rejects a terminal current fork', rejectsTerminalFork);
   it('durably rejects an unsupported fork', rejectsUnsupportedFork);
-  it('durably rejects a second action while the parent is superseding', rejectsSupersedingFork);
+  it('durably rejects a fresh-adapter unknown fork without a lifecycle transition', rejectsUnknownForkObservation);
 });
 
 async function rejectsUnknownFork(): Promise<void> {
@@ -64,21 +64,42 @@ async function rejectsUnsupportedFork(): Promise<void> {
   await assertRestartedRejection(subject, request, 'unsupported-operation');
 }
 
-async function rejectsSupersedingFork(): Promise<void> {
-  const adapter = new FakeClaudeCodeExecutionAdapter({ stopError: new Error('stop failed') });
-  const { subject, taskId, sessionId } = await startedSubject(adapter);
+async function rejectsUnknownForkObservation(): Promise<void> {
+  const adapterA = new FakeClaudeCodeExecutionAdapter();
+  const adapterB = new FakeClaudeCodeExecutionAdapter();
+  const { subject, taskId, sessionId } = await startedSubject(adapterA);
+  const request = { taskId, providerSessionId: sessionId, idempotencyKey: 'fresh-adapter-fork' };
+  await subject.restartWith(adapterB);
   const runtime = await subject.connect();
-  adapter.forget(taskId);
-  await expect(runtime.forkProviderSession({ taskId, providerSessionId: sessionId,
-    idempotencyKey: 'ambiguous-fork' })).rejects.toEqual(new RuntimePortError('internal', true));
-  await expect(runtime.resumeProviderSession({ taskId, providerSessionId: sessionId,
-    idempotencyKey: 'ambiguous-fork' }))
-    .rejects.toEqual(new RuntimePortError('idempotency-conflict', false));
-  const request = { taskId, providerSessionId: sessionId, idempotencyKey: 'superseding-fork' };
+
   await expect(runtime.forkProviderSession(request))
     .rejects.toEqual(new RuntimePortError('task-not-ready', false));
+  await expect(runtime.getTaskExecution(taskId)).resolves.toMatchObject({
+    attempt: { number: 1, state: 'running' }, providerSession: { id: sessionId, parentId: null },
+  });
+  expect(adapterA.startCount(taskId)).toBe(1);
+  expect(adapterA.stopCount(taskId)).toBe(0);
+  expect(adapterB.startCount(taskId)).toBe(0);
+  expect(adapterB.stopCount(taskId)).toBe(0);
   await runtime.disconnect();
-  await assertRestartedRejection(subject, request, 'task-not-ready');
+
+  const reconnected = await subject.connect();
+  await expect(reconnected.forkProviderSession(request))
+    .rejects.toEqual(new RuntimePortError('task-not-ready', false));
+  await expect(reconnected.resumeProviderSession(request))
+    .rejects.toEqual(new RuntimePortError('idempotency-conflict', false));
+  await reconnected.disconnect();
+
+  await subject.restart();
+  const restarted = await subject.connect();
+  await expect(restarted.forkProviderSession(request))
+    .rejects.toEqual(new RuntimePortError('task-not-ready', false));
+  await expect(restarted.getTaskExecution(taskId)).resolves.toMatchObject({
+    attempt: { number: 1, state: 'running' }, providerSession: { id: sessionId, parentId: null },
+  });
+  expect(adapterB.startCount(taskId)).toBe(0);
+  expect(adapterB.stopCount(taskId)).toBe(0);
+  await restarted.disconnect();
 }
 
 async function startedSubject(adapter = new FakeClaudeCodeExecutionAdapter()): Promise<{

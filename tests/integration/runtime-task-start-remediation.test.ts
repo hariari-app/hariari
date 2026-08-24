@@ -26,7 +26,7 @@ function registerTaskStartTests(): void {
   it('forks a Claude session through the authenticated Runtime seam', forksClaudeSession);
   it('durably aborts fork when parent stop fails and remains live', abortsLiveParentFork);
   it('continues fork when parent stop fails after positive loss observation', continuesLostParentFork);
-  it('retains superseding state when parent stop and observation are ambiguous', retainsAmbiguousParentFork);
+  it('rejects an unknown parent fork without a lifecycle transition', rejectsUnknownParentFork);
   it('settles a late parent exit by attempt identity without disturbing the fork child', settlesLateParentExit);
   it('reattaches the same live provider session after a Desktop-only reconnect', resumesMatchingClaudeSession);
   it('keeps a fresh Runtime adapter outside durable provider-session ownership', rejectsFreshAdapterResume);
@@ -435,22 +435,19 @@ async function continuesLostParentFork(): Promise<void> {
   await runtime.disconnect();
 }
 
-async function retainsAmbiguousParentFork(): Promise<void> {
-  const adapter = new FakeClaudeCodeExecutionAdapter({ stopError: new Error('stop failed') });
+async function rejectsUnknownParentFork(): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
   const subject = await createSubject(() => adapter);
   const runtime = await subject.connect();
   const task = await createClaudeTask(runtime, 'fake-checkout', 'unknown-stop-failure');
   const parent = await runtime.startTask({ taskId: task.id, idempotencyKey: 'unknown-stop-start' });
   adapter.forget(task.id);
-  await expect(runtime.forkProviderSession({
-    taskId: task.id, providerSessionId: parent.providerSession!.id,
-    idempotencyKey: 'unknown-stop-fork',
-  })).rejects.toEqual(new RuntimePortError('internal', true));
-  await expect(runtime.getTaskExecution(task.id)).resolves.toMatchObject({
-    attempt: { id: parent.attempt?.id, state: 'superseding' },
-    attempts: [{ id: parent.attempt?.id, state: 'superseding' }],
-  });
+  await expect(runtime.forkProviderSession({ taskId: task.id,
+    providerSessionId: parent.providerSession!.id, idempotencyKey: 'unknown-stop-fork' }))
+    .rejects.toEqual(new RuntimePortError('task-not-ready', false));
+  await expect(runtime.getTaskExecution(task.id)).resolves.toEqual(parent);
   expect(adapter.startCount(task.id)).toBe(1);
+  expect(adapter.stopCount(task.id)).toBe(0);
   await runtime.disconnect();
 }
 
