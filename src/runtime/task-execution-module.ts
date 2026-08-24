@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import type {
   CancelTaskRequest,
   StartTaskRequest,
   ForkClaudeSessionRequest,
+  ResumeClaudeSessionRequest,
   TaskExecutionState,
   TaskExecutionView,
   TaskOutputEvent,
@@ -12,6 +14,7 @@ import {
   type GenericCliExecutionAdapter,
 } from './generic-cli-execution-adapter';
 import { TaskModule } from './task-module';
+import type { ClaudeForkRepair } from './claude-session-lifecycle';
 import { TaskOutputLog } from './task-output-log';
 
 const MAX_OUTPUT_CHARS = 4 * 1024;
@@ -19,6 +22,10 @@ const MAX_OUTPUT_CHARS = 4 * 1024;
 interface InFlightStart {
   readonly idempotencyKey: string;
   readonly promise: Promise<TaskExecutionView>;
+}
+
+interface InFlightClaudeStart extends InFlightStart {
+  readonly fingerprint: string;
 }
 
 type TerminalTransition =
@@ -35,6 +42,7 @@ export class TaskExecutionError extends Error {
 /** Runtime-owned execution module: adapter lifecycle, transient output, and durable transitions. */
 export class TaskExecutionModule {
   private readonly starts = new Map<string, InFlightStart>();
+  private readonly claudeStarts = new Map<string, InFlightClaudeStart>();
   private readonly settlements = new Map<string, Promise<void>>();
   private readonly exitWaits = new Map<string, ExitWait>();
   private readonly active = new Map<string, GenericCliExecution>();
@@ -63,16 +71,59 @@ export class TaskExecutionModule {
     );
     return promise;
   }
-  resumeClaude(request: import('../shared/runtime/runtime-interface').ResumeClaudeSessionRequest): Promise<TaskExecutionView> { return this.tasks.resumeClaude(request); }
-  async forkClaude(request: ForkClaudeSessionRequest): Promise<TaskExecutionView> {
+  resumeClaude(request: ResumeClaudeSessionRequest): Promise<TaskExecutionView> {
+    return this.runClaudeStart(request.taskId, request.idempotencyKey, resumeStartFingerprint(request),
+      () => this.resumeClaudeOwned(request));
+  }
+  private async resumeClaudeOwned(request: ResumeClaudeSessionRequest): Promise<TaskExecutionView> {
+    const execution = await this.tasks.resumeClaude(request);
+    const active = this.active.get(request.taskId);
+    if (active?.isRunning()) return execution;
+    active?.dispose();
+    this.active.delete(request.taskId);
+    return this.startResumedClaude(request.taskId, execution);
+  }
+  forkClaude(request: ForkClaudeSessionRequest): Promise<TaskExecutionView> {
+    return this.runClaudeStart(request.taskId, request.idempotencyKey, forkStartFingerprint(request),
+      () => this.forkClaudeOwned(request));
+  }
+  private async forkClaudeOwned(request: ForkClaudeSessionRequest): Promise<TaskExecutionView> {
     const reservation = await this.tasks.reserveClaudeFork(request);
     return reservation.created ? this.startForkReserved(request.taskId, reservation) : reservation.execution;
+  }
+
+  private runClaudeStart(
+    taskId: string,
+    idempotencyKey: string,
+    fingerprint: string,
+    operation: () => Promise<TaskExecutionView>,
+  ): Promise<TaskExecutionView> {
+    const inFlight = this.claudeStarts.get(taskId);
+    if (inFlight) {
+      if (inFlight.idempotencyKey === idempotencyKey && inFlight.fingerprint === fingerprint) {
+        return inFlight.promise;
+      }
+      return inFlight.promise.then(
+        () => this.runClaudeStart(taskId, idempotencyKey, fingerprint, operation),
+        () => this.runClaudeStart(taskId, idempotencyKey, fingerprint, operation),
+      );
+    }
+    const promise = operation();
+    const owned = { idempotencyKey, fingerprint, promise };
+    this.claudeStarts.set(taskId, owned);
+    void promise.then(() => this.releaseClaudeStart(taskId, owned),
+      () => this.releaseClaudeStart(taskId, owned));
+    return promise;
+  }
+
+  private releaseClaudeStart(taskId: string, owned: InFlightClaudeStart): void {
+    if (this.claudeStarts.get(taskId) === owned) this.claudeStarts.delete(taskId);
   }
 
   private async startOwned(request: StartTaskRequest): Promise<TaskExecutionView> {
     const reservation = await this.tasks.reserveExecution(request);
     return reservation.created
-      ? this.startReserved(request, reservation.execution)
+      ? this.startReserved(request, reservation.execution, reservation.claudeForkRepair)
       : reservation.execution;
   }
 
@@ -137,6 +188,7 @@ export class TaskExecutionModule {
   private async startReserved(
     request: StartTaskRequest,
     execution: TaskExecutionView,
+    forkRepair?: ClaudeForkRepair,
   ): Promise<TaskExecutionView> {
     if (!execution.run || !execution.attempt) throw new TaskExecutionError('internal');
     let active: GenericCliExecution | null = null;
@@ -147,18 +199,27 @@ export class TaskExecutionModule {
         attempt: execution.attempt,
         identities: {
           contextId: this.randomId(),
-          worktreeId: this.randomId(),
+          worktreeId: forkRepair?.parentContext.worktreeId ?? this.randomId(),
           processId: this.randomId(),
           ptyId: this.randomId(),
         },
+        instruction: forkRepair
+          ? { kind: 'fork-claude', parentNativeSessionId: forkRepair.parentSession.nativeSessionId,
+              context: forkRepair.parentContext }
+          : { kind: 'new', nativeSessionId: execution.task.provider === 'claude' ? randomUUID() : null },
         onOutput: (data) => this.publishOutput(request.taskId, execution.attempt!.id, data),
-        onExit: (exitCode) => void this.settle(request.taskId, exitCode),
+        onExit: (exitCode) => void this.settle(request.taskId, execution.attempt!.id, exitCode),
       });
       this.active.set(request.taskId, active);
       this.exitWaits.set(request.taskId, new ExitWait());
-      await this.tasks.allocateContext(request.taskId, active.context, active.providerSession && execution.task.provider === 'claude'
-        ? { id: this.randomId(), provider: 'claude', nativeSessionId: active.providerSession.nativeSessionId, taskId: request.taskId, attemptId: execution.attempt.id, executionContextId: active.context.id, capabilities: active.providerSession.capabilities, parentId: execution.attempt.number > 1 ? execution.providerSessions.at(-1)?.id ?? null : null }
-        : null);
+      await this.attachContext(
+        request.taskId,
+        execution,
+        active,
+        forkRepair?.parentSession.id ??
+          (execution.attempt.number > 1 ? execution.providerSessions.at(-1)?.id ?? null : null),
+        forkRepair !== undefined || execution.attempt.number > 1,
+      );
       const started = await this.tasks.markStarted(request.taskId);
       active.activateExit();
       if (started.attempt?.state === 'cancelling') {
@@ -185,19 +246,53 @@ export class TaskExecutionModule {
         run: execution.run,
         attempt: execution.attempt,
         identities: { contextId: this.randomId(), worktreeId: reservation.parentContext.worktreeId, processId: this.randomId(), ptyId: this.randomId() },
-        inheritedScope: { branchName: reservation.parentContext.branchName },
+        instruction: {
+          kind: 'fork-claude',
+          parentNativeSessionId: reservation.parentSession.nativeSessionId,
+          context: reservation.parentContext,
+        },
         onOutput: (data) => this.publishOutput(taskId, execution.attempt!.id, data),
-        onExit: (exitCode) => void this.settle(taskId, exitCode),
+        onExit: (exitCode) => void this.settle(taskId, execution.attempt!.id, exitCode),
       });
       this.active.set(taskId, active);
       this.exitWaits.set(taskId, new ExitWait());
-      await this.tasks.allocateContext(taskId, active.context, active.providerSession
-        ? { id: this.randomId(), provider: 'claude', nativeSessionId: active.providerSession.nativeSessionId, taskId, attemptId: execution.attempt.id, executionContextId: active.context.id, capabilities: active.providerSession.capabilities, parentId: reservation.parentSession.id }
-        : null);
+      await this.attachContext(taskId, execution, active, reservation.parentSession.id, true);
       const started = await this.tasks.markStarted(taskId);
       active.activateExit(); active.activateOutput();
       return started;
     } catch (error) { return this.failStart(taskId, active, error); }
+  }
+
+  private async startResumedClaude(
+    taskId: string,
+    execution: TaskExecutionView,
+  ): Promise<TaskExecutionView> {
+    if (!execution.run || !execution.attempt || !execution.context || !execution.providerSession) {
+      throw new TaskExecutionError('internal');
+    }
+    let active: GenericCliExecution | null = null;
+    try {
+      active = await this.adapter.start({
+        task: execution.task, run: execution.run, attempt: execution.attempt,
+        identities: {
+          contextId: execution.context.id,
+          worktreeId: execution.context.worktreeId,
+          processId: execution.context.processId,
+          ptyId: execution.context.ptyId,
+        },
+        instruction: { kind: 'resume-claude', nativeSessionId: execution.providerSession.nativeSessionId, context: execution.context },
+        onOutput: (data) => this.publishOutput(taskId, execution.attempt!.id, data),
+        onExit: (exitCode) => void this.settle(taskId, execution.attempt!.id, exitCode),
+      });
+      assertResumedExecution(execution, active);
+      this.active.set(taskId, active);
+      this.exitWaits.set(taskId, new ExitWait());
+      active.activateExit();
+      active.activateOutput();
+      return execution;
+    } catch (error) {
+      return this.failStart(taskId, active, error);
+    }
   }
 
   private async failStart(
@@ -222,6 +317,32 @@ export class TaskExecutionModule {
     throw new TaskExecutionError('internal');
   }
 
+  private async attachContext(
+    taskId: string,
+    execution: TaskExecutionView,
+    active: GenericCliExecution,
+    parentId: string | null,
+    repair: boolean,
+  ): Promise<void> {
+    if (!execution.attempt) throw new TaskExecutionError('internal');
+    const providerSession = active.providerSession && execution.task.provider === 'claude'
+      ? { id: this.randomId(), provider: 'claude' as const,
+          nativeSessionId: active.providerSession.nativeSessionId, taskId,
+          attemptId: execution.attempt.id, executionContextId: active.context.id,
+          capabilities: active.providerSession.capabilities, parentId }
+      : null;
+    if (!repair) {
+      await this.tasks.allocateContext(taskId, active.context, providerSession);
+      return;
+    }
+    await this.persistWithOneShotRepair(
+      taskId,
+      (view) => view.context?.id === active.context.id &&
+        (providerSession === null || view.providerSession?.id === providerSession.id),
+      () => this.tasks.allocateContext(taskId, active.context, providerSession),
+    );
+  }
+
   private async allocateFailedContext(
     taskId: string,
     context: GenericCliExecution['context'],
@@ -233,7 +354,8 @@ export class TaskExecutionModule {
     );
   }
 
-  private settle(taskId: string, exitCode: number): void {
+  private settle(taskId: string, attemptId: string, exitCode: number): void {
+    if (this.tasks.execution(taskId).attempt?.id !== attemptId) return;
     if (this.settlements.has(taskId)) return;
     const settlement = this.persistTerminalWithRepair(taskId, { kind: 'process-exit', exitCode })
       .then(() => this.release(taskId))
@@ -330,6 +452,23 @@ export class TaskExecutionModule {
       }
     }
   }
+}
+
+function assertResumedExecution(execution: TaskExecutionView, active: GenericCliExecution): void {
+  if (!execution.context || !execution.providerSession ||
+    JSON.stringify(active.context) !== JSON.stringify(execution.context) ||
+    active.providerSession?.nativeSessionId !== execution.providerSession.nativeSessionId) {
+    throw new GenericCliExecutionError('process-start-failed', active.context);
+  }
+}
+
+function resumeStartFingerprint(request: ResumeClaudeSessionRequest): string {
+  return JSON.stringify(['resume', request.taskId, request.providerSessionId, request.repository,
+    request.worktreeId, request.branchName]);
+}
+
+function forkStartFingerprint(request: ForkClaudeSessionRequest): string {
+  return JSON.stringify(['fork', request.taskId, request.providerSessionId]);
 }
 
 function sanitizeOutput(value: string): string {

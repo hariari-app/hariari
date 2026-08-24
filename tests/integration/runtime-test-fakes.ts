@@ -6,6 +6,8 @@ import type {
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
   StartTaskRequest,
+  ResumeClaudeSessionRequest,
+  ForkClaudeSessionRequest,
   TaskExecutionView,
   TaskOutputEvent,
   TaskView,
@@ -29,8 +31,61 @@ import type {
   GenericCliExecutionAdapter,
   GenericCliStartRequest,
 } from '../../src/runtime/generic-cli-execution-adapter';
+import {
+  NodeLocalRuntimeTransport,
+  type RuntimeFrameConnection,
+  type RuntimeLocalEndpoint,
+  type RuntimeTransportListener,
+} from '../../src/runtime/local-transport';
 
 const DEFAULT_TOKEN = new Uint8Array(32).fill(7);
+
+export class ObservedRuntimeTransport extends NodeLocalRuntimeTransport {
+  private readonly requestCounts = new Map<string, number>();
+  private readonly requestWaiters = new Map<string, Set<() => void>>();
+
+  override listen(
+    endpoint: RuntimeLocalEndpoint,
+    onConnection: (connection: RuntimeFrameConnection) => Promise<void>,
+  ): Promise<RuntimeTransportListener> {
+    return super.listen(endpoint, (connection) => onConnection(this.observe(connection)));
+  }
+
+  waitForRequests(operation: string, count: number): Promise<void> {
+    if ((this.requestCounts.get(operation) ?? 0) >= count) return Promise.resolve();
+    return new Promise((resolve) => {
+      const key = `${operation}:${count}`;
+      const waiters = this.requestWaiters.get(key) ?? new Set<() => void>();
+      waiters.add(resolve);
+      this.requestWaiters.set(key, waiters);
+    });
+  }
+
+  private observe(connection: RuntimeFrameConnection): RuntimeFrameConnection {
+    return {
+      readFrame: async (deadlineMs) => {
+        const frame = await connection.readFrame(deadlineMs);
+        this.record(frame);
+        return frame;
+      },
+      writeFrame: (frame, deadlineMs) => connection.writeFrame(frame, deadlineMs),
+      onClose: (listener) => connection.onClose(listener),
+      close: () => connection.close(),
+    };
+  }
+
+  private record(frame: Record<string, unknown>): void {
+    const operation = frame.operation;
+    if (!operation || typeof operation !== 'object' || !('name' in operation)) return;
+    const name = operation.name;
+    if (typeof name !== 'string') return;
+    const count = (this.requestCounts.get(name) ?? 0) + 1;
+    this.requestCounts.set(name, count);
+    const key = `${name}:${count}`;
+    for (const resolve of this.requestWaiters.get(key) ?? []) resolve();
+    this.requestWaiters.delete(key);
+  }
+}
 
 /** Deterministic execution Adapter for public-seam Runtime lifecycle tests. */
 export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapter {
@@ -46,9 +101,12 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
       readonly startError?: (request: GenericCliStartRequest) => Error;
       readonly claudeCapabilities?: { readonly resume: boolean; readonly fork: boolean };
     } = {},
+    private readonly provider: 'shell' | 'claude' = 'shell',
   ) {}
 
   async start(request: GenericCliStartRequest): Promise<GenericCliExecution> {
+    if (request.task.provider !== this.provider) throw new Error(`unexpected ${request.task.provider} provider`);
+    this.requests.push(request);
     this.startCounts.set(request.task.id, this.startCount(request.task.id) + 1);
     this.signalFor(this.starts, request.task.id).resolve();
     const beforeStart = this.options.beforeStart;
@@ -85,6 +143,16 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
     this.executionFor(taskId).exit(exitCode);
   }
 
+  lose(taskId: string): void {
+    this.executionFor(taskId).lose();
+  }
+
+  startsFor(taskId: string): readonly GenericCliStartRequest[] {
+    return this.requests.filter((request) => request.task.id === taskId);
+  }
+
+  private readonly requests: GenericCliStartRequest[] = [];
+
   private executionFor(taskId: string): FakeGenericCliExecution {
     const execution = this.executions.get(taskId);
     if (!execution) throw new Error(`No fake execution for ${taskId}`);
@@ -97,6 +165,13 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
     const signal = new DeferredSignal();
     signals.set(taskId, signal);
     return signal;
+  }
+}
+
+/** Dedicated Claude adapter fake for authenticated lifecycle tests. */
+export class FakeClaudeCodeExecutionAdapter extends FakeGenericCliExecutionAdapter {
+  constructor(options: ConstructorParameters<typeof FakeGenericCliExecutionAdapter>[0] = {}) {
+    super(options, 'claude');
   }
 }
 
@@ -119,6 +194,7 @@ class FakeGenericCliExecution implements GenericCliExecution {
   private exitDelivered = false;
   private exitCode: number | null = null;
   private stopRequested = false;
+  private lost = false;
   private resolveExit: () => void = () => undefined;
   private readonly exited = new Promise<void>((resolve) => {
     this.resolveExit = resolve;
@@ -133,14 +209,24 @@ class FakeGenericCliExecution implements GenericCliExecution {
     this.context = {
       id: request.identities.contextId,
       worktreeId: request.identities.worktreeId,
-      branchName: request.inheritedScope?.branchName ?? `hariari/task-${request.task.id}/run-${request.run.number}/attempt-${request.attempt.number}`,
+      branchName: request.instruction.kind === 'new'
+        ? `hariari/task-${request.task.id}/run-${request.run.number}/attempt-${request.attempt.number}`
+        : request.instruction.context.branchName,
       baseCommit: 'fake-base-commit',
       processId: request.identities.processId,
       ptyId: request.identities.ptyId,
     };
     this.providerSession = request.task.provider === 'claude'
-      ? { nativeSessionId: `claude-${request.attempt.id}`, capabilities: this.claudeCapabilities }
+      ? { nativeSessionId: nativeSessionId(request), capabilities: this.claudeCapabilities }
       : null;
+  }
+
+  isRunning(): boolean {
+    return !this.lost && this.exitCode === null;
+  }
+
+  lose(): void {
+    this.lost = true;
   }
 
   activateOutput(): void {
@@ -183,6 +269,12 @@ class FakeGenericCliExecution implements GenericCliExecution {
       this.request.onExit(this.exitCode);
     }
   }
+}
+
+function nativeSessionId(request: GenericCliStartRequest): string {
+  if (request.instruction.kind === 'new') return request.instruction.nativeSessionId ?? `claude-${request.attempt.id}`;
+  if (request.instruction.kind === 'resume-claude') return request.instruction.nativeSessionId;
+  return `claude-${request.attempt.id}`;
 }
 
 export class FakeRuntimeEnvironment {
@@ -451,6 +543,14 @@ class FakeRuntimeSession implements RuntimeClientSession {
     this.environment.executions.set(task.id, view);
     this.environment.executionKeys.set(request.idempotencyKey, { taskId: task.id, view });
     return view;
+  }
+
+  async resumeClaudeSession(_request: ResumeClaudeSessionRequest): Promise<TaskExecutionView> {
+    throw new RuntimePortError('unsupported-operation', false);
+  }
+
+  async forkClaudeSession(_request: ForkClaudeSessionRequest): Promise<TaskExecutionView> {
+    throw new RuntimePortError('unsupported-operation', false);
   }
 
   async cancelTask(_request: CancelTaskRequest): Promise<TaskExecutionView> {

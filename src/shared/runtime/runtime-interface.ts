@@ -193,8 +193,8 @@ export interface RuntimeInterface {
   createTask(request: CreateTaskRequest): Promise<TaskView>;
   listTasks(): Promise<readonly TaskView[]>;
   startTask(request: StartTaskRequest): Promise<TaskExecutionView>;
-  resumeClaudeSession?(request: ResumeClaudeSessionRequest): Promise<TaskExecutionView>;
-  forkClaudeSession?(request: ForkClaudeSessionRequest): Promise<TaskExecutionView>;
+  resumeClaudeSession(request: ResumeClaudeSessionRequest): Promise<TaskExecutionView>;
+  forkClaudeSession(request: ForkClaudeSessionRequest): Promise<TaskExecutionView>;
   cancelTask(request: CancelTaskRequest): Promise<TaskExecutionView>;
   getTaskExecution(taskId: string): Promise<TaskExecutionView>;
   subscribeTaskOutput(

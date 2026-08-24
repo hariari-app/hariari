@@ -116,6 +116,8 @@ function createRuntime(shutdownResult: Promise<RuntimeShutdownResult>): RuntimeF
     createTask: vi.fn(),
     listTasks: vi.fn(),
     startTask: vi.fn(),
+    resumeClaudeSession: vi.fn(),
+    forkClaudeSession: vi.fn(),
     cancelTask: vi.fn(),
     getTaskExecution: vi.fn(),
     subscribeTaskOutput: vi.fn(),
@@ -130,6 +132,8 @@ type RuntimeFake = RuntimeInterface & {
   createTask: ReturnType<typeof vi.fn<RuntimeInterface['createTask']>>;
   listTasks: ReturnType<typeof vi.fn<RuntimeInterface['listTasks']>>;
   startTask: ReturnType<typeof vi.fn<RuntimeInterface['startTask']>>;
+  resumeClaudeSession: ReturnType<typeof vi.fn<RuntimeInterface['resumeClaudeSession']>>;
+  forkClaudeSession: ReturnType<typeof vi.fn<RuntimeInterface['forkClaudeSession']>>;
   cancelTask: ReturnType<typeof vi.fn<RuntimeInterface['cancelTask']>>;
   getTaskExecution: ReturnType<typeof vi.fn<RuntimeInterface['getTaskExecution']>>;
   subscribeTaskOutput: ReturnType<typeof vi.fn<RuntimeInterface['subscribeTaskOutput']>>;

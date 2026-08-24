@@ -70,6 +70,7 @@ function startRequest(repository: string) {
       processId: 'process-1',
       ptyId: 'pty-1',
     },
+    instruction: { kind: 'new' as const, nativeSessionId: null },
     onOutput: () => undefined,
     onExit: () => undefined,
   };

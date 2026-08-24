@@ -226,6 +226,8 @@ function serialSession(
     createTask: (request, deadlineMs) => enqueue(() => session.createTask(request, deadlineMs)),
     listTasks: (deadlineMs) => enqueue(() => session.listTasks(deadlineMs)),
     startTask: (request, deadlineMs) => enqueue(() => session.startTask(request, deadlineMs)),
+    resumeClaudeSession: (request, deadlineMs) => enqueue(() => session.resumeClaudeSession(request, deadlineMs)),
+    forkClaudeSession: (request, deadlineMs) => enqueue(() => session.forkClaudeSession(request, deadlineMs)),
     cancelTask: (request, deadlineMs) => enqueue(() => session.cancelTask(request, deadlineMs)),
     getTaskExecution: (taskId, deadlineMs) =>
       enqueue(() => session.getTaskExecution(taskId, deadlineMs)),
@@ -288,6 +290,8 @@ function orderedShutdownClient(client: RuntimeClientPort, gate: ShutdownGate): R
           createTask: (request, deadlineMs) => connection.session.createTask(request, deadlineMs),
           listTasks: (deadlineMs) => connection.session.listTasks(deadlineMs),
           startTask: (request, deadlineMs) => connection.session.startTask(request, deadlineMs),
+          resumeClaudeSession: (request, deadlineMs) => connection.session.resumeClaudeSession(request, deadlineMs),
+          forkClaudeSession: (request, deadlineMs) => connection.session.forkClaudeSession(request, deadlineMs),
           cancelTask: (request, deadlineMs) => connection.session.cancelTask(request, deadlineMs),
           getTaskExecution: (taskId, deadlineMs) =>
             connection.session.getTaskExecution(taskId, deadlineMs),
@@ -316,6 +320,8 @@ function gatedShutdownSession(
     createTask: (request, deadlineMs) => session.createTask(request, deadlineMs),
     listTasks: (deadlineMs) => session.listTasks(deadlineMs),
     startTask: (request, deadlineMs) => session.startTask(request, deadlineMs),
+    resumeClaudeSession: (request, deadlineMs) => session.resumeClaudeSession(request, deadlineMs),
+    forkClaudeSession: (request, deadlineMs) => session.forkClaudeSession(request, deadlineMs),
     cancelTask: (request, deadlineMs) => session.cancelTask(request, deadlineMs),
     getTaskExecution: (taskId, deadlineMs) => session.getTaskExecution(taskId, deadlineMs),
     subscribeTaskOutput: (taskId, listener, deadlineMs) =>

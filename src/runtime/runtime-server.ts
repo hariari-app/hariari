@@ -31,6 +31,7 @@ import {
   type RuntimeResponseFrame,
 } from './protocol';
 import {
+  RuntimeProtocolValidationError,
   parseAuthenticateFrame,
   parseRequestFrame,
   parseCreateTaskRequest,
@@ -45,6 +46,8 @@ import {
   LocalGenericCliExecutionAdapter,
   type GenericCliExecutionAdapter,
 } from './generic-cli-execution-adapter';
+import { ClaudeCodeExecutionAdapter } from './claude-code-execution-adapter';
+import { ProviderExecutionAdapterRouter } from './provider-execution-adapter-router';
 import { TaskExecutionError, TaskExecutionModule } from './task-execution-module';
 import { TaskModule, TaskStorageError } from './task-module';
 
@@ -96,9 +99,15 @@ export class RuntimeServer {
     this.executions = new TaskExecutionModule(
       this.tasks,
       options.executionAdapter ??
-        new LocalGenericCliExecutionAdapter({
-          runtimeDirectory: options.endpoint.runtimeDirectory,
-          nodeModulesRoot: options.nodeModulesRoot,
+        new ProviderExecutionAdapterRouter({
+          shell: new LocalGenericCliExecutionAdapter({
+            runtimeDirectory: options.endpoint.runtimeDirectory,
+            nodeModulesRoot: options.nodeModulesRoot,
+          }),
+          claude: new ClaudeCodeExecutionAdapter({
+            runtimeDirectory: options.endpoint.runtimeDirectory,
+            nodeModulesRoot: options.nodeModulesRoot,
+          }),
         }),
       options.randomId,
     );
@@ -518,6 +527,9 @@ function executionFailure(
   protocolVersion: number,
   error: unknown,
 ): RuntimeResponseFrame {
+  if (error instanceof RuntimeProtocolValidationError) {
+    return failure(request, protocolVersion, 'invalid-request', false);
+  }
   if (error instanceof TaskStorageError) {
     return failure(request, protocolVersion, error.code, error.code === 'internal');
   }

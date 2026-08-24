@@ -11,6 +11,27 @@ import type {
   TaskExecutionView,
   TaskView,
 } from '../shared/runtime/runtime-interface';
+import {
+  ClaudeSessionLifecycle,
+  ClaudeSessionLifecycleError,
+  type AttemptForkedEvent,
+  type ClaudeForkReservation,
+  type ClaudeForkRepair,
+} from './claude-session-lifecycle';
+import {
+  parseTaskEvent,
+  type AttemptCreatedEvent,
+  type AttemptStartedEvent,
+  type CancellationRequestedEvent,
+  type ContextAllocatedEvent,
+  type RunCreatedEvent,
+  type StoredAttempt,
+  type StoredContext,
+  type StoredProviderSession,
+  type StoredRun,
+  type TaskCreatedEvent,
+  type TaskEvent,
+} from './task-events';
 
 const EVENT_FILE = 'events.log';
 const PROJECTION_FILE = 'projection.json';
@@ -31,120 +52,6 @@ export class TaskStorageError extends Error {
   }
 }
 
-interface TaskCreatedEvent {
-  readonly type: 'TaskCreated';
-  readonly version: 1;
-  readonly task: TaskView;
-  readonly idempotencyKey: string;
-  readonly fingerprint: string;
-}
-
-interface RunCreatedEvent {
-  readonly type: 'RunCreated';
-  readonly version: 1;
-  readonly taskId: string;
-  readonly idempotencyKey: string;
-  readonly fingerprint: string;
-  readonly run: StoredRun;
-}
-
-interface AttemptCreatedEvent {
-  readonly type: 'AttemptCreated';
-  readonly version: 1;
-  readonly taskId: string;
-  readonly attempt: StoredAttempt;
-}
-
-interface ContextAllocatedEvent {
-  readonly type: 'ContextAllocated';
-  readonly version: 1;
-  readonly taskId: string;
-  readonly context: StoredContext;
-  readonly providerSession: StoredProviderSession | null;
-}
-
-interface AttemptStartedEvent {
-  readonly type: 'AttemptStarted';
-  readonly version: 1;
-  readonly taskId: string;
-}
-
-interface AttemptCompletedEvent {
-  readonly type: 'AttemptCompleted';
-  readonly version: 1;
-  readonly taskId: string;
-  readonly exitCode: number;
-}
-
-interface AttemptFailedEvent {
-  readonly type: 'AttemptFailed';
-  readonly version: 1;
-  readonly taskId: string;
-}
-
-interface CancellationRequestedEvent {
-  readonly type: 'CancellationRequested';
-  readonly version: 1;
-  readonly taskId: string;
-  readonly idempotencyKey: string;
-  readonly fingerprint: string;
-}
-
-interface AttemptCancelledEvent {
-  readonly type: 'AttemptCancelled';
-  readonly version: 1;
-  readonly taskId: string;
-}
-interface ClaudeResumeRejectedEvent { readonly type: 'ClaudeResumeRejected'; readonly version: 1; readonly taskId: string; readonly providerSessionId: string; readonly idempotencyKey: string; readonly fingerprint: string; readonly code: 'not-found' | 'unsupported-operation'; }
-interface ClaudeForkRequestedEvent { readonly type: 'ClaudeForkRequested'; readonly version: 1; readonly taskId: string; readonly providerSessionId: string; readonly idempotencyKey: string; readonly fingerprint: string; }
-interface AttemptForkedEvent { readonly type: 'AttemptForked'; readonly version: 1; readonly taskId: string; readonly attempt: StoredAttempt; readonly parentAttemptId: string; readonly parentSessionId: string; }
-
-type TaskEvent =
-  | TaskCreatedEvent
-  | RunCreatedEvent
-  | AttemptCreatedEvent
-  | ContextAllocatedEvent
-  | AttemptStartedEvent
-  | AttemptCompletedEvent
-  | AttemptFailedEvent
-  | CancellationRequestedEvent
-  | AttemptCancelledEvent
-  | ClaudeResumeRejectedEvent
-  | ClaudeForkRequestedEvent
-  | AttemptForkedEvent;
-
-interface StoredRun {
-  readonly id: string;
-  readonly number: number;
-}
-
-interface StoredAttempt {
-  readonly id: string;
-  readonly number: number;
-  readonly state: TaskExecutionState;
-  readonly exitCode?: number;
-}
-
-interface StoredContext {
-  readonly id: string;
-  readonly worktreeId: string;
-  readonly branchName: string;
-  readonly baseCommit: string;
-  readonly processId: string;
-  readonly ptyId: string;
-}
-
-interface StoredProviderSession {
-  readonly id: string;
-  readonly provider: 'claude';
-  readonly nativeSessionId: string;
-  readonly taskId: string;
-  readonly attemptId: string;
-  readonly executionContextId: string;
-  readonly capabilities: { readonly resume: boolean; readonly fork: boolean };
-  readonly parentId: string | null;
-}
-
 interface StoredExecution {
   readonly taskId: string;
   readonly idempotencyKey: string;
@@ -161,13 +68,9 @@ interface StoredExecution {
 export interface ExecutionReservation {
   readonly execution: TaskExecutionView;
   readonly created: boolean;
+  readonly claudeForkRepair?: ClaudeForkRepair;
 }
-export interface ClaudeForkReservation {
-  readonly execution: TaskExecutionView;
-  readonly created: boolean;
-  readonly parentContext: NonNullable<TaskExecutionView['context']>;
-  readonly parentSession: NonNullable<TaskExecutionView['providerSession']>;
-}
+export type { ClaudeForkReservation } from './claude-session-lifecycle';
 
 /** The sole serialized writer for durable Task and execution lifecycle evidence. */
 export class TaskModule {
@@ -180,8 +83,7 @@ export class TaskModule {
   private readonly fingerprints = new Map<string, string>();
   private readonly executions = new Map<string, StoredExecution>();
   private readonly executionKeys = new Map<string, StoredExecution>();
-  private readonly resumeRejections = new Map<string, { readonly fingerprint: string; readonly code: 'not-found' | 'unsupported-operation' }>();
-  private readonly forks = new Map<string, { readonly fingerprint: string; readonly taskId: string; readonly childAttemptId: string | null }>();
+  private readonly claudeLifecycle: ClaudeSessionLifecycle;
   private mutation: Promise<void> = Promise.resolve();
   private poisoned = false;
 
@@ -194,6 +96,11 @@ export class TaskModule {
     this.directory = path.join(runtimeDirectory, 'tasks');
     this.eventPath = path.join(this.directory, EVENT_FILE);
     this.projectionPath = path.join(this.directory, PROJECTION_FILE);
+    this.claudeLifecycle = new ClaudeSessionLifecycle({
+      view: (taskId) => this.lifecycleView(taskId),
+      append: (event) => this.appendVisible(event),
+      randomId: () => this.randomId(),
+    });
   }
 
   async start(): Promise<void> {
@@ -260,7 +167,10 @@ export class TaskModule {
           return { execution: this.viewFor(task, this.executionFor(task.id)), created: true };
         }
         if (keyed.attempt.state === 'starting' && !keyed.context) {
-          return { execution: this.viewFor(task, keyed), created: true };
+          const claudeForkRepair = keyed.attempt.number > 1
+            ? this.claudeLifecycle.repairFork(keyed.attempt.id)
+            : undefined;
+          return { execution: this.viewFor(task, keyed), created: true, claudeForkRepair };
         }
         return { execution: this.viewFor(task, keyed), created: false };
       }
@@ -285,49 +195,11 @@ export class TaskModule {
   }
 
   resumeClaude(request: ResumeClaudeSessionRequest): Promise<TaskExecutionView> {
-    return this.enqueue(async () => {
-      this.throwIfPoisoned();
-      const fingerprint = JSON.stringify([request.taskId, request.providerSessionId, request.repository, request.worktreeId, request.branchName]);
-      const prior = this.resumeRejections.get(request.idempotencyKey);
-      if (prior) { if (prior.fingerprint !== fingerprint) throw new TaskStorageError('idempotency-conflict'); throw new TaskStorageError(prior.code); }
-      const task = this.taskById(request.taskId); const execution = this.executionFor(task.id); const session = execution.providerSession;
-      const code = !session || session.id !== request.providerSessionId || task.provider !== 'claude' || task.repository !== request.repository || execution.context?.worktreeId !== request.worktreeId || execution.context.branchName !== request.branchName
-        ? 'not-found' as const : !session.capabilities.resume ? 'unsupported-operation' as const : null;
-      if (code) { await this.appendVisible({ type: 'ClaudeResumeRejected', version: 1, taskId: task.id, providerSessionId: request.providerSessionId, idempotencyKey: request.idempotencyKey, fingerprint, code }); throw new TaskStorageError(code); }
-      return this.viewFor(task, execution);
-    });
+    return this.enqueue(() => this.runClaude(() => this.claudeLifecycle.resume(request)));
   }
 
   reserveClaudeFork(request: ForkClaudeSessionRequest): Promise<ClaudeForkReservation> {
-    return this.enqueue(async () => {
-      this.throwIfPoisoned();
-      const fingerprint = JSON.stringify([request.taskId, request.providerSessionId]);
-      const prior = this.forks.get(request.idempotencyKey);
-      if (prior) {
-        if (prior.fingerprint !== fingerprint) throw new TaskStorageError('idempotency-conflict');
-        const task = this.taskById(prior.taskId); const execution = this.executionFor(task.id);
-        if (!prior.childAttemptId) {
-          const session = execution.providerSession;
-          if (!session || !execution.attempt || !execution.context || session.id !== request.providerSessionId) throw new TaskStorageError('task-not-ready');
-          const parentContext = { ...execution.context };
-          const parentSession = { ...session, capabilities: { ...session.capabilities } };
-          const attempt = { id: this.randomId(), number: execution.attempt.number + 1, state: 'starting' as const };
-          await this.appendVisible({ type: 'AttemptForked', version: 1, taskId: task.id, attempt, parentAttemptId: execution.attempt.id, parentSessionId: session.id });
-          return { execution: this.viewFor(task, this.executionFor(task.id)), created: true, parentContext, parentSession };
-        }
-        if (execution.attempt?.id !== prior.childAttemptId || !execution.context || !execution.providerSession) throw new TaskStorageError('task-not-ready');
-        return { execution: this.viewFor(task, execution), created: false, parentContext: { ...execution.context }, parentSession: { ...execution.providerSession, capabilities: { ...execution.providerSession.capabilities } } };
-      }
-      const task = this.taskById(request.taskId); const execution = this.executionFor(task.id); const session = execution.providerSession;
-      if (!session || !execution.attempt || !execution.context || session.id !== request.providerSessionId || task.provider !== 'claude') throw new TaskStorageError('not-found');
-      if (isTerminal(execution.attempt.state)) throw new TaskStorageError('task-not-ready');
-      if (!session.capabilities.fork) throw new TaskStorageError('unsupported-operation');
-      const parentContext = { ...execution.context }; const parentSession = { ...session, capabilities: { ...session.capabilities } };
-      await this.appendVisible({ type: 'ClaudeForkRequested', version: 1, taskId: task.id, providerSessionId: session.id, idempotencyKey: request.idempotencyKey, fingerprint });
-      const attempt = { id: this.randomId(), number: execution.attempt.number + 1, state: 'starting' as const };
-      await this.appendVisible({ type: 'AttemptForked', version: 1, taskId: task.id, attempt, parentAttemptId: execution.attempt.id, parentSessionId: session.id });
-      return { execution: this.viewFor(task, this.executionFor(task.id)), created: true, parentContext, parentSession };
-    });
+    return this.enqueue(() => this.runClaude(() => this.claudeLifecycle.fork(request)));
   }
 
   markStarted(taskId: string): Promise<TaskExecutionView> {
@@ -457,7 +329,7 @@ export class TaskModule {
       if (!createHash('sha256').update(payload).digest().equals(checksum)) {
         throw new TaskStorageError('internal');
       }
-      this.apply(parseEvent(payload));
+      this.apply(parseTaskEvent(payload));
       offset += EVENT_HEADER_BYTES + length;
     }
   }
@@ -491,9 +363,14 @@ export class TaskModule {
       case 'AttemptCancelled':
         this.applyTerminal(event.taskId, 'cancelled');
         return;
-      case 'ClaudeResumeRejected': this.applyResumeRejected(event); return;
-      case 'ClaudeForkRequested': this.applyForkRequested(event); return;
-      case 'AttemptForked': this.applyAttemptForked(event); return;
+      case 'ClaudeResumeRejected':
+      case 'ClaudeForkRequested':
+        this.claudeLifecycle.replay(event);
+        return;
+      case 'AttemptForked':
+        this.claudeLifecycle.replay(event);
+        this.applyAttemptForked(event);
+        return;
     }
   }
 
@@ -593,14 +470,9 @@ export class TaskModule {
       ...(exitCode === undefined ? {} : { exitCode }),
     });
   }
-  private applyResumeRejected(event: ClaudeResumeRejectedEvent): void { const previous = this.resumeRejections.get(event.idempotencyKey); if (previous && (previous.fingerprint !== event.fingerprint || previous.code !== event.code)) throw new TaskStorageError('internal'); this.resumeRejections.set(event.idempotencyKey, { fingerprint: event.fingerprint, code: event.code }); }
-  private applyForkRequested(event: ClaudeForkRequestedEvent): void { const prior = this.forks.get(event.idempotencyKey); if (prior && (prior.fingerprint !== event.fingerprint || prior.taskId !== event.taskId)) throw new TaskStorageError('internal'); this.forks.set(event.idempotencyKey, { fingerprint: event.fingerprint, taskId: event.taskId, childAttemptId: null }); }
   private applyAttemptForked(event: AttemptForkedEvent): void {
     const execution = this.executionFor(event.taskId);
     if (!execution.attempt || !execution.context || !execution.providerSession || execution.attempt.id !== event.parentAttemptId || execution.providerSession.id !== event.parentSessionId || execution.attempt.number >= event.attempt.number) throw new TaskStorageError('internal');
-    const fork = [...this.forks.entries()].find(([, value]) => value.taskId === event.taskId && value.childAttemptId === null);
-    if (!fork) throw new TaskStorageError('internal');
-    this.forks.set(fork[0], { ...fork[1], childAttemptId: event.attempt.id });
     this.replaceExecution(execution, { ...execution, attempt: event.attempt, attempts: [...execution.attempts, event.attempt], context: null, providerSession: null, cancellation: null });
   }
 
@@ -650,6 +522,22 @@ export class TaskModule {
       providerSession: execution?.providerSession ? { ...execution.providerSession, capabilities: { ...execution.providerSession.capabilities } } : null,
       providerSessions: execution?.providerSessions.map((session) => ({ ...session, capabilities: { ...session.capabilities } })) ?? [],
     };
+  }
+
+  private lifecycleView(taskId: string): TaskExecutionView | null {
+    const task = this.taskIds.get(taskId);
+    if (!task) return null;
+    return this.viewFor(task, this.executions.get(taskId) ?? null);
+  }
+
+  private async runClaude<T>(operation: () => Promise<T>): Promise<T> {
+    this.throwIfPoisoned();
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof ClaudeSessionLifecycleError) throw new TaskStorageError(error.code);
+      throw error;
+    }
   }
 
   private async append(event: TaskEvent): Promise<void> {
@@ -734,135 +622,6 @@ function canonicalExecutionFingerprint(taskId: string): string {
 
 function isTerminal(state: TaskExecutionState | undefined): boolean {
   return state === 'completed' || state === 'failed' || state === 'cancelled';
-}
-
-function parseEvent(payload: Buffer): TaskEvent {
-  try {
-    const value = object(JSON.parse(payload.toString('utf8')));
-    const type = string(value.type);
-    if (value.version !== 1) throw new Error('invalid event');
-    return type === 'TaskCreated' ? parseTaskCreatedEvent(value) : parseExecutionEvent(value, type);
-  } catch {
-    throw new TaskStorageError('internal');
-  }
-}
-
-function parseTaskCreatedEvent(value: Record<string, unknown>): TaskCreatedEvent {
-  return {
-    type: 'TaskCreated',
-    version: 1,
-    task: parseTask(object(value.task)),
-    idempotencyKey: string(value.idempotencyKey),
-    fingerprint: string(value.fingerprint),
-  };
-}
-
-function parseExecutionEvent(value: Record<string, unknown>, type: string): TaskEvent {
-  const taskId = string(value.taskId);
-  if (type === 'RunCreated') {
-    return {
-      type,
-      version: 1,
-      taskId,
-      idempotencyKey: string(value.idempotencyKey),
-      fingerprint: string(value.fingerprint),
-      run: parseRun(object(value.run)),
-    };
-  }
-  if (type === 'AttemptCreated') return { type, version: 1, taskId, attempt: parseAttempt(object(value.attempt)) };
-  if (type === 'AttemptForked') return { type, version: 1, taskId, attempt: parseAttempt(object(value.attempt)), parentAttemptId: string(value.parentAttemptId), parentSessionId: string(value.parentSessionId) };
-  if (type === 'ContextAllocated') return { type, version: 1, taskId, context: parseContext(object(value.context)), providerSession: value.providerSession === undefined || value.providerSession === null ? null : parseProviderSession(object(value.providerSession)) };
-  if (type === 'AttemptStarted' || type === 'AttemptFailed' || type === 'AttemptCancelled') {
-    return { type, version: 1, taskId };
-  }
-  if (type === 'AttemptCompleted') return { type, version: 1, taskId, exitCode: integer(value.exitCode) };
-  if (type === 'ClaudeResumeRejected') { const code = string(value.code); if (code !== 'not-found' && code !== 'unsupported-operation') throw new Error('invalid event'); return { type, version: 1, taskId, providerSessionId: string(value.providerSessionId), idempotencyKey: string(value.idempotencyKey), fingerprint: string(value.fingerprint), code }; }
-  if (type === 'ClaudeForkRequested') return { type, version: 1, taskId, providerSessionId: string(value.providerSessionId), idempotencyKey: string(value.idempotencyKey), fingerprint: string(value.fingerprint) };
-  if (type === 'CancellationRequested') {
-    return {
-      type,
-      version: 1,
-      taskId,
-      idempotencyKey: string(value.idempotencyKey),
-      fingerprint: string(value.fingerprint),
-    };
-  }
-  throw new Error('invalid event');
-}
-
-function parseTask(value: Record<string, unknown>): TaskView {
-  return {
-    id: string(value.id),
-    objective: string(value.objective),
-    project: string(value.project),
-    repository: string(value.repository),
-    baseRef: string(value.baseRef),
-    provider: string(value.provider) as TaskView['provider'],
-    createdAt: string(value.createdAt),
-  };
-}
-
-function parseRun(value: Record<string, unknown>): StoredRun {
-  return { id: string(value.id), number: positiveInteger(value.number) };
-}
-
-function parseAttempt(value: Record<string, unknown>): StoredAttempt {
-  const state = string(value.state) as TaskExecutionState;
-  if (!['starting', 'running', 'completed', 'failed', 'cancelling', 'cancelled'].includes(state)) {
-    throw new Error('invalid attempt');
-  }
-  const exitCode = value.exitCode === undefined ? undefined : integer(value.exitCode);
-  return {
-    id: string(value.id),
-    number: positiveInteger(value.number),
-    state,
-    ...(exitCode === undefined ? {} : { exitCode }),
-  };
-}
-
-function parseContext(value: Record<string, unknown>): StoredContext {
-  return {
-    id: string(value.id),
-    worktreeId: string(value.worktreeId),
-    branchName: string(value.branchName),
-    baseCommit: string(value.baseCommit),
-    processId: string(value.processId),
-    ptyId: string(value.ptyId),
-  };
-}
-
-function parseProviderSession(value: Record<string, unknown>): StoredProviderSession {
-  const capabilities = object(value.capabilities);
-  if (value.provider !== 'claude' || typeof capabilities.resume !== 'boolean' || typeof capabilities.fork !== 'boolean') {
-    throw new Error('invalid provider session');
-  }
-  const parentId = value.parentId;
-  if (parentId !== null && typeof parentId !== 'string') throw new Error('invalid provider session');
-  return {
-    id: string(value.id), provider: 'claude', nativeSessionId: string(value.nativeSessionId),
-    taskId: string(value.taskId), attemptId: string(value.attemptId), executionContextId: string(value.executionContextId),
-    capabilities: { resume: capabilities.resume, fork: capabilities.fork }, parentId,
-  };
-}
-
-function object(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid object');
-  return value as Record<string, unknown>;
-}
-
-function string(value: unknown): string {
-  if (typeof value !== 'string' || value.length === 0 || value.length > 512) throw new Error('invalid string');
-  return value;
-}
-
-function positiveInteger(value: unknown): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 1) throw new Error('invalid integer');
-  return value as number;
-}
-
-function integer(value: unknown): number {
-  if (!Number.isSafeInteger(value)) throw new Error('invalid integer');
-  return value as number;
 }
 
 async function ensurePrivateDirectory(directory: string): Promise<void> {
