@@ -8,7 +8,10 @@ import type {
   TaskProvider,
   TaskView,
 } from '../shared/runtime/runtime-interface';
-import { observeLocalRecovery } from './local-recovery-observer';
+import {
+  observeLocalRecovery,
+  observePendingLocalRecovery,
+} from './local-recovery-observer';
 import {
   observeLostRecoveryOwnership,
   recordRecoveryOwnership,
@@ -29,7 +32,7 @@ export class GenericCliExecutionError extends Error {
 export interface ExecutionAdapter {
   capabilities(task: TaskView): Promise<ProviderSessionCapabilities>;
   observe(binding: PrivateExecutionBinding): Promise<ExecutionObservation>;
-  observeRecovery(binding: PrivateExecutionBinding): Promise<ExecutionRecoveryObservation>;
+  observeRecovery(binding: PrivateRecoveryBinding): Promise<ExecutionRecoveryObservation>;
   launch(plan: ExecutionLaunchPlan): Promise<ActiveExecution>;
 }
 
@@ -85,6 +88,22 @@ export interface PrivateExecutionBinding {
   readonly attempt: { readonly id: string; readonly number: number };
   readonly context: ActiveExecution['context'];
   readonly providerSession: PrivateProviderSession | null;
+}
+
+export interface PrivateRecoveryBinding {
+  readonly task: TaskView;
+  readonly run: { readonly id: string; readonly number: number };
+  readonly attempt: { readonly id: string; readonly number: number };
+  readonly context: ActiveExecution['context'] | null;
+  readonly providerSession: PrivateProviderSession | null;
+  readonly runtimeWorktrees: readonly {
+    readonly taskId: string;
+    readonly worktreeId: string;
+  }[];
+}
+
+export interface PrivateAllocatedRecoveryBinding extends PrivateExecutionBinding {
+  readonly runtimeWorktrees: PrivateRecoveryBinding['runtimeWorktrees'];
 }
 
 export type ExecutionLaunchPlan =
@@ -181,10 +200,12 @@ export class LocalGenericCliExecutionAdapter implements ExecutionAdapter {
     return active.isRunning() ? 'live' : 'lost';
   }
 
-  async observeRecovery(binding: PrivateExecutionBinding): Promise<ExecutionRecoveryObservation> {
+  async observeRecovery(binding: PrivateRecoveryBinding): Promise<ExecutionRecoveryObservation> {
+    if (!binding.context) return observePendingLocalRecovery(binding, this.worktreeRoot);
+    const allocated: PrivateAllocatedRecoveryBinding = { ...binding, context: binding.context };
     return observeLocalRecovery(
-      binding,
-      recoveryObservation(binding, this.executions.get(binding.context.id) ?? null),
+      allocated,
+      recoveryObservation(allocated, this.executions.get(allocated.context.id) ?? null),
       this.worktreeRoot,
     );
   }
@@ -240,17 +261,33 @@ export type GenericCliStartRequest = ExecutionStartRequest;
 export type GenericCliExecution = ActiveExecution;
 
 export function recoveryObservation(
-  binding: PrivateExecutionBinding,
+  binding: PrivateRecoveryBinding,
   active: ActiveExecution | null,
 ): ExecutionRecoveryObservation {
-  if (!active) return unknownRecoveryObservation(binding);
+  if (!binding.context) return unallocatedRecoveryObservation(binding);
+  const allocated: PrivateExecutionBinding = { ...binding, context: binding.context };
+  if (!active) return unknownRecoveryObservation(allocated);
   const lifecycle = active.isRunning() ? 'active' : 'inactive';
   return { resources: [
-    providerObservation(binding, active, lifecycle),
-    contextObservation('process', binding.context.processId, active.context.processId, lifecycle),
-    contextObservation('pty', binding.context.ptyId, active.context.ptyId, lifecycle),
-    contextObservation('worktree', binding.context.worktreeId, active.context.worktreeId, 'active'),
-    branchObservation(binding, active),
+    providerObservation(allocated, active, lifecycle),
+    contextObservation('process', allocated.context.processId, active.context.processId, lifecycle),
+    contextObservation('pty', allocated.context.ptyId, active.context.ptyId, lifecycle),
+    contextObservation('worktree', allocated.context.worktreeId, active.context.worktreeId, 'active'),
+    branchObservation(allocated, active),
+  ] };
+}
+
+function unallocatedRecoveryObservation(
+  binding: PrivateRecoveryBinding,
+): ExecutionRecoveryObservation {
+  return { resources: [
+    binding.task.provider === 'shell'
+      ? { ...knownResource('provider-session', false, 'absent'), copies: 0 }
+      : unknownResource('provider-session', true),
+    unknownResource('process', false),
+    unknownResource('pty', false),
+    unknownResource('worktree', false),
+    unknownResource('branch', false),
   ] };
 }
 

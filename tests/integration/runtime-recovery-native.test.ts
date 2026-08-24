@@ -7,10 +7,14 @@ import {
   LocalGenericCliExecutionAdapter,
   loadNodePty,
   runtimeEnvironment,
+  type ExecutionAdapter,
+  type PtyPort,
+  type PtyProcess,
 } from '../../src/runtime/generic-cli-execution-adapter';
 import {
   createSubject,
   createTestRepository,
+  deferred,
   registerRuntimeTaskTestCleanup,
   shellTask,
 } from './runtime-task-test-harness';
@@ -121,6 +125,81 @@ it('chooses adoption for a verified orphan worktree without mutating it', async 
   await runtime.disconnect();
 });
 
+it('classifies two valid orphan worktree and branch pairs as duplicated', async () => {
+  const repository = createTestRepository();
+  const subject = await createSubject(
+    (runtimeDirectory) => new LocalGenericCliExecutionAdapter({ runtimeDirectory }),
+  );
+  const runtime = await subject.connect();
+  const task = await runtime.createTask(shellTask('native-duplicates-create', repository.path));
+  await runtime.startTask({ taskId: task.id, idempotencyKey: 'native-duplicates-start' });
+  const worktreeRoot = path.join(subject.runtimeDirectory, 'task-worktrees');
+  const candidates = ['duplicate-one', 'duplicate-two'].map((name) => ({
+    branch: `hariari/task-${task.id}/${name}`,
+    worktree: path.join(worktreeRoot, name),
+  }));
+  for (const candidate of candidates) {
+    execFileSync(
+      'git',
+      ['worktree', 'add', '-b', candidate.branch, candidate.worktree, repository.baseCommit],
+      { cwd: repository.path },
+    );
+  }
+
+  const recovery = await runtime.reconcileTask({
+    taskId: task.id, idempotencyKey: 'native-duplicates-reconcile',
+  });
+  const decision = await runtime.recoverTask({
+    taskId: task.id, recoveryId: recovery.id, idempotencyKey: 'native-duplicates-recover',
+  });
+
+  expect(recovery.resources.filter((resource) => resource.kind === 'worktree')).toEqual([
+    { kind: 'worktree', classification: 'healthy' },
+    { kind: 'worktree', classification: 'duplicated' },
+  ]);
+  expect(recovery.resources.filter((resource) => resource.kind === 'branch')).toEqual([
+    { kind: 'branch', classification: 'healthy' },
+    { kind: 'branch', classification: 'duplicated' },
+  ]);
+  expect(recovery).toMatchObject({
+    status: 'attention', decision: 'fail', attention: { reason: 'ambiguous-recovery' },
+  });
+  expect(decision).toMatchObject({ status: 'attention', decision: 'fail' });
+  for (const candidate of candidates) expect(fs.statSync(candidate.worktree).isDirectory()).toBe(true);
+  await runtime.disconnect();
+});
+
+it('keeps two concurrently healthy Tasks isolated in the shared Runtime worktree root', async () => {
+  const repository = createTestRepository();
+  const pty = holdingPtyPort();
+  const subject = await createSubject(
+    (runtimeDirectory) => new LocalGenericCliExecutionAdapter({ runtimeDirectory, pty }),
+  );
+  const runtime = await subject.connect();
+  const first = await runtime.createTask(shellTask('shared-root-first-create', repository.path));
+  const second = await runtime.createTask(shellTask('shared-root-second-create', repository.path));
+  await runtime.startTask({ taskId: first.id, idempotencyKey: 'shared-root-first-start' });
+  await runtime.startTask({ taskId: second.id, idempotencyKey: 'shared-root-second-start' });
+
+  const firstRecovery = await runtime.reconcileTask({
+    taskId: first.id, idempotencyKey: 'shared-root-first-reconcile',
+  });
+  const secondRecovery = await runtime.reconcileTask({
+    taskId: second.id, idempotencyKey: 'shared-root-second-reconcile',
+  });
+
+  for (const recovery of [firstRecovery, secondRecovery]) {
+    expect(recovery).toMatchObject({ status: 'ready', decision: 'resume', attention: null });
+    expect(recovery.resources.filter((resource) => resource.kind === 'worktree')).toEqual([
+      { kind: 'worktree', classification: 'healthy' },
+    ]);
+    expect(recovery.resources.filter((resource) => resource.kind === 'branch')).toEqual([
+      { kind: 'branch', classification: 'healthy' },
+    ]);
+  }
+  await runtime.disconnect();
+});
+
 it.skipIf(process.platform !== 'linux')(
   'surfaces live orphan process and PTY markers without attaching or exposing identifiers',
   async () => {
@@ -192,6 +271,59 @@ it.skipIf(process.platform !== 'linux')(
   },
 );
 
+it.skipIf(process.platform !== 'linux')(
+  'recovers a spawn-marker-before-context crash through a restarted Runtime',
+  async () => {
+    const repository = createTestRepository();
+    const crashBoundary = deferred();
+    const nativePtys = longLivedNativePtyPort();
+    const subject = await createSubject((runtimeDirectory) => crashAfterOwnershipMarker(
+      new LocalGenericCliExecutionAdapter({ runtimeDirectory, pty: nativePtys.port }),
+      crashBoundary,
+    ));
+    const runtime = await subject.connect();
+    const task = await runtime.createTask(shellTask('pre-context-crash-create', repository.path));
+    const interruptedStart = runtime.startTask({ taskId: task.id,
+      idempotencyKey: 'pre-context-crash-start' }).catch((error: unknown) => error);
+    await crashBoundary.promise;
+    expect(fs.readdirSync(taskMarkerDirectory(subject.runtimeDirectory, task.id))).not.toHaveLength(0);
+
+    await subject.restartWith(new LocalGenericCliExecutionAdapter({
+      runtimeDirectory: subject.runtimeDirectory,
+    }));
+    await interruptedStart;
+    const restarted = await subject.connect();
+    try {
+      await expect(restarted.getTaskExecution(task.id)).resolves.toMatchObject({
+        task: { executionState: 'starting' }, context: null,
+      });
+
+      const recovery = await restarted.reconcileTask({
+        taskId: task.id, idempotencyKey: 'pre-context-crash-reconcile',
+      });
+      const decision = await restarted.recoverTask({
+        taskId: task.id, recoveryId: recovery.id, idempotencyKey: 'pre-context-crash-recover',
+      });
+
+      expect(recovery.resources).toEqual(expect.arrayContaining([
+        { kind: 'process', classification: 'orphaned' },
+        { kind: 'pty', classification: 'orphaned' },
+        { kind: 'worktree', classification: 'orphaned' },
+        { kind: 'branch', classification: 'orphaned' },
+      ]));
+      expect(recovery).toMatchObject({
+        status: 'attention', decision: 'fail', attention: { reason: 'ambiguous-recovery' },
+      });
+      expect(decision).toMatchObject({ status: 'attention', decision: 'fail' });
+      expect(JSON.stringify(recovery)).not.toMatch(/pid|processId|ptyId|contextId|worktreeId|branchName/);
+      expect(nativePtys.isAlive()).toBe(true);
+    } finally {
+      await nativePtys.killAll();
+      await restarted.disconnect();
+    }
+  },
+);
+
 it('fails closed on an incomplete private ownership marker at a crash boundary', async () => {
   const repository = createTestRepository();
   const subject = await createSubject(
@@ -221,6 +353,43 @@ it('fails closed on an incomplete private ownership marker at a crash boundary',
   });
   await expect(runtime.getTaskExecution(task.id)).resolves.toEqual(before);
   expect(fs.readFileSync(marker, 'utf8')).toBe('{"version":1');
+  await runtime.disconnect();
+});
+
+it('fails closed when another Task identity is substituted into an ownership marker', async () => {
+  const repository = createTestRepository();
+  const subject = await createSubject(
+    (runtimeDirectory) => new LocalGenericCliExecutionAdapter({ runtimeDirectory }),
+  );
+  const runtime = await subject.connect();
+  const task = await runtime.createTask(shellTask('marker-owner-create', repository.path));
+  const other = await runtime.createTask(shellTask('marker-owner-other', repository.path));
+  await runtime.startTask({ taskId: task.id, idempotencyKey: 'marker-owner-start' });
+  await waitForTerminalExecution(runtime, task.id);
+  const markerPath = expectedMarkerPath(subject.runtimeDirectory, task.id);
+  const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8')) as Record<string, unknown>;
+  fs.writeFileSync(markerPath, JSON.stringify({ ...marker, taskId: other.id }));
+  const before = await runtime.getTaskExecution(task.id);
+
+  const recovery = await runtime.reconcileTask({
+    taskId: task.id, idempotencyKey: 'marker-owner-reconcile',
+  });
+  const decision = await runtime.recoverTask({
+    taskId: task.id, recoveryId: recovery.id, idempotencyKey: 'marker-owner-recover',
+  });
+
+  expect(recovery.resources).toEqual(expect.arrayContaining([
+    { kind: 'process', classification: 'unknown' },
+    { kind: 'pty', classification: 'unknown' },
+  ]));
+  expect(recovery).toMatchObject({
+    status: 'attention', decision: 'fail', attention: { reason: 'ambiguous-recovery' },
+  });
+  expect(decision).toMatchObject({
+    status: 'attention', decision: 'fail', attention: { reason: 'ambiguous-recovery' },
+  });
+  await expect(runtime.getTaskExecution(task.id)).resolves.toEqual(before);
+  expect(JSON.parse(fs.readFileSync(markerPath, 'utf8'))).toMatchObject({ taskId: other.id });
   await runtime.disconnect();
 });
 
@@ -257,7 +426,9 @@ function spawnOwnedOrphanPty(runtimeDirectory: string, taskId: string, cwd: stri
   const markerDirectory = taskMarkerDirectory(runtimeDirectory, taskId);
   fs.mkdirSync(markerDirectory, { recursive: true, mode: 0o700 });
   fs.writeFileSync(path.join(markerDirectory, 'external.json'), JSON.stringify({
-    version: 1, taskId, contextId: 'external-context', processId: 'external-process',
+    version: 2, taskId, contextId: 'external-context', worktreeId: 'external-worktree',
+    branchName: `hariari/task-${taskId}/external-marker`, baseCommit: 'external-base',
+    processId: 'external-process',
     ptyId: 'external-pty', pid: pty.pid, processFingerprint: linuxProcessFingerprint(pty.pid),
   }), { mode: 0o600 });
   return pty;
@@ -271,6 +442,76 @@ function spawnNativePty(cwd: string) {
   return { pid: pty.pid, kill: () => pty.kill(), exited };
 }
 
+function holdingPtyPort(): PtyPort {
+  return {
+    spawn: (): PtyProcess => {
+      const exitListeners = new Set<(event: { readonly exitCode: number }) => void>();
+      return {
+        pid: process.pid,
+        onData: () => ({ dispose: () => undefined }),
+        onExit: (listener) => {
+          exitListeners.add(listener);
+          return { dispose: () => exitListeners.delete(listener) };
+        },
+        kill: () => {
+          for (const listener of exitListeners) listener({ exitCode: 143 });
+        },
+      };
+    },
+  };
+}
+
+function crashAfterOwnershipMarker(
+  delegate: ExecutionAdapter,
+  boundary: ReturnType<typeof deferred>,
+): ExecutionAdapter {
+  return {
+    capabilities: (task) => delegate.capabilities(task),
+    observe: (binding) => delegate.observe(binding),
+    observeRecovery: (binding) => delegate.observeRecovery(binding),
+    launch: async (plan) => {
+      await delegate.launch(plan);
+      boundary.resolve();
+      return new Promise(() => undefined);
+    },
+  };
+}
+
+function longLivedNativePtyPort(): {
+  readonly port: PtyPort;
+  readonly isAlive: () => boolean;
+  readonly killAll: () => Promise<void>;
+} {
+  const processes: PtyProcess[] = [];
+  const exits: Promise<void>[] = [];
+  return {
+    port: {
+      spawn: (_file, _args, options) => {
+        const pty = loadNodePty(undefined).spawn(process.execPath, [
+          '-e', 'setInterval(() => undefined, 1000)',
+        ], options);
+        processes.push(pty);
+        exits.push(new Promise<void>((resolve) => pty.onExit(() => resolve())));
+        return pty;
+      },
+    },
+    isAlive: () => processes.every((candidate) => {
+      try {
+        process.kill(candidate.pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    }),
+    killAll: async () => {
+      for (const candidate of processes) {
+        try { candidate.kill(); } catch { /* The crash survivor already exited. */ }
+      }
+      await Promise.all(exits);
+    },
+  };
+}
+
 function taskMarkerDirectory(runtimeDirectory: string, taskId: string): string {
   return path.join(runtimeDirectory, 'recovery-resources',
     createHash('sha256').update(taskId).digest('hex'));
@@ -281,13 +522,17 @@ function replaceExpectedMarkerProcess(
   taskId: string,
   pid: number,
 ): void {
-  const directory = taskMarkerDirectory(runtimeDirectory, taskId);
-  const markerPath = path.join(directory, fs.readdirSync(directory)
-    .find((entry) => entry.endsWith('.json'))!);
+  const markerPath = expectedMarkerPath(runtimeDirectory, taskId);
   const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8')) as Record<string, unknown>;
   fs.writeFileSync(markerPath, JSON.stringify({
     ...marker, pid, processFingerprint: linuxProcessFingerprint(pid),
   }));
+}
+
+function expectedMarkerPath(runtimeDirectory: string, taskId: string): string {
+  const directory = taskMarkerDirectory(runtimeDirectory, taskId);
+  return path.join(directory, fs.readdirSync(directory)
+    .find((entry) => entry.endsWith('.json'))!);
 }
 
 function linuxProcessFingerprint(pid: number): string {

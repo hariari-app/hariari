@@ -4,32 +4,96 @@ import path from 'node:path';
 import type {
   ExecutionRecoveryObservation,
   ExecutionResourceObservation,
+  PrivateAllocatedRecoveryBinding,
   PrivateExecutionBinding,
+  PrivateRecoveryBinding,
 } from './generic-cli-execution-adapter';
-import { observeRecoveryOwnership } from './local-recovery-markers';
+import {
+  observePendingRecoveryOwnership,
+  observeRecoveryOwnership,
+} from './local-recovery-markers';
 
 /** Reads local Git/filesystem facts without granting recovery mutation authority. */
 export async function observeLocalRecovery(
-  binding: PrivateExecutionBinding,
+  binding: PrivateAllocatedRecoveryBinding,
   baseline: ExecutionRecoveryObservation,
   worktreeRoot: string,
+): Promise<ExecutionRecoveryObservation> {
+  const ownership = await observeRecoveryOwnership(path.dirname(worktreeRoot), binding, baseline);
+  return observeLocalResources(binding, ownership, worktreeRoot, true);
+}
+
+/** Observes a launch whose Task reservation survived but whose context append did not. */
+export async function observePendingLocalRecovery(
+  binding: PrivateRecoveryBinding,
+  worktreeRoot: string,
+): Promise<ExecutionRecoveryObservation> {
+  const pending = await observePendingRecoveryOwnership(
+    path.dirname(worktreeRoot), binding.task.id,
+  );
+  const baseline = { resources: [
+    pendingProvider(binding),
+    ...pending.resources,
+    unknown('worktree', false),
+    unknown('branch', false),
+  ] };
+  if (!pending.context) return baseline;
+  const allocated: PrivateAllocatedRecoveryBinding = { ...binding, context: pending.context };
+  return observeLocalResources(allocated, baseline, worktreeRoot, false);
+}
+
+async function observeLocalResources(
+  binding: PrivateAllocatedRecoveryBinding,
+  ownership: ExecutionRecoveryObservation,
+  worktreeRoot: string,
+  expected: boolean,
 ): Promise<ExecutionRecoveryObservation> {
   const worktreePath = path.join(worktreeRoot, binding.context.worktreeId);
   const worktree = await observeWorktree(worktreePath);
   const branch = await observeBranch(binding, worktreePath, worktree.state === 'active');
-  const ownership = await observeRecoveryOwnership(path.dirname(worktreeRoot), binding, baseline);
   const orphanWorktrees = await observeOrphanWorktrees(binding, worktreeRoot);
   const adoptableBranches = new Set(
     orphanWorktrees.flatMap((orphan) => orphan.branchName ? [orphan.branchName] : []),
   );
   const orphanBranches = await observeOrphanBranches(binding, adoptableBranches);
+  const orphanWorktreeResources = aggregateOrphans(
+    orphanWorktrees.map((orphan) => orphan.resource),
+  );
   return {
     resources: [...ownership.resources.map((resource) => {
-      if (resource.kind === 'worktree') return worktree;
-      if (resource.kind === 'branch') return branch;
+      if (resource.kind === 'worktree') return expected
+        ? worktree : { ...worktree, expected: false, adoptable: false };
+      if (resource.kind === 'branch') return expected
+        ? branch : { ...branch, expected: false, adoptable: false };
       return resource;
-    }), ...orphanWorktrees.map((orphan) => orphan.resource), ...orphanBranches],
+    }), ...orphanWorktreeResources, ...aggregateOrphans(orphanBranches)],
   };
+}
+
+function pendingProvider(binding: PrivateRecoveryBinding): ExecutionResourceObservation {
+  if (binding.task.provider === 'claude') {
+    return { kind: 'provider-session', expected: true, state: 'unknown',
+      identity: 'unknown', fingerprint: 'unknown', copies: 0, adoptable: false };
+  }
+  return { kind: 'provider-session', expected: false, state: 'absent',
+    identity: 'matching', fingerprint: 'matching', copies: 0, adoptable: false };
+}
+
+function aggregateOrphans(
+  resources: readonly ExecutionResourceObservation[],
+): readonly ExecutionResourceObservation[] {
+  const verified = resources.filter((resource) => !resource.expected &&
+    (resource.state === 'active' || resource.state === 'inactive'));
+  if (verified.length < 2) return resources;
+  const first = verified[0]!;
+  return resources.flatMap((resource) => {
+    if (resource === first) return [{
+      ...first,
+      copies: verified.reduce((total, candidate) => total + candidate.copies, 0),
+      adoptable: verified.every((candidate) => candidate.adoptable),
+    }];
+    return verified.includes(resource) ? [] : [resource];
+  });
 }
 
 async function observeOrphanBranches(
@@ -61,7 +125,7 @@ interface OrphanWorktreeObservation {
 }
 
 async function observeOrphanWorktrees(
-  binding: PrivateExecutionBinding,
+  binding: PrivateAllocatedRecoveryBinding,
   worktreeRoot: string,
 ): Promise<readonly OrphanWorktreeObservation[]> {
   let entries: readonly fs.Dirent[];
@@ -72,7 +136,9 @@ async function observeOrphanWorktrees(
     return [{ branchName: null, resource: unknown('worktree', false) }];
   }
   return Promise.all(entries
-    .filter((entry) => entry.name !== binding.context.worktreeId)
+    .filter((entry) => entry.name !== binding.context.worktreeId &&
+      !binding.runtimeWorktrees.some((owner) => owner.taskId !== binding.task.id &&
+        owner.worktreeId === entry.name))
     .slice(0, 16)
     .map((entry) => observeOrphanWorktree(binding, worktreeRoot, entry)));
 }

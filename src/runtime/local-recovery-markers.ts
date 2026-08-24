@@ -8,14 +8,17 @@ import type {
   PrivateExecutionBinding,
 } from './generic-cli-execution-adapter';
 
-const MARKER_VERSION = 1;
+const MARKER_VERSION = 2;
 const MAX_MARKER_BYTES = 4 * 1024;
 const MAX_TASK_MARKERS = 9;
 
 interface RecoveryOwnershipMarker {
-  readonly version: 1;
+  readonly version: 2;
   readonly taskId: string;
   readonly contextId: string;
+  readonly worktreeId: string;
+  readonly branchName: string;
+  readonly baseCommit: string;
   readonly processId: string;
   readonly ptyId: string;
   readonly pid: number;
@@ -36,6 +39,9 @@ export function recordRecoveryOwnership(
     version: MARKER_VERSION,
     taskId,
     contextId: context.id,
+    worktreeId: context.worktreeId,
+    branchName: context.branchName,
+    baseCommit: context.baseCommit,
     processId: context.processId,
     ptyId: context.ptyId,
     pid,
@@ -52,6 +58,41 @@ export function recordRecoveryOwnership(
     try { fs.unlinkSync(temporary); } catch { /* The bounded temp did not exist. */ }
     throw error;
   }
+}
+
+export interface PendingRecoveryOwnershipObservation {
+  readonly context: ActiveExecution['context'] | null;
+  readonly resources: readonly [ExecutionResourceObservation, ExecutionResourceObservation];
+}
+
+/** Reads Task-bound ownership left before its execution context became durable. */
+export async function observePendingRecoveryOwnership(
+  runtimeDirectory: string,
+  taskId: string,
+): Promise<PendingRecoveryOwnershipObservation> {
+  const markers = await readTaskMarkers(runtimeDirectory, taskId);
+  if (markers.length === 1 && markers[0]) {
+    return { context: markerContext(markers[0]), resources: markerResources(markers[0], false) };
+  }
+  const valid = markers.filter((marker): marker is RecoveryOwnershipMarker => marker !== null);
+  if (valid.length > 1 && valid.length === markers.length) {
+    return { context: null, resources: duplicatedResources(valid[0]!, false, valid.length) };
+  }
+  return {
+    context: null,
+    resources: [unknownResource('process', false), unknownResource('pty', false)],
+  };
+}
+
+function markerContext(marker: RecoveryOwnershipMarker): ActiveExecution['context'] {
+  return {
+    id: marker.contextId,
+    worktreeId: marker.worktreeId,
+    branchName: marker.branchName,
+    baseCommit: marker.baseCommit,
+    processId: marker.processId,
+    ptyId: marker.ptyId,
+  };
 }
 
 function assertReplaceableMarker(destination: string): void {
@@ -143,7 +184,15 @@ function duplicatedExpectedResources(
   marker: RecoveryOwnershipMarker,
   copies: number,
 ): readonly [ExecutionResourceObservation, ExecutionResourceObservation] {
-  const resources = markerResources(marker, true);
+  return duplicatedResources(marker, true, copies);
+}
+
+function duplicatedResources(
+  marker: RecoveryOwnershipMarker,
+  expected: boolean,
+  copies: number,
+): readonly [ExecutionResourceObservation, ExecutionResourceObservation] {
+  const resources = markerResources(marker, expected);
   return [
     { ...resources[0], copies },
     { ...resources[1], copies },
@@ -198,19 +247,24 @@ async function readTaskMarkers(
   }
   const selected = entries.slice(0, MAX_TASK_MARKERS);
   const overflow = entries.length > MAX_TASK_MARKERS ? [null] : [];
-  return [...await Promise.all(selected.map((entry) => readMarker(directory, entry))), ...overflow];
+  return [
+    ...await Promise.all(selected.map((entry) => readMarker(directory, entry, taskId))),
+    ...overflow,
+  ];
 }
 
 async function readMarker(
   directory: string,
   entry: fs.Dirent,
+  taskId: string,
 ): Promise<RecoveryOwnershipMarker | null> {
   if (!entry.isFile() || entry.isSymbolicLink() || !entry.name.endsWith('.json')) return null;
   try {
     const candidate = path.join(directory, entry.name);
     const stats = await fs.promises.lstat(candidate);
     if (!stats.isFile() || stats.isSymbolicLink() || stats.size > MAX_MARKER_BYTES) return null;
-    return parseMarker(JSON.parse(await fs.promises.readFile(candidate, 'utf8')));
+    const marker = parseMarker(JSON.parse(await fs.promises.readFile(candidate, 'utf8')));
+    return marker?.taskId === taskId ? marker : null;
   } catch {
     return null;
   }
@@ -220,7 +274,9 @@ function parseMarker(value: unknown): RecoveryOwnershipMarker | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const marker = value as Record<string, unknown>;
   if (marker.version !== MARKER_VERSION || !identifier(marker.taskId) ||
-    !identifier(marker.contextId) || !identifier(marker.processId) || !identifier(marker.ptyId) ||
+    !identifier(marker.contextId) || !identifier(marker.worktreeId) ||
+    !identifier(marker.branchName) || !identifier(marker.baseCommit) ||
+    !identifier(marker.processId) || !identifier(marker.ptyId) ||
     !Number.isSafeInteger(marker.pid) || (marker.pid as number) < 1 ||
     (marker.processFingerprint !== null && !fingerprint(marker.processFingerprint))) return null;
   return marker as unknown as RecoveryOwnershipMarker;

@@ -282,7 +282,7 @@ export class TaskExecutionModule {
     const existing = this.tasks.reconciliation(request);
     if (existing) return existing;
     const desired = this.tasks.privateExecution(request.taskId);
-    const binding = recoveryBinding(desired);
+    const binding = recoveryBinding(desired, this.tasks.recoveryWorktrees());
     const observation = await this.adapter.observeRecovery(binding);
     return this.tasks.recordReconciliation(
       request,
@@ -657,8 +657,9 @@ function bindingFor(
 
 function recoveryBinding(
   desired: PrivateTaskExecutionView,
-): import('./generic-cli-execution-adapter').PrivateExecutionBinding {
-  if (!desired.run || !desired.attempt || !desired.context) {
+  runtimeWorktrees: import('./generic-cli-execution-adapter').PrivateRecoveryBinding['runtimeWorktrees'],
+): import('./generic-cli-execution-adapter').PrivateRecoveryBinding {
+  if (!desired.run || !desired.attempt) {
     throw new TaskExecutionError('task-not-ready');
   }
   return {
@@ -666,9 +667,10 @@ function recoveryBinding(
     run: desired.run,
     attempt: desired.attempt,
     context: desired.context,
-    providerSession: desired.providerSession
+    providerSession: desired.providerSession && desired.context
       ? providerSource(desired.providerSession, desired.context)
       : null,
+    runtimeWorktrees,
   };
 }
 

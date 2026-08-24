@@ -57,13 +57,13 @@ export class RecoveryReconciler {
 function classify(
   observation: ExecutionResourceObservation,
 ): TaskRecoveryView['resources'][number]['classification'] {
+  if (observation.copies > 1) return 'duplicated';
   if (!observation.expected) {
     return observation.state === 'active' || observation.state === 'inactive'
       ? 'orphaned' : observation.state === 'unknown' ? 'unknown' : 'healthy';
   }
   if (observation.state === 'unknown') return 'unknown';
   if (observation.state === 'absent') return 'missing';
-  if (observation.copies > 1) return 'duplicated';
   if (observation.state === 'inactive') return 'stale';
   if (observation.identity !== 'matching' || observation.fingerprint !== 'matching') {
     return 'externally-modified';

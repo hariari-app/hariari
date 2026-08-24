@@ -179,6 +179,12 @@ export class TaskModule {
     return [...this.tasks.values()];
   }
 
+  recoveryWorktrees(): readonly { readonly taskId: string; readonly worktreeId: string }[] {
+    return [...this.executions.values()].flatMap((execution) =>
+      [...new Set(execution.executionContexts.map((context) => context.worktreeId))]
+        .map((worktreeId) => ({ taskId: execution.taskId, worktreeId })));
+  }
+
   reserveExecution(request: StartTaskRequest): Promise<ExecutionReservation> {
     return this.enqueue(async () => {
       this.throwIfPoisoned();

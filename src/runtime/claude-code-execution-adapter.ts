@@ -13,13 +13,18 @@ import {
   type ExecutionLaunchPlan,
   type ExecutionObservation,
   type ExecutionRecoveryObservation,
+  type PrivateAllocatedRecoveryBinding,
   type PrivateExecutionBinding,
+  type PrivateRecoveryBinding,
   type ExecutionStartRequest,
   type PtyPort,
   type PtyProcess,
 } from './generic-cli-execution-adapter';
 import type { ProviderSessionCapabilities, TaskView } from '../shared/runtime/runtime-interface';
-import { observeLocalRecovery } from './local-recovery-observer';
+import {
+  observeLocalRecovery,
+  observePendingLocalRecovery,
+} from './local-recovery-observer';
 import {
   observeLostRecoveryOwnership,
   recordRecoveryOwnership,
@@ -76,10 +81,12 @@ export class ClaudeCodeExecutionAdapter implements ExecutionAdapter {
     return active.isRunning() ? 'live' : 'lost';
   }
 
-  async observeRecovery(binding: PrivateExecutionBinding): Promise<ExecutionRecoveryObservation> {
+  async observeRecovery(binding: PrivateRecoveryBinding): Promise<ExecutionRecoveryObservation> {
+    if (!binding.context) return observePendingLocalRecovery(binding, this.worktreeRoot);
+    const allocated: PrivateAllocatedRecoveryBinding = { ...binding, context: binding.context };
     return observeLocalRecovery(
-      binding,
-      recoveryObservation(binding, this.executions.get(binding.context.id) ?? null),
+      allocated,
+      recoveryObservation(allocated, this.executions.get(allocated.context.id) ?? null),
       this.worktreeRoot,
     );
   }

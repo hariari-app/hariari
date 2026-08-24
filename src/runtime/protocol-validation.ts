@@ -1,11 +1,6 @@
 import {
   RUNTIME_IDENTIFIER_MAX_LENGTH,
-  RECOVERY_ATTENTION_REASON,
   TASK_PROVIDERS,
-  isRecoveryClassification,
-  isRecoveryDecision,
-  isRecoveryResourceKind,
-  recoveryNeedsAttention,
   type CancelTaskRequest,
   type CreateTaskRequest,
   type RuntimeHealth,
@@ -48,6 +43,10 @@ import {
   type RuntimeUnauthorizedFrame,
   type RuntimeWelcomeFrame,
 } from './protocol';
+import {
+  parseRecoveryDecisionView,
+  parseRecoveryView,
+} from './recovery-view-parser';
 
 const MAX_VERSION_LENGTH = 128;
 const MAX_PROOF_LENGTH = 128;
@@ -332,58 +331,21 @@ export function parseTaskExecutionView(value: Record<string, unknown>): TaskExec
 }
 
 export function parseTaskRecoveryView(value: Record<string, unknown>): TaskRecoveryView {
-  const status = value.status;
-  if (status !== 'ready' && status !== 'attention') invalid();
-  const decision = value.decision;
-  if (!isRecoveryDecision(decision)) invalid();
-  const resources = array(value.resources).map((entry) => parseRecoveryResource(object(entry)));
-  const attention = value.attention === null ? null : parseRecoveryAttention(object(value.attention));
-  if ((status === 'attention') !== (attention !== null) ||
-    recoveryNeedsAttention(decision) !== (attention !== null)) invalid();
-  return {
-    id: identifier(value.id),
-    taskId: identifier(value.taskId),
-    desiredState: executionStateValue(value.desiredState),
-    status,
-    decision: decision as TaskRecoveryView['decision'],
-    resources,
-    attention,
-  };
+  try {
+    return parseRecoveryView(value);
+  } catch {
+    invalid();
+  }
 }
 
 export function parseTaskRecoveryDecisionView(
   value: Record<string, unknown>,
 ): TaskRecoveryDecisionView {
-  const status = value.status;
-  if (status !== 'decided' && status !== 'attention') invalid();
-  const decision = value.decision;
-  if (!isRecoveryDecision(decision)) invalid();
-  const attention = value.attention === null ? null : parseRecoveryAttention(object(value.attention));
-  if ((status === 'attention') !== (attention !== null) ||
-    recoveryNeedsAttention(decision) !== (attention !== null)) invalid();
-  return {
-    id: identifier(value.id), taskId: identifier(value.taskId),
-    recoveryId: identifier(value.recoveryId),
-    decision: decision as TaskRecoveryDecisionView['decision'], status, attention,
-  };
-}
-
-function parseRecoveryResource(
-  value: Record<string, unknown>,
-): TaskRecoveryView['resources'][number] {
-  if (!isRecoveryResourceKind(value.kind) ||
-    !isRecoveryClassification(value.classification)) invalid();
-  return {
-    kind: value.kind as TaskRecoveryView['resources'][number]['kind'],
-    classification: value.classification as TaskRecoveryView['resources'][number]['classification'],
-  };
-}
-
-function parseRecoveryAttention(
-  value: Record<string, unknown>,
-): NonNullable<TaskRecoveryView['attention']> {
-  if (value.reason !== RECOVERY_ATTENTION_REASON) invalid();
-  return { id: identifier(value.id), reason: value.reason };
+  try {
+    return parseRecoveryDecisionView(value);
+  } catch {
+    invalid();
+  }
 }
 
 export function parseOutputFrame(value: unknown, protocolVersion: number): RuntimeOutputFrame {

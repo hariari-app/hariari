@@ -1,9 +1,4 @@
 import {
-  RECOVERY_ATTENTION_REASON,
-  isRecoveryClassification,
-  isRecoveryDecision,
-  isRecoveryResourceKind,
-  recoveryNeedsAttention,
   type ProviderSessionView,
   type TaskExecutionState,
   type TaskRecoveryView,
@@ -17,6 +12,10 @@ import type {
   ProviderSessionActionDecidedEvent,
   ProviderSessionActionAbortedEvent,
 } from './provider-session-lifecycle';
+import {
+  parseRecoveryDecisionView,
+  parseRecoveryView,
+} from './recovery-view-parser';
 
 export interface StoredRun {
   readonly id: string;
@@ -212,74 +211,22 @@ function parseTaskRecoveryDecided(
   value: Record<string, unknown>,
   taskId: string,
 ): TaskRecoveryDecidedEvent {
-  const result = parseRecoveryDecision(object(value.result));
+  const result = parseRecoveryDecisionView(value.result);
   if (result.taskId !== taskId) throw new Error('invalid recovery decision');
   return { type: 'TaskRecoveryDecided', version: 1, taskId,
     idempotencyKey: string(value.idempotencyKey),
     fingerprint: string(value.fingerprint), result };
 }
 
-function parseRecoveryDecision(value: Record<string, unknown>): TaskRecoveryDecisionView {
-  const decision = string(value.decision);
-  const status = string(value.status);
-  if (!isRecoveryDecision(decision) ||
-    (status !== 'decided' && status !== 'attention')) throw new Error('invalid recovery decision');
-  const attention = value.attention === null ? null : object(value.attention);
-  if ((status === 'attention') !== (attention !== null) ||
-    recoveryNeedsAttention(decision) !== (attention !== null)) throw new Error('invalid recovery decision');
-  return {
-    id: string(value.id), taskId: string(value.taskId), recoveryId: string(value.recoveryId),
-    decision: decision as TaskRecoveryDecisionView['decision'], status,
-    attention: attention ? { id: string(attention.id),
-      reason: recoveryAttentionReason(attention.reason) } : null,
-  };
-}
-
 function parseTaskReconciled(
   value: Record<string, unknown>,
   taskId: string,
 ): TaskReconciledEvent {
-  const recovery = parseRecovery(object(value.recovery));
+  const recovery = parseRecoveryView(value.recovery);
   if (recovery.taskId !== taskId) throw new Error('invalid recovery');
   return { type: 'TaskReconciled', version: 1, taskId,
     idempotencyKey: string(value.idempotencyKey),
     fingerprint: string(value.fingerprint), recovery };
-}
-
-function parseRecovery(value: Record<string, unknown>): TaskRecoveryView {
-  const status = string(value.status);
-  const decision = string(value.decision);
-  if ((status !== 'ready' && status !== 'attention') ||
-    !isRecoveryDecision(decision)) {
-    throw new Error('invalid recovery');
-  }
-  const resources = array(value.resources).map((entry) => parseRecoveryResource(object(entry)));
-  const attention = value.attention === null ? null : object(value.attention);
-  if ((status === 'attention') !== (attention !== null) ||
-    recoveryNeedsAttention(decision) !== (attention !== null)) throw new Error('invalid recovery');
-  return {
-    id: string(value.id), taskId: string(value.taskId),
-    desiredState: executionState(string(value.desiredState)),
-    status, decision: decision as TaskRecoveryView['decision'], resources,
-    attention: attention ? { id: string(attention.id),
-      reason: recoveryAttentionReason(attention.reason) } : null,
-  };
-}
-
-function parseRecoveryResource(
-  value: Record<string, unknown>,
-): TaskRecoveryView['resources'][number] {
-  const kind = string(value.kind);
-  const classification = string(value.classification);
-  if (!isRecoveryResourceKind(kind) ||
-    !isRecoveryClassification(classification)) throw new Error('invalid recovery');
-  return { kind: kind as TaskRecoveryView['resources'][number]['kind'],
-    classification: classification as TaskRecoveryView['resources'][number]['classification'] };
-}
-
-function recoveryAttentionReason(value: unknown): 'ambiguous-recovery' {
-  if (value !== RECOVERY_ATTENTION_REASON) throw new Error('invalid recovery');
-  return value;
 }
 
 function parseProviderActionDecided(
@@ -426,19 +373,6 @@ function parseLineage(value: unknown): StoredProviderSession['lineage'] {
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid object');
   return value as Record<string, unknown>;
-}
-
-function array(value: unknown): readonly unknown[] {
-  if (!Array.isArray(value)) throw new Error('invalid array');
-  return value;
-}
-
-function executionState(value: string): TaskExecutionState {
-  if (!['ready', 'starting', 'running', 'completed', 'failed', 'cancelling',
-    'cancelled', 'superseding', 'superseded'].includes(value)) {
-    throw new Error('invalid execution state');
-  }
-  return value as TaskExecutionState;
 }
 
 function string(value: unknown): string {

@@ -33,6 +33,7 @@ import type {
   ExecutionRecoveryObservation,
   ExecutionResourceObservation,
   PrivateExecutionBinding,
+  PrivateRecoveryBinding,
 } from '../../src/runtime/generic-cli-execution-adapter';
 import {
   executionStartRequest,
@@ -148,7 +149,7 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
     return execution.isRunning() ? 'live' : 'lost';
   }
 
-  async observeRecovery(binding: PrivateExecutionBinding): Promise<ExecutionRecoveryObservation> {
+  async observeRecovery(binding: PrivateRecoveryBinding): Promise<ExecutionRecoveryObservation> {
     this.recoveryObservations.set(
       binding.task.id,
       this.recoveryObservationCount(binding.task.id) + 1,
@@ -157,7 +158,7 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
     const execution = this.executions.get(binding.task.id);
     return recoveryObservation(
       binding,
-      execution?.context.id === binding.context.id ? execution : null,
+      binding.context && execution?.context.id === binding.context.id ? execution : null,
     );
   }
 
