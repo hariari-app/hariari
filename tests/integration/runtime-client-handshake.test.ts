@@ -403,6 +403,7 @@ class HandshakeConnection implements RuntimeFrameConnection {
         },
         run: { id: 'run-1', number: 1 },
         attempt: { id: 'attempt-1', number: 1, state: 'running' },
+        attempts: [{ id: 'attempt-1', number: 1, state: 'running' }],
         context: {
           id: 'context-1',
           worktreeId: 'worktree-1',
@@ -411,6 +412,7 @@ class HandshakeConnection implements RuntimeFrameConnection {
           processId: 'process-1',
           ptyId: 'pty-1',
         },
+        providerSessions: [],
       },
     };
   }

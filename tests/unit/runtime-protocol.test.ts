@@ -38,6 +38,17 @@ function registerRuntimeProtocolTests(): void {
   registerServerProofTest();
   registerAuthenticatedEnvelopeTest();
   registerRequestMetadataTest();
+  registerProviderSpecificOperationRejectionTest();
+}
+
+function registerProviderSpecificOperationRejectionTest(): void {
+  it.each(['claude.resume', 'claude.fork'])('rejects the unsupported %s Runtime operation', (name) => {
+    expect(() => parseRequestFrame({
+      kind: 'runtime.request', protocolVersion: 1, requestId: 'request-claude',
+      operation: { name, version: 1 }, correlationId: 'correlation-claude',
+      causationId: null, idempotencyKey: 'claude-action', payload: {},
+    })).toThrow('Runtime protocol frame is invalid');
+  });
 }
 
 function registerVersionSelectionTest(): void {

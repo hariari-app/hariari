@@ -1,368 +1,497 @@
-import { randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { NodeRuntimeClient } from '../../src/main/runtime/node-runtime-client';
+import { describe, expect, it } from 'vitest';
 import { RuntimePortError, type RuntimeClientSession } from '../../src/main/runtime/runtime-ports';
 import type { TaskExecutionView } from '../../src/shared/runtime/runtime-interface';
 import {
-  LocalGenericCliExecutionAdapter,
-  type GenericCliExecutionAdapter,
-} from '../../src/runtime/generic-cli-execution-adapter';
+  FakeClaudeCodeExecutionAdapter,
+} from './runtime-test-fakes';
 import {
-  NodeLocalRuntimeTransport,
-  type RuntimeFrameConnection,
-  type RuntimeLocalEndpoint,
-  type RuntimeTransportListener,
-} from '../../src/runtime/local-transport';
-import { RuntimeServer } from '../../src/runtime/runtime-server';
-import { createDisposableGitRepository } from '../test-common/disposable-git-repository';
-import { FakeGenericCliExecutionAdapter } from './runtime-test-fakes';
-
-const roots: string[] = [];
-const servers: RuntimeServer[] = [];
-const FAILED_APPEND_MODES = ['zero-first', 'partial-then-zero', 'partial-then-error'] as const;
-const FAILED_ALLOCATION_APPEND_CASES = ['ContextAllocated', 'AttemptFailed'].flatMap(
-  (name, index) => FAILED_APPEND_MODES.map((mode) => ({ name, mode, writeCall: index + 3 })),
-);
-
+  FAILED_APPEND_MODES,
+  corruptExecutionAppend,
+  createSubject,
+  deferred,
+  nextRuntimeTurn,
+  registerRuntimeTaskTestCleanup,
+} from './runtime-task-test-harness';
+const PROVIDER_LIFECYCLE_APPEND_CASES = [
+  { name: 'ProviderSessionActionDecided', writeCall: 1 },
+  { name: 'AttemptSupersessionRequested', writeCall: 2 },
+  { name: 'AttemptSuperseded', writeCall: 3 },
+  { name: 'AttemptForked', writeCall: 4 },
+  { name: 'ContextAllocated', writeCall: 5 },
+].flatMap((transition) => FAILED_APPEND_MODES.map((mode) => ({ ...transition, mode })));
 describe('authenticated Runtime Task start remediation', registerTaskStartTests);
-
 function registerTaskStartTests(): void {
-  afterEach(async () => {
-    vi.restoreAllMocks();
-    await Promise.all(servers.splice(0).map((server) => server.stop()));
-    for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
-  });
-  it('coalesces concurrent same-key starts from independent sessions', coalescesConcurrentStarts);
-  it.each(FAILED_ALLOCATION_APPEND_CASES)(
-    'preserves an allocated Git context across $name $mode append repair',
-    async ({ writeCall, mode }) => preservesFailedContext(writeCall, mode),
+  registerRuntimeTaskTestCleanup();
+  it('forks a Claude session through the authenticated Runtime seam', forksClaudeSession);
+  it('durably aborts fork when parent stop fails and remains live', abortsLiveParentFork);
+  it('continues fork when parent stop fails after positive loss observation', continuesLostParentFork);
+  it('rejects an unknown parent fork without a lifecycle transition', rejectsUnknownParentFork);
+  it('settles a late parent exit by attempt identity without disturbing the fork child', settlesLateParentExit);
+  it('reattaches the same live provider session after a Desktop-only reconnect', resumesMatchingClaudeSession);
+  it('keeps a fresh Runtime adapter outside durable provider-session ownership', rejectsFreshAdapterResume);
+  it('restarts one native Claude process when the owned process is lost', resumesLostClaudeProcess);
+  it('replays an unattached durable native resume with its planned identities', replaysUnattachedNativeResume);
+  it('durably rejects an unknown provider-session observation without launching', rejectsUnknownResumeObservation);
+  it('records an unsupported Claude resume rejection across restart', rejectsUnsupportedClaudeResume);
+  it('rejects terminal and noncurrent Claude resumes through public codes', rejectsNoncurrentClaudeResumes);
+  it(
+    'replays an unattached durable Claude fork as a starting child without inventing a native identity',
+    replaysUnattachedClaudeFork,
+  );
+  it.each(PROVIDER_LIFECYCLE_APPEND_CASES)(
+    'repairs $name $mode append failure for same-key provider lifecycle retry and replay',
+    verifiesProviderLifecycleAppendRecovery,
   );
 }
+function createClaudeTask(runtime: RuntimeClientSession, repository: string, key: string) {
+  return runtime.createTask({
+    objective: 'Implement the bounded provider task.', project: 'Hariari', repository,
+    baseRef: 'HEAD', provider: 'claude', idempotencyKey: `${key}-create`,
+  });
+}
 
-async function coalescesConcurrentStarts(): Promise<void> {
-  const gate = deferred();
-  const adapter = new FakeGenericCliExecutionAdapter({ beforeStart: gate.promise });
+
+async function replaysUnattachedClaudeFork(): Promise<void> {
+  const childGate = deferred();
+  let stalledChild = false;
+  const adapter = new FakeClaudeCodeExecutionAdapter({
+    beforeStart: (request) => request.attempt.number === 2 && !stalledChild
+      ? (stalledChild = true, childGate.promise)
+      : undefined,
+  });
   const subject = await createSubject(() => adapter);
-  const first = await subject.connect();
-  const second = await subject.connect();
-  const task = await first.createTask(shellTask('concurrent-start-create', 'fake-checkout'));
-  const request = { taskId: task.id, idempotencyKey: 'concurrent-start' };
-  const starts = [first.startTask(request), second.startTask(request)] as const;
-
+  const runtime = await subject.connect();
+  const task = await runtime.createTask({ objective: 'Recover a durable Claude fork.', project: 'Hariari', repository: 'fake-checkout', baseRef: 'main', provider: 'claude', idempotencyKey: 'unattached-fork-create' });
+  const parent = await runtime.startTask({ taskId: task.id, idempotencyKey: 'unattached-fork-start' });
+  const fork = runtime.forkProviderSession({ taskId: task.id,
+    providerSessionId: parent.providerSession!.id, idempotencyKey: 'unattached-fork' });
   try {
-    await adapter.waitForStart(task.id);
-    await subject.transport.waitForRequests('task.start', 2);
-    await nextRuntimeTurn();
-    expect(adapter.startCount(task.id)).toBe(1);
-    gate.resolve();
-    const [firstResult, secondResult] = await Promise.all(starts);
-    expect(secondResult).toEqual(firstResult);
-    assertSingleExecution(firstResult);
-    await assertStartConflicts(first, second, request);
+    await waitForAdapterStarts(adapter, task.id, 2);
+    await runtime.disconnect();
+    await subject.restart();
+    const restarted = await subject.connect();
+    await expect(restarted.getTaskExecution(task.id)).resolves.toMatchObject({
+      task: { executionState: 'starting' },
+      attempt: { number: 2, state: 'starting' },
+      context: null,
+      providerSession: null,
+      attempts: [{ number: 1 }, { number: 2, state: 'starting' }],
+      providerSessions: [parent.providerSession],
+    });
+    await expect(restarted.startTask({ taskId: task.id, idempotencyKey: 'unattached-fork-start' })).resolves.toMatchObject({
+      attempt: { number: 2, state: 'running' },
+      providerSession: { parentId: parent.providerSession!.id },
+    });
+    expect(adapter.startsFor(task.id)[2]?.instruction).toMatchObject({
+      kind: 'fork-claude',
+      parentNativeSessionId: initialNativeSessionId(adapter, task.id),
+      context: { worktreeId: parent.context?.worktreeId, branchName: parent.context?.branchName },
+    });
+    await restarted.disconnect();
   } finally {
-    gate.resolve();
-    await Promise.allSettled(starts);
-    await Promise.all([first.disconnect(), second.disconnect()]);
+    childGate.resolve();
+    await Promise.allSettled([fork]);
   }
 }
 
-async function assertStartConflicts(
-  first: RuntimeClientSession,
-  second: RuntimeClientSession,
-  request: { readonly taskId: string; readonly idempotencyKey: string },
-): Promise<void> {
-  await expect(
-    second.startTask({ ...request, idempotencyKey: 'different-concurrent-start' }),
-  ).rejects.toEqual(new RuntimePortError('task-not-ready', false));
-  const other = await first.createTask(shellTask('concurrent-other-create', 'fake-checkout'));
-  await expect(second.startTask({ ...request, taskId: other.id })).rejects.toEqual(
-    new RuntimePortError('idempotency-conflict', false),
-  );
+async function waitForAdapterStarts(adapter: FakeClaudeCodeExecutionAdapter, taskId: string, count: number): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (adapter.startCount(taskId) < count) {
+    if (Date.now() >= deadline) throw new Error(`expected ${count} adapter starts`);
+    await nextRuntimeTurn();
+  }
 }
 
-function assertSingleExecution(execution: TaskExecutionView): void {
-  expect(execution).toMatchObject({
-    run: { number: 1 },
-    attempt: { number: 1, state: 'running' },
-    context: { branchName: expect.stringMatching(/^hariari\/task-/) },
-  });
-}
-
-async function preservesFailedContext(
-  failedWrite: number,
-  mode: (typeof FAILED_APPEND_MODES)[number],
+async function verifiesProviderLifecycleAppendRecovery(
+  transition: (typeof PROVIDER_LIFECYCLE_APPEND_CASES)[number],
 ): Promise<void> {
-  const subject = await createSubject(
-    (runtimeDirectory) =>
-      new LocalGenericCliExecutionAdapter({
-        runtimeDirectory,
-        pty: { spawn: failedPtySpawn },
-      }),
-  );
-  const repository = createTestRepository();
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
   const runtime = await subject.connect();
-  const task = await runtime.createTask(shellTask('failed-allocation-create', repository.path));
-  corruptExecutionAppend(
-    path.join(subject.runtimeDirectory, 'tasks', 'events.log'),
-    failedWrite,
-    mode,
-  );
-
-  await expect(
-    runtime.startTask({ taskId: task.id, idempotencyKey: 'failed-allocation-start' }),
-  ).rejects.toEqual(new RuntimePortError('process-start-failed', true));
-  const failed = await runtime.getTaskExecution(task.id);
-  assertFailedView(failed, task.id, repository.baseCommit, subject.runtimeDirectory);
-  assertGitResources(subject.runtimeDirectory, failed);
+  const task = await runtime.createTask({ objective: 'Repair a Claude lifecycle append.', project: 'Hariari', repository: 'fake-checkout', baseRef: 'main', provider: 'claude', idempotencyKey: `claude-${transition.name}-${transition.mode}-create` });
+  const parent = await runtime.startTask({ taskId: task.id, idempotencyKey: `claude-${transition.name}-${transition.mode}-start` });
+  const resume = { taskId: task.id, providerSessionId: 'unknown-session',
+    idempotencyKey: `claude-${transition.name}-${transition.mode}` };
+  const fork = { taskId: task.id, providerSessionId: parent.providerSession!.id, idempotencyKey: resume.idempotencyKey };
+  corruptExecutionAppend(path.join(subject.runtimeDirectory, 'tasks', 'events.log'), transition.writeCall, transition.mode);
+  if (transition.name === 'ProviderSessionActionDecided') {
+    await expect(runtime.resumeProviderSession(resume)).rejects.toEqual(new RuntimePortError('internal', true));
+    await expect(runtime.resumeProviderSession(resume)).rejects.toEqual(new RuntimePortError('not-found', false));
+  } else if (transition.name === 'AttemptSuperseded' ||
+    transition.name === 'ContextAllocated') {
+    await expect(runtime.forkProviderSession(fork)).resolves.toMatchObject({
+      attempt: { number: 2, state: 'running' }, providerSession: { parentId: parent.providerSession!.id },
+    });
+  } else {
+    await expect(runtime.forkProviderSession(fork)).rejects.toEqual(new RuntimePortError('internal', true));
+    await expect(runtime.forkProviderSession(fork)).resolves.toMatchObject({ attempt: { number: 2, state: 'running' } });
+  }
   await runtime.disconnect();
   await subject.restart();
   const restarted = await subject.connect();
-  await expect(restarted.getTaskExecution(task.id)).resolves.toEqual(failed);
+  if (transition.name === 'ProviderSessionActionDecided') {
+    await expect(restarted.resumeProviderSession(resume)).rejects.toEqual(new RuntimePortError('not-found', false));
+  } else {
+    await expect(restarted.forkProviderSession(fork)).resolves.toMatchObject({ attempt: { number: 2, state: 'running' } });
+  }
   await restarted.disconnect();
 }
 
-function failedPtySpawn(): never {
-  throw new Error('injected PTY spawn failure');
+async function rejectsUnsupportedClaudeResume(): Promise<void> {
+  const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter({ claudeCapabilities: { resume: false, fork: true } }));
+  const runtime = await subject.connect();
+  const task = await runtime.createTask({ objective: 'Resume Claude.', project: 'Hariari', repository: 'fake-checkout', baseRef: 'main', provider: 'claude', idempotencyKey: 'resume-unsupported-create' });
+  const started = await runtime.startTask({ taskId: task.id, idempotencyKey: 'resume-unsupported-start' });
+  const request = { taskId: task.id, providerSessionId: started.providerSession!.id, repository: task.repository, worktreeId: started.context!.worktreeId, branchName: started.context!.branchName, idempotencyKey: 'resume-unsupported' };
+  await expect(runtime.resumeProviderSession(request)).rejects.toEqual(new RuntimePortError('unsupported-operation', false));
+  await expect(runtime.forkProviderSession(request))
+    .rejects.toEqual(new RuntimePortError('idempotency-conflict', false));
+  await runtime.disconnect(); await subject.restart(); const restarted = await subject.connect();
+  await expect(restarted.resumeProviderSession(request)).rejects.toEqual(new RuntimePortError('unsupported-operation', false));
+  await expect(restarted.forkProviderSession(request))
+    .rejects.toEqual(new RuntimePortError('idempotency-conflict', false));
+  await restarted.disconnect();
 }
 
-function assertFailedView(
-  failed: TaskExecutionView,
+async function rejectsNoncurrentClaudeResumes(): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const task = await runtime.createTask({ objective: 'Reject stale Claude.', project: 'Hariari', repository: 'fake-checkout', baseRef: 'main', provider: 'claude', idempotencyKey: 'noncurrent-create' });
+  const parent = await runtime.startTask({ taskId: task.id, idempotencyKey: 'noncurrent-start' });
+  await runtime.forkProviderSession({ taskId: task.id, providerSessionId: parent.providerSession!.id, idempotencyKey: 'noncurrent-fork' });
+  const noncurrent = providerRequest(task, parent, 'noncurrent-resume');
+  await expect(runtime.resumeProviderSession(noncurrent))
+    .rejects.toEqual(new RuntimePortError('task-not-ready', false));
+  const terminal = await runtime.cancelTask({ taskId: task.id, idempotencyKey: 'terminal-cancel' });
+  const terminalRequest = providerRequest(task, terminal, 'terminal-resume');
+  await expect(runtime.resumeProviderSession(terminalRequest))
+    .rejects.toEqual(new RuntimePortError('task-not-ready', false));
+  await runtime.disconnect();
+  await subject.restart();
+  const restarted = await subject.connect();
+  await expect(restarted.resumeProviderSession(noncurrent))
+    .rejects.toEqual(new RuntimePortError('task-not-ready', false));
+  await expect(restarted.resumeProviderSession(terminalRequest))
+    .rejects.toEqual(new RuntimePortError('task-not-ready', false));
+  await restarted.disconnect();
+}
+
+function providerRequest(
+  task: { readonly id: string; readonly repository: string },
+  execution: TaskExecutionView,
+  idempotencyKey: string,
+) {
+  return { taskId: task.id, providerSessionId: execution.providerSession!.id, idempotencyKey };
+}
+
+async function resumesMatchingClaudeSession(): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const clientA = await subject.connect();
+  const task = await clientA.createTask({ objective: 'Resume Claude.', project: 'Hariari', repository: 'fake-checkout', baseRef: 'main', provider: 'claude', idempotencyKey: 'resume-create' });
+  const started = await clientA.startTask({ taskId: task.id, idempotencyKey: 'resume-start' });
+  await clientA.disconnect();
+  const clientB = await subject.connect();
+  const resumed = await clientB.resumeProviderSession({
+    taskId: task.id,
+    providerSessionId: started.providerSession!.id,
+    idempotencyKey: 'resume-match',
+  });
+  expect(resumed).toEqual(started);
+  expect(adapter.startCount(task.id)).toBe(1);
+  expect(JSON.stringify(resumed)).not.toMatch(/nativeSessionId|processId|ptyId/);
+  await clientB.disconnect();
+}
+
+async function rejectsFreshAdapterResume(): Promise<void> {
+  const adapterA = new FakeClaudeCodeExecutionAdapter();
+  const adapterB = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapterA);
+  const clientA = await subject.connect();
+  const task = await createClaudeTask(clientA, 'fake-checkout', 'fresh-adapter');
+  const started = await clientA.startTask({ taskId: task.id, idempotencyKey: 'fresh-adapter-start' });
+  const request = { taskId: task.id, providerSessionId: started.providerSession!.id,
+    idempotencyKey: 'fresh-adapter-resume' };
+  await clientA.disconnect();
+  await subject.restartWith(adapterB);
+  const clientB = await subject.connect();
+
+  await expect(clientB.getTaskExecution(task.id)).resolves.toEqual(started);
+  await expect(clientB.resumeProviderSession(request))
+    .rejects.toEqual(new RuntimePortError('task-not-ready', false));
+  await expect(clientB.getTaskExecution(task.id)).resolves.toEqual(started);
+  expect(adapterB.startCount(task.id)).toBe(0);
+  await clientB.disconnect();
+  await subject.restart();
+  const replay = await subject.connect();
+  await expect(replay.resumeProviderSession(request))
+    .rejects.toEqual(new RuntimePortError('task-not-ready', false));
+  await expect(replay.getTaskExecution(task.id)).resolves.toEqual(started);
+  expect(adapterB.startCount(task.id)).toBe(0);
+  await replay.disconnect();
+}
+
+async function resumesLostClaudeProcess(): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const task = await runtime.createTask({ objective: 'Resume lost Claude.', project: 'Hariari', repository: 'fake-checkout', baseRef: 'main', provider: 'claude', idempotencyKey: 'resume-lost-create' });
+  const started = await runtime.startTask({ taskId: task.id, idempotencyKey: 'resume-lost-start' });
+  adapter.lose(task.id);
+  await runtime.disconnect();
+  await subject.restart();
+  const restarted = await subject.connect();
+  const resumed = await restarted.resumeProviderSession({
+    taskId: task.id,
+    providerSessionId: started.providerSession!.id,
+    idempotencyKey: 'resume-lost',
+  });
+
+  assertLostResume(started, resumed, adapter, task.id);
+  await restarted.disconnect();
+  await subject.restart();
+  const replay = await subject.connect();
+  await expect(replay.resumeProviderSession({
+    taskId: task.id, providerSessionId: started.providerSession!.id,
+    idempotencyKey: 'resume-lost',
+  })).resolves.toEqual(resumed);
+  expect(adapter.startCount(task.id)).toBe(2);
+  await replay.disconnect();
+}
+
+function assertLostResume(
+  started: TaskExecutionView,
+  resumed: TaskExecutionView,
+  adapter: FakeClaudeCodeExecutionAdapter,
   taskId: string,
-  baseCommit: string,
-  runtimeDirectory: string,
 ): void {
-  expect(failed).toMatchObject({
-    task: { id: taskId, executionState: 'failed' },
-    run: { id: expect.stringMatching(/^start-remediation-/), number: 1 },
-    attempt: { id: expect.stringMatching(/^start-remediation-/), number: 1, state: 'failed' },
-    context: {
-      id: expect.stringMatching(/^start-remediation-/),
-      worktreeId: expect.stringMatching(/^start-remediation-/),
-      branchName: expect.stringMatching(/^hariari\/task-/),
-      baseCommit,
-      processId: expect.stringMatching(/^start-remediation-/),
-      ptyId: expect.stringMatching(/^start-remediation-/),
-    },
-  });
-  expect(JSON.stringify(failed.context)).not.toContain(runtimeDirectory);
-  expect(Object.keys(failed.context ?? {}).sort()).toEqual([
-    'baseCommit',
-    'branchName',
-    'id',
-    'processId',
-    'ptyId',
-    'worktreeId',
+  expect(resumed.attempt).toMatchObject({ number: 2, state: 'running' });
+  expect(resumed.attempt?.id).not.toBe(started.attempt?.id);
+  expect(resumed.attempts).toMatchObject([
+    { id: started.attempt?.id, state: 'superseded' },
+    { id: resumed.attempt?.id, state: 'running' },
   ]);
-}
-
-function assertGitResources(runtimeDirectory: string, failed: TaskExecutionView): void {
-  if (!failed.context) throw new Error('expected failed allocation context');
-  const worktreePath = path.join(runtimeDirectory, 'task-worktrees', failed.context.worktreeId);
-  expect(fs.existsSync(worktreePath)).toBe(true);
-  const branch = execFileSync('git', ['branch', '--show-current'], {
-    cwd: worktreePath,
-    encoding: 'utf8',
-  }).trim();
-  expect(branch).toBe(failed.context.branchName);
-}
-
-function createTestRepository(): { readonly path: string; readonly baseCommit: string } {
-  const repository = createDisposableGitRepository({
-    temporaryPrefix: 'hariari-failed-allocation-',
-    readmeContents: '# Failed allocation\n',
-    commitMessage: 'failed allocation fixture',
-    authorName: 'Runtime Test',
-    authorEmail: 'runtime@example.test',
+  expect(resumed.context?.id).not.toBe(started.context?.id);
+  expect(resumed.executionContexts).toHaveLength(2);
+  expect(resumed.providerSession).toMatchObject({
+    parentId: started.providerSession?.id, lineage: 'native-resume',
   });
-  roots.push(repository.root);
-  return repository;
+  expect(resumed.providerSession?.id).not.toBe(started.providerSession?.id);
+  expect(adapter.isDisposed(started.attempt!.id)).toBe(true);
+  expect(adapter.startCount(taskId)).toBe(2);
+  expect(adapter.startsFor(taskId)[1]?.instruction).toMatchObject({
+    kind: 'resume-claude', nativeSessionId: initialNativeSessionId(adapter, taskId),
+    context: { worktreeId: started.context?.worktreeId,
+      branchName: started.context?.branchName },
+  });
+  const [parentLaunch, resumedLaunch] = adapter.startsFor(taskId);
+  expect(resumedLaunch?.identities.contextId).not.toBe(parentLaunch?.identities.contextId);
+  expect(resumedLaunch?.identities.processId).not.toBe(parentLaunch?.identities.processId);
+  expect(resumedLaunch?.identities.ptyId).not.toBe(parentLaunch?.identities.ptyId);
 }
 
-function shellTask(idempotencyKey: string, repository: string) {
-  return {
-    objective: 'Exercise Runtime-owned Task start.',
+async function rejectsUnknownResumeObservation(): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const task = await createClaudeTask(runtime, 'fake-checkout', 'unknown-resume');
+  const started = await runtime.startTask({ taskId: task.id, idempotencyKey: 'unknown-resume-start' });
+  adapter.forget(task.id);
+  const request = { taskId: task.id, providerSessionId: started.providerSession!.id,
+    idempotencyKey: 'unknown-resume-action' };
+  await expect(runtime.resumeProviderSession(request))
+    .rejects.toEqual(new RuntimePortError('task-not-ready', false));
+  await runtime.disconnect();
+  await subject.restart();
+  const restarted = await subject.connect();
+  await expect(restarted.resumeProviderSession(request))
+    .rejects.toEqual(new RuntimePortError('task-not-ready', false));
+  const missing = { taskId: 'missing-task', providerSessionId: 'missing-session',
+    idempotencyKey: 'missing-resume-action' };
+  await expect(restarted.resumeProviderSession(missing))
+    .rejects.toEqual(new RuntimePortError('not-found', false));
+  await subject.restart();
+  const replay = await subject.connect();
+  await expect(replay.resumeProviderSession(missing))
+    .rejects.toEqual(new RuntimePortError('not-found', false));
+  expect(adapter.startCount(task.id)).toBe(1);
+  await Promise.all([restarted.disconnect(), replay.disconnect()]);
+}
+
+async function replaysUnattachedNativeResume(): Promise<void> {
+  const launchGate = deferred();
+  let stalled = false;
+  const adapter = new FakeClaudeCodeExecutionAdapter({
+    beforeStart: (request) => request.attempt.number === 2 && !stalled
+      ? (stalled = true, launchGate.promise) : undefined,
+  });
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const task = await createClaudeTask(runtime, 'fake-checkout', 'unattached-resume');
+  const parent = await runtime.startTask({ taskId: task.id, idempotencyKey: 'resume-plan-start' });
+  adapter.lose(task.id);
+  const request = { taskId: task.id, providerSessionId: parent.providerSession!.id,
+    idempotencyKey: 'resume-plan-action' };
+  const pending = runtime.resumeProviderSession(request);
+  try {
+    await waitForAdapterStarts(adapter, task.id, 2);
+    await runtime.disconnect();
+    await subject.restart();
+    const restarted = await subject.connect();
+    await expect(restarted.getTaskExecution(task.id)).resolves.toMatchObject({
+      attempt: { number: 2, state: 'starting' }, context: null, providerSession: null,
+    });
+    const recovered = await restarted.resumeProviderSession(request);
+    expect(recovered).toMatchObject({ attempt: { number: 2, state: 'running' },
+      providerSession: { parentId: parent.providerSession!.id, lineage: 'native-resume' } });
+    expect(adapter.startsFor(task.id)[2]?.identities)
+      .toEqual(adapter.startsFor(task.id)[1]?.identities);
+    await restarted.disconnect();
+  } finally {
+    launchGate.resolve();
+    await Promise.allSettled([pending]);
+  }
+}
+
+async function forksClaudeSession(): Promise<void> {
+  const childGate = deferred();
+  const adapter = new FakeClaudeCodeExecutionAdapter({
+    beforeStart: (request) => request.attempt.number === 2 ? childGate.promise : undefined,
+  });
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const concurrentRuntime = await subject.connect();
+  const task = await runtime.createTask({
+    objective: 'Fork this Claude task.',
     project: 'Hariari',
-    repository,
-    baseRef: 'HEAD',
-    provider: 'shell' as const,
-    idempotencyKey,
+    repository: 'fake-checkout',
+    baseRef: 'main',
+    provider: 'claude',
+    idempotencyKey: 'fork-create',
+  });
+  const parent = await runtime.startTask({ taskId: task.id, idempotencyKey: 'fork-start' });
+  const forkRequest = {
+    taskId: task.id,
+    providerSessionId: parent.providerSession!.id,
+    idempotencyKey: 'fork-child',
   };
+  const childPromise = runtime.forkProviderSession(forkRequest);
+  await adapter.waitForStop(task.id);
+  const replayPromise = concurrentRuntime.forkProviderSession(forkRequest);
+  await subject.transport.waitForRequests('provider-session.fork', 2);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(adapter.startCount(task.id)).toBe(2);
+  childGate.resolve();
+  const [child, concurrentReplay] = await Promise.all([childPromise, replayPromise]);
+  expect(concurrentReplay).toEqual(child);
+  expectForkedClaude(parent, child, adapter, task.id);
+  await concurrentRuntime.disconnect();
+  await expect(runtime.forkProviderSession({ taskId: task.id, providerSessionId: parent.providerSession!.id, idempotencyKey: 'fork-child' })).resolves.toEqual(child);
+  await expect(runtime.forkProviderSession({ ...forkRequest, providerSessionId: child.providerSession!.id })).rejects.toEqual(new RuntimePortError('idempotency-conflict', false));
+  await runtime.disconnect();
+  await subject.restart();
+  const restarted = await subject.connect();
+  await expect(restarted.getTaskExecution(task.id)).resolves.toEqual(child);
+  await restarted.disconnect();
 }
 
-interface RuntimeSubject {
-  readonly runtimeDirectory: string;
-  readonly transport: ObservedRuntimeTransport;
-  connect(): Promise<RuntimeClientSession>;
-  restart(): Promise<void>;
+async function abortsLiveParentFork(): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter({ stopError: new Error('stop failed') });
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const task = await createClaudeTask(runtime, 'fake-checkout', 'live-stop-failure');
+  const parent = await runtime.startTask({ taskId: task.id, idempotencyKey: 'live-stop-start' });
+  const request = { taskId: task.id, providerSessionId: parent.providerSession!.id,
+    idempotencyKey: 'live-stop-fork' };
+  await expect(runtime.forkProviderSession(request))
+    .rejects.toEqual(new RuntimePortError('internal', true));
+  await expect(runtime.getTaskExecution(task.id)).resolves.toEqual(parent);
+  await expect(runtime.forkProviderSession(request))
+    .rejects.toEqual(new RuntimePortError('internal', true));
+  expect(adapter.startCount(task.id)).toBe(1);
+  await runtime.disconnect();
+  await subject.restart();
+  const restarted = await subject.connect();
+  await expect(restarted.forkProviderSession(request))
+    .rejects.toEqual(new RuntimePortError('internal', true));
+  await restarted.disconnect();
 }
 
-async function createSubject(
-  adapterFactory: (runtimeDirectory: string) => GenericCliExecutionAdapter,
-): Promise<RuntimeSubject> {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hariari-start-remediation-'));
-  roots.push(root);
-  const runtimeDirectory = path.join(root, 'runtime');
-  const endpoint = {
-    kind: 'unix' as const,
-    address: path.join(root, 'runtime.sock'),
-    runtimeDirectory,
-  };
-  const token = new Uint8Array(32).fill(47);
-  const transport = new ObservedRuntimeTransport();
-  let id = 0;
-  const randomId = (): string => `start-remediation-${++id}-${randomUUID()}`;
-  const adapter = adapterFactory(runtimeDirectory);
-  let server = serverFor(endpoint, token, transport, randomId, adapter);
-  servers.push(server);
-  await server.start();
-  return {
-    runtimeDirectory,
-    transport,
-    connect: () => connect(endpoint, token, transport, randomId),
-    restart: async () => {
-      await server.stop();
-      server = serverFor(endpoint, token, transport, randomId, adapter);
-      servers.push(server);
-      await server.start();
-    },
-  };
-}
-
-function serverFor(
-  endpoint: RuntimeLocalEndpoint,
-  token: Uint8Array,
-  transport: ObservedRuntimeTransport,
-  randomId: () => string,
-  executionAdapter: GenericCliExecutionAdapter,
-): RuntimeServer {
-  return new RuntimeServer({
-    transport,
-    endpoint,
-    token,
-    supportedProtocolRange: { min: 1, max: 1 },
-    runtimeVersion: '0.6.8',
-    buildId: 'start-remediation-build',
-    now: () => Date.parse('2026-08-21T10:00:00.000Z'),
-    randomId,
-    randomNonce: randomId,
-    handshakeDeadlineMs: 500,
-    requestDeadlineMs: 500,
-    executionAdapter,
+async function continuesLostParentFork(): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter({ stopError: new Error('stop failed') });
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const task = await createClaudeTask(runtime, 'fake-checkout', 'lost-stop-failure');
+  const parent = await runtime.startTask({ taskId: task.id, idempotencyKey: 'lost-stop-start' });
+  adapter.lose(task.id);
+  const child = await runtime.forkProviderSession({
+    taskId: task.id, providerSessionId: parent.providerSession!.id,
+    idempotencyKey: 'lost-stop-fork',
   });
+  expectForkedClaude(parent, child, adapter, task.id);
+  expect(adapter.isDisposed(parent.attempt!.id)).toBe(true);
+  await runtime.disconnect();
 }
 
-async function connect(
-  endpoint: RuntimeLocalEndpoint,
-  token: Uint8Array,
-  transport: ObservedRuntimeTransport,
-  randomId: () => string,
-): Promise<RuntimeClientSession> {
-  const result = await new NodeRuntimeClient({
-    transport,
-    randomId,
-    randomNonce: randomId,
-  }).connect(endpoint, token, {
-    clientIdentity: { name: 'hariari-desktop', version: '0.6.8' },
-    supportedProtocolRange: { min: 1, max: 1 },
-    deadlineMs: 500,
+async function rejectsUnknownParentFork(): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const task = await createClaudeTask(runtime, 'fake-checkout', 'unknown-stop-failure');
+  const parent = await runtime.startTask({ taskId: task.id, idempotencyKey: 'unknown-stop-start' });
+  adapter.forget(task.id);
+  await expect(runtime.forkProviderSession({ taskId: task.id,
+    providerSessionId: parent.providerSession!.id, idempotencyKey: 'unknown-stop-fork' }))
+    .rejects.toEqual(new RuntimePortError('task-not-ready', false));
+  await expect(runtime.getTaskExecution(task.id)).resolves.toEqual(parent);
+  expect(adapter.startCount(task.id)).toBe(1);
+  expect(adapter.stopCount(task.id)).toBe(0);
+  await runtime.disconnect();
+}
+
+async function settlesLateParentExit(): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter({ stopReturnsBeforeExit: true });
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const task = await createClaudeTask(runtime, 'fake-checkout', 'late-parent-exit');
+  const parent = await runtime.startTask({ taskId: task.id, idempotencyKey: 'late-parent-start' });
+  const child = await runtime.forkProviderSession({
+    taskId: task.id, providerSessionId: parent.providerSession!.id,
+    idempotencyKey: 'late-parent-fork',
   });
-  if (result.kind !== 'connected') throw new Error('expected authenticated Runtime session');
-  return result.session;
+  expect(adapter.isDisposed(parent.attempt!.id)).toBe(false);
+  adapter.exitAttempt(parent.attempt!.id, 143);
+  await nextRuntimeTurn();
+  expect(adapter.isDisposed(parent.attempt!.id)).toBe(true);
+  await expect(runtime.getTaskExecution(task.id)).resolves.toEqual(child);
+  expect(adapter.hasRunning(task.id)).toBe(true);
+  await runtime.disconnect();
 }
 
-class ObservedRuntimeTransport extends NodeLocalRuntimeTransport {
-  private readonly requestCounts = new Map<string, number>();
-  private readonly requestWaiters = new Map<string, Set<() => void>>();
-
-  override listen(
-    endpoint: RuntimeLocalEndpoint,
-    onConnection: (connection: RuntimeFrameConnection) => Promise<void>,
-  ): Promise<RuntimeTransportListener> {
-    return super.listen(endpoint, (connection) => onConnection(this.observe(connection)));
-  }
-
-  waitForRequests(operation: string, count: number): Promise<void> {
-    if ((this.requestCounts.get(operation) ?? 0) >= count) return Promise.resolve();
-    return new Promise((resolve) => {
-      const key = `${operation}:${count}`;
-      const waiters = this.requestWaiters.get(key) ?? new Set<() => void>();
-      waiters.add(resolve);
-      this.requestWaiters.set(key, waiters);
-    });
-  }
-
-  private observe(connection: RuntimeFrameConnection): RuntimeFrameConnection {
-    return {
-      readFrame: async (deadlineMs) => {
-        const frame = await connection.readFrame(deadlineMs);
-        this.record(frame);
-        return frame;
-      },
-      writeFrame: (frame, deadlineMs) => connection.writeFrame(frame, deadlineMs),
-      onClose: (listener) => connection.onClose(listener),
-      close: () => connection.close(),
-    };
-  }
-
-  private record(frame: Record<string, unknown>): void {
-    const operation = frame.operation;
-    if (!operation || typeof operation !== 'object' || !('name' in operation)) return;
-    const name = operation.name;
-    if (typeof name !== 'string') return;
-    const count = (this.requestCounts.get(name) ?? 0) + 1;
-    this.requestCounts.set(name, count);
-    const key = `${name}:${count}`;
-    for (const resolve of this.requestWaiters.get(key) ?? []) resolve();
-    this.requestWaiters.delete(key);
-  }
-}
-
-function corruptExecutionAppend(
-  eventPath: string,
-  failedWrite: number,
-  mode: (typeof FAILED_APPEND_MODES)[number],
-): void {
-  const open = fs.promises.open.bind(fs.promises);
-  let writes = 0;
-  let partial = false;
-  vi.spyOn(fs.promises, 'open').mockImplementation(async (file, flags, permissions) => {
-    const handle = await open(file, flags, permissions);
-    if (file !== eventPath || flags !== 'a') return handle;
-    return new Proxy(handle, {
-      get(target, property, receiver) {
-        if (property !== 'write') return Reflect.get(target, property, receiver);
-        return async (data: Buffer) => {
-          writes += 1;
-          if (writes === failedWrite && mode === 'zero-first') {
-            return { bytesWritten: 0, buffer: data };
-          }
-          if (writes === failedWrite) {
-            partial = true;
-            return target.write(data.subarray(0, 1));
-          }
-          if (partial && writes === failedWrite + 1) {
-            if (mode === 'partial-then-error') throw new Error('injected append error');
-            return { bytesWritten: 0, buffer: data };
-          }
-          return target.write(data);
-        };
-      },
-    });
+function expectForkedClaude(parent: TaskExecutionView, child: TaskExecutionView, adapter: FakeClaudeCodeExecutionAdapter, taskId: string): void {
+  expect(child.attempt).toMatchObject({ number: 2, state: 'running' });
+  expect(child.attempt?.id).not.toBe(parent.attempt?.id);
+  expect(child.providerSession).toMatchObject({ parentId: parent.providerSession!.id });
+  expect(child.providerSession?.id).not.toBe(parent.providerSession?.id);
+  expect(adapter.startsFor(taskId)[1]?.instruction).toMatchObject({
+    kind: 'fork-claude', parentNativeSessionId: initialNativeSessionId(adapter, taskId),
+    context: { worktreeId: parent.context?.worktreeId, branchName: parent.context?.branchName },
   });
-}
-
-function nextRuntimeTurn(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve));
-}
-
-function deferred(): { readonly promise: Promise<void>; resolve(): void } {
-  let resolve: () => void = () => undefined;
-  const promise = new Promise<void>((settle) => {
-    resolve = settle;
+  expect(child.context).toMatchObject({
+    worktreeId: parent.context!.worktreeId,
+    branchName: parent.context!.branchName,
   });
-  return { promise, resolve };
+  expect(child.attempts).toEqual([{ ...parent.attempt, state: 'superseded' }, child.attempt]);
+  expect(child.providerSessions).toEqual([parent.providerSession, child.providerSession]);
+  expect(adapter.startCount(taskId)).toBe(2);
+}
+
+function initialNativeSessionId(adapter: FakeClaudeCodeExecutionAdapter, taskId: string): string {
+  const instruction = adapter.startsFor(taskId)[0]?.instruction;
+  if (instruction?.kind !== 'new' || !instruction.nativeSessionId) {
+    throw new Error('expected initial native provider session');
+  }
+  return instruction.nativeSessionId;
 }

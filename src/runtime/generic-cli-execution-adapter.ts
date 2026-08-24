@@ -2,25 +2,33 @@ import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { TaskView } from '../shared/runtime/runtime-interface';
+import type {
+  ProviderSessionCapabilities,
+  TaskProvider,
+  TaskView,
+} from '../shared/runtime/runtime-interface';
 
 const TRACER_TEXT = 'hariari-runtime-tracer';
 
 export class GenericCliExecutionError extends Error {
   constructor(
     readonly code: 'worktree-unavailable' | 'process-start-failed',
-    readonly context: GenericCliExecution['context'] | null = null,
+    readonly context: ActiveExecution['context'] | null = null,
   ) {
     super(`Generic CLI execution failed: ${code}`);
     this.name = 'GenericCliExecutionError';
   }
 }
 
-export interface GenericCliExecutionAdapter {
-  start(request: GenericCliStartRequest): Promise<GenericCliExecution>;
+export interface ExecutionAdapter {
+  capabilities(task: TaskView): Promise<ProviderSessionCapabilities>;
+  observe(binding: PrivateExecutionBinding): Promise<ExecutionObservation>;
+  launch(plan: ExecutionLaunchPlan): Promise<ActiveExecution>;
 }
 
-export interface GenericCliStartRequest {
+export type ExecutionObservation = 'live' | 'lost' | 'unknown';
+
+export interface ExecutionStartRequest {
   readonly task: TaskView;
   readonly run: { readonly id: string; readonly number: number };
   readonly attempt: { readonly id: string; readonly number: number };
@@ -30,11 +38,56 @@ export interface GenericCliStartRequest {
     readonly processId: string;
     readonly ptyId: string;
   };
+  readonly instruction: ProviderStartInstruction;
   readonly onOutput: (data: string) => void;
   readonly onExit: (exitCode: number) => void;
 }
 
-export interface GenericCliExecution {
+export type PlannedExecutionContext = Omit<ExecutionStartRequest, 'instruction'>;
+
+export interface PrivateProviderSession {
+  readonly id: string;
+  readonly provider: TaskProvider;
+  readonly nativeSessionId: string;
+  readonly taskId: string;
+  readonly attemptId: string;
+  readonly executionContextId: string;
+  readonly capabilities: ProviderSessionCapabilities;
+  readonly parentId: string | null;
+  readonly lineage: 'new' | 'native-resume' | 'fork';
+  readonly context: ActiveExecution['context'];
+}
+
+export interface PrivateExecutionBinding {
+  readonly task: TaskView;
+  readonly run: { readonly id: string; readonly number: number };
+  readonly attempt: { readonly id: string; readonly number: number };
+  readonly context: ActiveExecution['context'];
+  readonly providerSession: PrivateProviderSession | null;
+}
+
+export type ExecutionLaunchPlan =
+  | { readonly kind: 'new'; readonly nativeSessionId: string | null;
+      readonly plannedContext: PlannedExecutionContext }
+  | { readonly kind: 'native-resume'; readonly source: PrivateProviderSession;
+      readonly plannedContext: PlannedExecutionContext }
+  | { readonly kind: 'fork'; readonly source: PrivateProviderSession;
+      readonly plannedContext: PlannedExecutionContext };
+
+export type ProviderStartInstruction =
+  | { readonly kind: 'new'; readonly nativeSessionId: string | null }
+  | {
+      readonly kind: 'resume-claude';
+      readonly nativeSessionId: string;
+      readonly context: ActiveExecution['context'];
+    }
+  | {
+      readonly kind: 'fork-claude';
+      readonly parentNativeSessionId: string;
+      readonly context: ActiveExecution['context'];
+    };
+
+export interface ActiveExecution {
   readonly context: {
     readonly id: string;
     readonly worktreeId: string;
@@ -43,6 +96,8 @@ export interface GenericCliExecution {
     readonly processId: string;
     readonly ptyId: string;
   };
+  readonly providerSession: { readonly nativeSessionId: string; readonly capabilities: { readonly resume: boolean; readonly fork: boolean } } | null;
+  isRunning(): boolean;
   activateOutput(): void;
   activateExit(): void;
   stop(): Promise<void>;
@@ -53,14 +108,14 @@ interface PtyDisposable {
   dispose(): void;
 }
 
-interface PtyProcess {
+export interface PtyProcess {
   readonly pid: number;
   onData(listener: (data: string) => void): PtyDisposable;
   onExit(listener: (event: { readonly exitCode: number }) => void): PtyDisposable;
   kill(signal?: string): void;
 }
 
-interface PtyPort {
+export interface PtyPort {
   spawn(
     file: string,
     args: readonly string[],
@@ -81,7 +136,7 @@ export interface LocalGenericCliExecutionAdapterOptions {
 }
 
 /** Owns local Git allocation and one allowlisted shell-backed Generic CLI process. */
-export class LocalGenericCliExecutionAdapter implements GenericCliExecutionAdapter {
+export class LocalGenericCliExecutionAdapter implements ExecutionAdapter {
   private pty: PtyPort | null;
   private readonly worktreeRoot: string;
 
@@ -91,24 +146,34 @@ export class LocalGenericCliExecutionAdapter implements GenericCliExecutionAdapt
     this.nodeModulesRoot = options.nodeModulesRoot;
   }
 
-  async start(request: GenericCliStartRequest): Promise<GenericCliExecution> {
-    if (request.task.provider !== 'shell') throw new GenericCliExecutionError('process-start-failed');
-    const repository = await resolveRepository(request.task.repository);
-    const baseCommit = await git(repository, ['rev-parse', '--verify', `${request.task.baseRef}^{commit}`]);
-    const branchName = branchFor(request);
-    const worktreePath = path.join(this.worktreeRoot, request.identities.worktreeId);
-    await prepareWorktreePath(this.worktreeRoot, worktreePath);
-    await git(repository, ['worktree', 'add', '-b', branchName, worktreePath, baseCommit]);
-    return this.startPty(request, worktreePath, branchName, baseCommit);
+  private readonly executions = new Map<string, GenericCliExecution>();
+
+  async capabilities(_task: TaskView): Promise<ProviderSessionCapabilities> {
+    return { resume: false, fork: false };
+  }
+
+  async observe(binding: PrivateExecutionBinding): Promise<ExecutionObservation> {
+    const active = this.executions.get(binding.context.id);
+    if (!active) return 'unknown';
+    return active.isRunning() ? 'live' : 'lost';
+  }
+
+  async launch(plan: ExecutionLaunchPlan): Promise<GenericCliExecution> {
+    const request = executionStartRequest(plan);
+    if (request.task.provider !== 'shell' || request.instruction.kind !== 'new') {
+      throw new GenericCliExecutionError('process-start-failed');
+    }
+    const allocation = await allocateLocalExecutionContext(request, this.worktreeRoot);
+    const active = this.startPty(request, allocation.worktreePath, allocation.context);
+    this.executions.set(active.context.id, active);
+    return active;
   }
 
   private startPty(
     request: GenericCliStartRequest,
     worktreePath: string,
-    branchName: string,
-    baseCommit: string,
+    context: GenericCliExecution['context'],
   ): GenericCliExecution {
-    const context = executionContext(request, branchName, baseCommit);
     try {
       const command = tracerCommand();
       const pty = this.getPty().spawn(command.file, command.args, {
@@ -132,6 +197,21 @@ export class LocalGenericCliExecutionAdapter implements GenericCliExecutionAdapt
   }
 }
 
+export type GenericCliExecutionAdapter = ExecutionAdapter;
+export type GenericCliStartRequest = ExecutionStartRequest;
+export type GenericCliExecution = ActiveExecution;
+
+export function executionStartRequest(plan: ExecutionLaunchPlan): ExecutionStartRequest {
+  const instruction: ProviderStartInstruction = plan.kind === 'new'
+    ? { kind: 'new', nativeSessionId: plan.nativeSessionId }
+    : plan.kind === 'native-resume'
+      ? { kind: 'resume-claude', nativeSessionId: plan.source.nativeSessionId,
+          context: plan.source.context }
+      : { kind: 'fork-claude', parentNativeSessionId: plan.source.nativeSessionId,
+          context: plan.source.context };
+  return { ...plan.plannedContext, instruction };
+}
+
 function bufferedPtyExecution(
   pty: PtyProcess,
   request: GenericCliStartRequest,
@@ -140,6 +220,8 @@ function bufferedPtyExecution(
   const lifecycle = new BufferedPtyLifecycle(pty, request);
   return {
     context,
+    providerSession: null,
+    isRunning: () => lifecycle.isRunning(),
     activateOutput: () => lifecycle.activateOutput(),
     activateExit: () => lifecycle.activateExit(),
     stop: () => lifecycle.stop(),
@@ -179,6 +261,10 @@ class BufferedPtyLifecycle {
     this.activateExit();
   }
 
+  isRunning(): boolean {
+    return !this.disposed && this.exitCode === null;
+  }
+
   activateExit(): void {
     this.exitActive = true;
     this.flush();
@@ -216,7 +302,7 @@ class BufferedPtyLifecycle {
   }
 }
 
-function executionContext(
+export function executionContext(
   request: GenericCliStartRequest,
   branchName: string,
   baseCommit: string,
@@ -231,7 +317,7 @@ function executionContext(
   };
 }
 
-function loadNodePty(nodeModulesRoot: string | undefined): PtyPort {
+export function loadNodePty(nodeModulesRoot: string | undefined): PtyPort {
   const root = nodeModulesRoot ?? process.cwd();
   try {
     const requireFromAssets = createRequire(
@@ -288,6 +374,33 @@ function branchFor(request: GenericCliStartRequest): string {
   return `hariari/task-${request.task.id}/run-${request.run.number}/attempt-${request.attempt.number}`;
 }
 
+export async function allocateLocalExecutionContext(
+  request: GenericCliStartRequest,
+  worktreeRoot: string,
+): Promise<{ readonly context: GenericCliExecution['context']; readonly worktreePath: string }> {
+  const repository = await resolveRepository(request.task.repository);
+  const baseCommit = await git(repository, ['rev-parse', '--verify', `${request.task.baseRef}^{commit}`]);
+  const branchName = branchFor(request);
+  const worktreePath = path.join(worktreeRoot, request.identities.worktreeId);
+  await prepareWorktreePath(worktreeRoot, worktreePath);
+  await git(repository, ['worktree', 'add', '-b', branchName, worktreePath, baseCommit]);
+  return { context: executionContext(request, branchName, baseCommit), worktreePath };
+}
+
+export async function existingLocalWorktreePath(
+  worktreeRoot: string,
+  worktreeId: string,
+): Promise<string> {
+  const worktreePath = path.join(worktreeRoot, worktreeId);
+  try {
+    const stats = await fs.promises.lstat(worktreePath);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) throw new Error('unsafe worktree');
+    return worktreePath;
+  } catch {
+    throw new GenericCliExecutionError('worktree-unavailable');
+  }
+}
+
 function tracerCommand(): { readonly file: string; readonly args: readonly string[] } {
   if (process.platform === 'win32') {
     return { file: process.env.COMSPEC ?? 'cmd.exe', args: ['/d', '/s', '/c', `echo ${TRACER_TEXT}`] };
@@ -295,7 +408,7 @@ function tracerCommand(): { readonly file: string; readonly args: readonly strin
   return { file: '/bin/sh', args: ['-c', `printf '${TRACER_TEXT}\\n'`] };
 }
 
-function runtimeEnvironment(): Record<string, string> {
+export function runtimeEnvironment(): Record<string, string> {
   const keys = process.platform === 'win32'
     ? ['PATH', 'SystemRoot', 'SYSTEMDRIVE', 'COMSPEC', 'TEMP', 'TMP']
     : ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE'];

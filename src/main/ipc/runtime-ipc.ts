@@ -127,14 +127,39 @@ function sanitizeTaskExecution(execution: TaskExecutionView): TaskExecutionView 
       state: execution.attempt.state,
       ...(execution.attempt.exitCode === undefined ? {} : { exitCode: execution.attempt.exitCode }),
     },
+    attempts: execution.attempts.map((attempt) => ({
+      id: attempt.id,
+      number: attempt.number,
+      state: attempt.state,
+      ...(attempt.exitCode === undefined ? {} : { exitCode: attempt.exitCode }),
+    })),
     context: execution.context && {
       id: execution.context.id,
       worktreeId: execution.context.worktreeId,
       branchName: execution.context.branchName,
       baseCommit: execution.context.baseCommit,
-      processId: execution.context.processId,
-      ptyId: execution.context.ptyId,
     },
+    executionContexts: execution.executionContexts.map((context) => ({
+      id: context.id,
+      worktreeId: context.worktreeId,
+      branchName: context.branchName,
+      baseCommit: context.baseCommit,
+    })),
+    ...(execution.providerSession === undefined ? {} : {
+      providerSession: execution.providerSession && sanitizeProviderSession(execution.providerSession),
+    }),
+    providerSessions: execution.providerSessions.map(sanitizeProviderSession),
+  };
+}
+
+function sanitizeProviderSession(
+  session: NonNullable<TaskExecutionView['providerSession']>,
+): NonNullable<TaskExecutionView['providerSession']> {
+  return {
+    id: session.id, provider: session.provider, attemptId: session.attemptId,
+    executionContextId: session.executionContextId,
+    capabilities: { ...session.capabilities }, parentId: session.parentId,
+    lineage: session.lineage,
   };
 }
 

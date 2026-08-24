@@ -6,6 +6,7 @@ import type {
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
   StartTaskRequest,
+  ProviderSessionActionRequest,
   TaskExecutionView,
   TaskOutputEvent,
   TaskView,
@@ -108,6 +109,14 @@ class RuntimeConnector implements RuntimeInterface {
 
   startTask(request: StartTaskRequest): Promise<TaskExecutionView> {
     return this.withSession((session) => session.startTask(request));
+  }
+
+  resumeProviderSession(request: ProviderSessionActionRequest): Promise<TaskExecutionView> {
+    return this.withSession((session) => session.resumeProviderSession(request));
+  }
+
+  forkProviderSession(request: ProviderSessionActionRequest): Promise<TaskExecutionView> {
+    return this.withSession((session) => session.forkProviderSession(request));
   }
 
   cancelTask(request: CancelTaskRequest): Promise<TaskExecutionView> {

@@ -17,6 +17,8 @@ import {
   TASK_LIST_OPERATION,
   TASK_OUTPUT_SUBSCRIBE_OPERATION,
   TASK_START_OPERATION,
+  PROVIDER_SESSION_FORK_OPERATION,
+  PROVIDER_SESSION_RESUME_OPERATION,
   createAuthenticatedReplyEnvelope,
   createServerProof,
   selectHighestMutualVersion,
@@ -29,11 +31,13 @@ import {
   type RuntimeResponseFrame,
 } from './protocol';
 import {
+  RuntimeProtocolValidationError,
   parseAuthenticateFrame,
   parseRequestFrame,
   parseCreateTaskRequest,
   parseCancelTaskRequest,
   parseStartTaskRequest,
+  parseProviderSessionActionRequest,
   parseTaskExecutionId,
   parseShutdownRequest,
 } from './protocol-validation';
@@ -41,6 +45,8 @@ import {
   LocalGenericCliExecutionAdapter,
   type GenericCliExecutionAdapter,
 } from './generic-cli-execution-adapter';
+import { ClaudeCodeExecutionAdapter } from './claude-code-execution-adapter';
+import { ProviderExecutionAdapterRouter } from './provider-execution-adapter-router';
 import { TaskExecutionError, TaskExecutionModule } from './task-execution-module';
 import { TaskModule, TaskStorageError } from './task-module';
 
@@ -92,9 +98,15 @@ export class RuntimeServer {
     this.executions = new TaskExecutionModule(
       this.tasks,
       options.executionAdapter ??
-        new LocalGenericCliExecutionAdapter({
-          runtimeDirectory: options.endpoint.runtimeDirectory,
-          nodeModulesRoot: options.nodeModulesRoot,
+        new ProviderExecutionAdapterRouter({
+          shell: new LocalGenericCliExecutionAdapter({
+            runtimeDirectory: options.endpoint.runtimeDirectory,
+            nodeModulesRoot: options.nodeModulesRoot,
+          }),
+          claude: new ClaudeCodeExecutionAdapter({
+            runtimeDirectory: options.endpoint.runtimeDirectory,
+            nodeModulesRoot: options.nodeModulesRoot,
+          }),
         }),
       options.randomId,
     );
@@ -270,6 +282,12 @@ export class RuntimeServer {
         this.executions.start(parsed),
       );
     }
+    if (request.operation.name === PROVIDER_SESSION_RESUME_OPERATION) {
+      return this.handleProviderSessionAction(request, protocolVersion, 'resume');
+    }
+    if (request.operation.name === PROVIDER_SESSION_FORK_OPERATION) {
+      return this.handleProviderSessionAction(request, protocolVersion, 'fork');
+    }
     if (request.operation.name === TASK_CANCEL_OPERATION) {
       return this.handleExecutionRequest(request, protocolVersion, (parsed) =>
         this.executions.cancel(parsed),
@@ -279,6 +297,22 @@ export class RuntimeServer {
       return this.handleTaskExecutionLookup(request, protocolVersion);
     }
     return this.handleShutdown(request, protocolVersion);
+  }
+
+  private async handleProviderSessionAction(
+    request: RuntimeRequestFrame,
+    protocolVersion: number,
+    action: 'resume' | 'fork',
+  ): Promise<RuntimeResponseFrame> {
+    try {
+      const parsed = parseProviderSessionActionRequest(request);
+      const execution = action === 'resume'
+        ? await this.executions.resumeProvider(parsed)
+        : await this.executions.forkProvider(parsed);
+      return success(request, protocolVersion, execution as unknown as Record<string, unknown>);
+    } catch (error) {
+      return executionFailure(request, protocolVersion, error);
+    }
   }
 
   private handleHealth(request: RuntimeRequestFrame, protocolVersion: number): RuntimeResponseFrame {
@@ -505,6 +539,9 @@ function executionFailure(
   protocolVersion: number,
   error: unknown,
 ): RuntimeResponseFrame {
+  if (error instanceof RuntimeProtocolValidationError) {
+    return failure(request, protocolVersion, 'invalid-request', false);
+  }
   if (error instanceof TaskStorageError) {
     return failure(request, protocolVersion, error.code, error.code === 'internal');
   }

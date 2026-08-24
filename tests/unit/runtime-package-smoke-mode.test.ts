@@ -70,6 +70,14 @@ class SmokeRuntime implements RuntimeInterface {
     throw new Error('not used by package smoke');
   }
 
+  async resumeProviderSession(): Promise<never> {
+    throw new Error('not used by package smoke');
+  }
+
+  async forkProviderSession(): Promise<never> {
+    throw new Error('not used by package smoke');
+  }
+
   async cancelTask(): Promise<never> {
     throw new Error('not used by package smoke');
   }

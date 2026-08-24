@@ -20,7 +20,7 @@ describe('Local Generic CLI execution adapter', () => {
       runtimeDirectory: path.join(repository.path, 'runtime'),
       pty: { spawn: () => pty },
     });
-    const execution = await adapter.start(startRequest(repository.path));
+    const execution = await adapter.launch(startRequest(repository.path));
     let settled = false;
     const firstStop = execution.stop().then(() => {
       settled = true;
@@ -53,25 +53,23 @@ function createRepository(): DisposableGitRepository {
 
 function startRequest(repository: string) {
   return {
-    task: {
-      id: 'task-1',
-      objective: 'Exercise PTY cancellation.',
-      project: 'Hariari',
-      repository,
-      baseRef: 'HEAD',
-      provider: 'shell' as const,
-      createdAt: '2026-08-21T10:00:00.000Z',
+    kind: 'new' as const,
+    nativeSessionId: null,
+    plannedContext: {
+      task: {
+        id: 'task-1', objective: 'Exercise PTY cancellation.', project: 'Hariari',
+        repository, baseRef: 'HEAD', provider: 'shell' as const,
+        createdAt: '2026-08-21T10:00:00.000Z',
+      },
+      run: { id: 'run-1', number: 1 },
+      attempt: { id: 'attempt-1', number: 1 },
+      identities: {
+        contextId: 'context-1', worktreeId: 'worktree-1',
+        processId: 'process-1', ptyId: 'pty-1',
+      },
+      onOutput: () => undefined,
+      onExit: () => undefined,
     },
-    run: { id: 'run-1', number: 1 },
-    attempt: { id: 'attempt-1', number: 1 },
-    identities: {
-      contextId: 'context-1',
-      worktreeId: 'worktree-1',
-      processId: 'process-1',
-      ptyId: 'pty-1',
-    },
-    onOutput: () => undefined,
-    onExit: () => undefined,
   };
 }
 

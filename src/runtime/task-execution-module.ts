@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import type {
   CancelTaskRequest,
   StartTaskRequest,
+  ProviderSessionActionRequest,
   TaskExecutionState,
   TaskExecutionView,
   TaskOutputEvent,
@@ -9,20 +11,34 @@ import {
   GenericCliExecutionError,
   type GenericCliExecution,
   type GenericCliExecutionAdapter,
+  type PlannedExecutionContext,
+  type PrivateProviderSession,
+  type ExecutionLaunchPlan,
 } from './generic-cli-execution-adapter';
-import { TaskModule } from './task-module';
+import {
+  TaskModule,
+  type PlannedProviderRepair,
+} from './task-module';
+import type { PrivateTaskExecutionView } from './task-execution-projection';
 import { TaskOutputLog } from './task-output-log';
 
 const MAX_OUTPUT_CHARS = 4 * 1024;
 
-interface InFlightStart {
+interface InFlightOperation {
   readonly idempotencyKey: string;
+  readonly fingerprint: string;
   readonly promise: Promise<TaskExecutionView>;
 }
 
 type TerminalTransition =
   | { readonly kind: 'start-failure' }
   | { readonly kind: 'process-exit'; readonly exitCode: number };
+
+interface PlannedAttachment {
+  readonly parentId: string | null;
+  readonly repair: boolean;
+  readonly lineage: 'new' | 'native-resume' | 'fork';
+}
 
 export class TaskExecutionError extends Error {
   constructor(readonly code: 'worktree-unavailable' | 'process-start-failed' | 'internal') {
@@ -33,10 +49,11 @@ export class TaskExecutionError extends Error {
 
 /** Runtime-owned execution module: adapter lifecycle, transient output, and durable transitions. */
 export class TaskExecutionModule {
-  private readonly starts = new Map<string, InFlightStart>();
+  private readonly operations = new Map<string, InFlightOperation>();
   private readonly settlements = new Map<string, Promise<void>>();
   private readonly exitWaits = new Map<string, ExitWait>();
   private readonly active = new Map<string, GenericCliExecution>();
+  private readonly activeAttempts = new Map<string, GenericCliExecution>();
   private readonly subscribers = new Map<string, Set<(event: TaskOutputEvent) => void>>();
   private readonly outputSequences = new Map<string, number>();
   private readonly outputPoisoned = new Set<string>();
@@ -51,41 +68,184 @@ export class TaskExecutionModule {
   }
 
   start(request: StartTaskRequest): Promise<TaskExecutionView> {
-    const inFlight = this.starts.get(request.taskId);
-    if (inFlight) return this.followInFlightStart(request, inFlight);
-    const promise = this.startOwned(request);
-    const owned = { idempotencyKey: request.idempotencyKey, promise };
-    this.starts.set(request.taskId, owned);
-    void promise.then(
-      () => this.releaseStart(request.taskId, owned),
-      () => this.releaseStart(request.taskId, owned),
+    return this.runTaskOperation(
+      request.taskId, request.idempotencyKey,
+      JSON.stringify(['start', request.taskId]),
+      () => this.startOwned(request),
     );
+  }
+  resumeProvider(request: ProviderSessionActionRequest): Promise<TaskExecutionView> {
+    return this.runTaskOperation(
+      request.taskId,
+      request.idempotencyKey,
+      JSON.stringify(['resume', request.taskId, request.providerSessionId]),
+      () => this.resumeProviderOwned(request),
+    );
+  }
+  private async resumeProviderOwned(
+    request: ProviderSessionActionRequest,
+  ): Promise<TaskExecutionView> {
+    const prepared = await this.tasks.prepareProviderAction(request, 'resume');
+    if (prepared.prior?.decision === 'exact-reattach') {
+      return this.tasks.execution(request.taskId);
+    }
+    const current = this.tasks.execution(request.taskId);
+    if (prepared.prior?.decision === 'native-resume' &&
+      current.providerSession?.parentId === request.providerSessionId &&
+      current.providerSession.lineage === 'native-resume') return current;
+    const recovery = await this.tasks.recoverProviderAction(request, 'native-resume');
+    if (recovery && !recovery.repair) return recovery.execution;
+    if (recovery?.repair) return this.startReserved(
+      { taskId: request.taskId, idempotencyKey: request.idempotencyKey },
+      recovery.execution, recovery.repair,
+    );
+    if (prepared.prior?.decision === 'native-resume') {
+      this.releaseLostActive(request.taskId);
+      const reservation = await this.tasks.reserveNativeResume(request);
+      return this.startNativeResumeReserved(request.taskId, reservation);
+    }
+    const observation = await this.adapter.observe(bindingFor(prepared));
+    if (observation === 'unknown') {
+      return this.tasks.rejectProviderAction(prepared, 'task-not-ready');
+    }
+    if (observation === 'live') {
+      await this.tasks.acceptProviderAction(prepared, 'exact-reattach');
+      return this.tasks.execution(request.taskId);
+    }
+    await this.tasks.acceptProviderAction(prepared, 'native-resume');
+    this.releaseLostActive(request.taskId);
+    const reservation = await this.tasks.reserveNativeResume(request);
+    return this.startNativeResumeReserved(request.taskId, reservation);
+  }
+
+  private releaseLostActive(taskId: string): void {
+    const active = this.active.get(taskId);
+    active?.dispose();
+    this.active.delete(taskId);
+    for (const [attemptId, candidate] of this.activeAttempts) {
+      if (candidate === active) this.activeAttempts.delete(attemptId);
+    }
+  }
+  forkProvider(request: ProviderSessionActionRequest): Promise<TaskExecutionView> {
+    return this.runTaskOperation(
+      request.taskId,
+      request.idempotencyKey,
+      JSON.stringify(['fork', request.taskId, request.providerSessionId]),
+      () => this.forkProviderOwned(request),
+    );
+  }
+  private async forkProviderOwned(
+    request: ProviderSessionActionRequest,
+  ): Promise<TaskExecutionView> {
+    const prepared = await this.tasks.prepareProviderAction(request, 'fork');
+    const current = this.tasks.execution(request.taskId);
+    if (prepared.prior && current.providerSession?.parentId === request.providerSessionId) {
+      return current;
+    }
+    const recovery = await this.tasks.recoverProviderAction(request, 'fork');
+    if (recovery && !recovery.repair) return recovery.execution;
+    if (recovery?.repair) return this.startReserved(
+      { taskId: request.taskId, idempotencyKey: request.idempotencyKey },
+      recovery.execution, recovery.repair,
+    );
+    if (await this.adapter.observe(bindingFor(prepared)) === 'unknown') {
+      return this.tasks.rejectProviderAction(prepared, 'task-not-ready');
+    }
+    await this.tasks.acceptProviderAction(prepared, 'fork');
+    if (current.attempt?.state !== 'superseded') {
+      if (current.attempt?.state === 'running') {
+        await this.tasks.requestProviderSupersession(prepared, 'fork');
+      }
+      await this.stopAndConfirmParentLost(prepared);
+      await this.tasks.completeProviderSupersession(request.taskId, prepared.session.attemptId);
+    }
+    const reservation = await this.tasks.reserveProviderFork(prepared);
+    return this.startProviderForkReserved(request.taskId, reservation);
+  }
+
+  private async stopAndConfirmParentLost(
+    prepared: import('./provider-session-lifecycle').PreparedProviderAction,
+  ): Promise<void> {
+    const active = this.active.get(prepared.request.taskId);
+    try {
+      if (active) await active.stop();
+      else if (await this.adapter.observe(bindingFor(prepared)) === 'live') {
+        throw new Error('parent remains live');
+      }
+    } catch {
+      const observation = await this.adapter.observe(bindingFor(prepared));
+      if (observation === 'lost') {
+        this.releaseSupersededActive(
+          prepared.request.taskId, prepared.session.attemptId,
+        );
+        return;
+      }
+      if (observation === 'live') await this.tasks.abortProviderAction(prepared);
+      throw new TaskExecutionError('internal');
+    }
+    const observation = await this.adapter.observe(bindingFor(prepared));
+    if (observation === 'lost') return;
+    if (observation === 'live') await this.tasks.abortProviderAction(prepared);
+    throw new TaskExecutionError('internal');
+  }
+
+  private releaseSupersededActive(taskId: string, attemptId: string): void {
+    const active = this.activeAttempts.get(attemptId);
+    active?.dispose();
+    this.activeAttempts.delete(attemptId);
+    if (this.active.get(taskId) === active) this.active.delete(taskId);
+  }
+
+  private runTaskOperation(
+    taskId: string,
+    idempotencyKey: string,
+    fingerprint: string,
+    operation: () => Promise<TaskExecutionView>,
+  ): Promise<TaskExecutionView> {
+    const inFlight = this.operations.get(taskId);
+    if (inFlight) {
+      if (inFlight.idempotencyKey === idempotencyKey && inFlight.fingerprint === fingerprint) {
+        return inFlight.promise;
+      }
+      return inFlight.promise.then(
+        () => this.runTaskOperation(taskId, idempotencyKey, fingerprint, operation),
+        () => this.runTaskOperation(taskId, idempotencyKey, fingerprint, operation),
+      );
+    }
+    const promise = operation();
+    const owned = { idempotencyKey, fingerprint, promise };
+    this.operations.set(taskId, owned);
+    void promise.then(() => this.releaseOperation(taskId, owned),
+      () => this.releaseOperation(taskId, owned));
     return promise;
+  }
+
+  private releaseOperation(taskId: string, owned: InFlightOperation): void {
+    if (this.operations.get(taskId) === owned) this.operations.delete(taskId);
   }
 
   private async startOwned(request: StartTaskRequest): Promise<TaskExecutionView> {
     const reservation = await this.tasks.reserveExecution(request);
     return reservation.created
-      ? this.startReserved(request, reservation.execution)
+      ? this.startReserved(
+          request, reservation.execution, reservation.providerRepair,
+        )
       : reservation.execution;
   }
 
-  private followInFlightStart(
-    request: StartTaskRequest,
-    inFlight: InFlightStart,
-  ): Promise<TaskExecutionView> {
-    if (inFlight.idempotencyKey === request.idempotencyKey) return inFlight.promise;
-    return inFlight.promise.then(
-      () => this.start(request),
-      () => this.start(request),
+  async cancel(request: CancelTaskRequest): Promise<TaskExecutionView> {
+    const inFlight = this.operations.get(request.taskId);
+    if (inFlight?.fingerprint === JSON.stringify(['start', request.taskId])) {
+      return this.tasks.requestCancellation(request);
+    }
+    return this.runTaskOperation(
+      request.taskId, request.idempotencyKey,
+      JSON.stringify(['cancel', request.taskId]),
+      () => this.cancelOwned(request),
     );
   }
 
-  private releaseStart(taskId: string, owned: InFlightStart): void {
-    if (this.starts.get(taskId) === owned) this.starts.delete(taskId);
-  }
-
-  async cancel(request: CancelTaskRequest): Promise<TaskExecutionView> {
+  private async cancelOwned(request: CancelTaskRequest): Promise<TaskExecutionView> {
     const view = await this.tasks.requestCancellation(request);
     if (view.attempt?.state !== 'cancelling') return view;
     const active = this.active.get(request.taskId);
@@ -131,36 +291,114 @@ export class TaskExecutionModule {
   private async startReserved(
     request: StartTaskRequest,
     execution: TaskExecutionView,
+    providerRepair?: PlannedProviderRepair,
   ): Promise<TaskExecutionView> {
     if (!execution.run || !execution.attempt) throw new TaskExecutionError('internal');
+    const plannedContext = providerRepair
+      ? plannedContextFor(
+          execution, providerRepair.plannedContext,
+          (data) => this.publishOutput(request.taskId, execution.attempt!.id, data),
+          (exitCode) => void this.settle(request.taskId, execution.attempt!.id, exitCode),
+        )
+      : this.newPlannedContext(request.taskId, execution);
+    const sourceRepair = providerRepair;
+    const plan: ExecutionLaunchPlan = providerRepair
+      ? { kind: providerRepair.kind, source: providerSource(
+          providerRepair.parentSession, providerRepair.parentContext,
+        ), plannedContext } as ExecutionLaunchPlan
+      : { kind: 'new',
+          nativeSessionId: execution.task.provider === 'claude' ? randomUUID() : null,
+          plannedContext };
+    return this.launchPlannedAttempt(request.taskId, execution, plan, {
+      parentId: sourceRepair?.parentSession.id ?? null,
+      repair: sourceRepair !== undefined,
+      lineage: providerRepair?.kind ?? 'new',
+    });
+  }
+
+  private async startNativeResumeReserved(
+    taskId: string,
+    reservation: import('./task-module').NativeResumeReservation,
+  ): Promise<TaskExecutionView> {
+    const execution = reservation.execution;
+    if (!execution.run || !execution.attempt) throw new TaskExecutionError('internal');
+    const plannedContext = plannedContextFor(
+      execution, reservation.plannedContext,
+      (data) => this.publishOutput(taskId, execution.attempt!.id, data),
+      (exitCode) => void this.settle(taskId, execution.attempt!.id, exitCode),
+    );
+    return this.launchPlannedAttempt(taskId, execution, {
+      kind: 'native-resume',
+      source: providerSource(reservation.parentSession, reservation.parentContext),
+      plannedContext,
+    }, { parentId: reservation.parentSession.id, repair: true, lineage: 'native-resume' });
+  }
+
+  private async startProviderForkReserved(
+    taskId: string,
+    reservation: import('./task-module').ProviderForkReservation,
+  ): Promise<TaskExecutionView> {
+    const execution = reservation.execution;
+    if (!execution.run || !execution.attempt) throw new TaskExecutionError('internal');
+    const plannedContext = plannedContextFor(
+      execution, reservation.plannedContext,
+      (data) => this.publishOutput(taskId, execution.attempt!.id, data),
+      (exitCode) => void this.settle(taskId, execution.attempt!.id, exitCode),
+    );
+    return this.launchPlannedAttempt(taskId, execution, {
+      kind: 'fork', source: providerSource(reservation.parentSession, reservation.parentContext),
+      plannedContext,
+    }, { parentId: reservation.parentSession.id, repair: true, lineage: 'fork' });
+  }
+
+  private newPlannedContext(
+    taskId: string,
+    execution: TaskExecutionView,
+  ): PlannedExecutionContext {
+    return {
+      task: execution.task,
+      run: execution.run!,
+      attempt: execution.attempt!,
+      identities: {
+        contextId: this.randomId(),
+        worktreeId: this.randomId(),
+        processId: this.randomId(),
+        ptyId: this.randomId(),
+      },
+      onOutput: (data) => this.publishOutput(taskId, execution.attempt!.id, data),
+      onExit: (exitCode) => void this.settle(taskId, execution.attempt!.id, exitCode),
+    };
+  }
+
+  private async launchPlannedAttempt(
+    taskId: string,
+    execution: TaskExecutionView,
+    plan: ExecutionLaunchPlan,
+    attachment: PlannedAttachment,
+  ): Promise<TaskExecutionView> {
+    if (!execution.attempt) throw new TaskExecutionError('internal');
     let active: GenericCliExecution | null = null;
     try {
-      active = await this.adapter.start({
-        task: execution.task,
-        run: execution.run,
-        attempt: execution.attempt,
-        identities: {
-          contextId: this.randomId(),
-          worktreeId: this.randomId(),
-          processId: this.randomId(),
-          ptyId: this.randomId(),
-        },
-        onOutput: (data) => this.publishOutput(request.taskId, execution.attempt!.id, data),
-        onExit: (exitCode) => void this.settle(request.taskId, exitCode),
-      });
-      this.active.set(request.taskId, active);
-      this.exitWaits.set(request.taskId, new ExitWait());
-      await this.tasks.allocateContext(request.taskId, active.context);
-      const started = await this.tasks.markStarted(request.taskId);
+      const capabilities = await this.adapter.capabilities(execution.task);
+      active = await this.adapter.launch(plan);
+      assertPlannedLaunch(plan, active, capabilities);
+      this.active.set(taskId, active);
+      this.activeAttempts.set(execution.attempt.id, active);
+      this.exitWaits.set(taskId, new ExitWait());
+      await this.attachContext(
+        taskId, execution, active, attachment.parentId,
+        attachment.repair, attachment.lineage,
+      );
+      const started = await this.tasks.markStarted(taskId);
       active.activateExit();
       if (started.attempt?.state === 'cancelling') {
-        void this.stopCancelled(request.taskId, active).catch(() => undefined);
+        void this.stopCancelled(taskId, active).catch(() => undefined);
         return started;
       }
       active.activateOutput();
       return started;
     } catch (error) {
-      return this.failStart(request.taskId, active, error);
+      return this.failStart(taskId, active, error);
     }
   }
 
@@ -173,6 +411,9 @@ export class TaskExecutionModule {
       await active.stop().catch(() => undefined);
       active.dispose();
       this.active.delete(taskId);
+      for (const [attemptId, candidate] of this.activeAttempts) {
+        if (candidate === active) this.activeAttempts.delete(attemptId);
+      }
     }
     if (error instanceof GenericCliExecutionError && error.context) {
       await this.allocateFailedContext(taskId, error.context);
@@ -186,6 +427,34 @@ export class TaskExecutionModule {
     throw new TaskExecutionError('internal');
   }
 
+  private async attachContext(
+    taskId: string,
+    execution: TaskExecutionView,
+    active: GenericCliExecution,
+    parentId: string | null,
+    repair: boolean,
+    lineage: 'new' | 'native-resume' | 'fork' = 'new',
+  ): Promise<void> {
+    if (!execution.attempt) throw new TaskExecutionError('internal');
+    const providerSession = active.providerSession && execution.task.provider === 'claude'
+      ? { id: this.randomId(), provider: 'claude' as const,
+          nativeSessionId: active.providerSession.nativeSessionId, taskId,
+          attemptId: execution.attempt.id, executionContextId: active.context.id,
+          capabilities: active.providerSession.capabilities, parentId,
+          lineage }
+      : null;
+    if (!repair) {
+      await this.tasks.allocateContext(taskId, active.context, providerSession);
+      return;
+    }
+    await this.persistWithOneShotRepair(
+      taskId,
+      (view) => view.context?.id === active.context.id &&
+        (providerSession === null || view.providerSession?.id === providerSession.id),
+      () => this.tasks.allocateContext(taskId, active.context, providerSession),
+    );
+  }
+
   private async allocateFailedContext(
     taskId: string,
     context: GenericCliExecution['context'],
@@ -193,20 +462,25 @@ export class TaskExecutionModule {
     await this.persistWithOneShotRepair(
       taskId,
       (view) => view.context !== null,
-      () => this.tasks.allocateContext(taskId, context),
+      () => this.tasks.allocateContext(taskId, context, null),
     );
   }
 
-  private settle(taskId: string, exitCode: number): void {
-    if (this.settlements.has(taskId)) return;
+  private settle(taskId: string, attemptId: string, exitCode: number): void {
+    if (this.tasks.execution(taskId).attempt?.id !== attemptId) {
+      this.activeAttempts.get(attemptId)?.dispose();
+      this.activeAttempts.delete(attemptId);
+      return;
+    }
+    if (this.settlements.has(attemptId)) return;
     const settlement = this.persistTerminalWithRepair(taskId, { kind: 'process-exit', exitCode })
-      .then(() => this.release(taskId))
+      .then(() => this.release(taskId, attemptId))
       .catch((error: unknown) => {
         this.rejectExitWait(taskId, error);
-        this.release(taskId);
+        this.release(taskId, attemptId);
         throw error;
       });
-    this.settlements.set(taskId, settlement);
+    this.settlements.set(attemptId, settlement);
     void settlement.catch(() => undefined);
   }
 
@@ -231,10 +505,12 @@ export class TaskExecutionModule {
     );
   }
 
-  private release(taskId: string): void {
-    this.active.get(taskId)?.dispose();
-    this.active.delete(taskId);
-    this.settlements.delete(taskId);
+  private release(taskId: string, attemptId: string): void {
+    const active = this.activeAttempts.get(attemptId);
+    active?.dispose();
+    this.activeAttempts.delete(attemptId);
+    if (this.active.get(taskId) === active) this.active.delete(taskId);
+    this.settlements.delete(attemptId);
     this.resolveExitWait(taskId);
   }
 
@@ -253,7 +529,9 @@ export class TaskExecutionModule {
   private async persistTerminal(taskId: string, transition: TerminalTransition): Promise<void> {
     const view = this.tasks.execution(taskId);
     if (!view.attempt || isTerminal(view.attempt.state)) return;
-    if (view.attempt.state === 'cancelling') await this.tasks.cancel(taskId);
+    if (view.attempt.state === 'superseding') {
+      await this.tasks.completeProviderSupersession(taskId, view.attempt.id);
+    } else if (view.attempt.state === 'cancelling') await this.tasks.cancel(taskId);
     else if (transition.kind === 'process-exit' && transition.exitCode === 0) {
       await this.tasks.complete(taskId, transition.exitCode);
     } else await this.tasks.fail(taskId);
@@ -296,6 +574,61 @@ export class TaskExecutionModule {
   }
 }
 
+function assertPlannedLaunch(
+  plan: ExecutionLaunchPlan,
+  active: GenericCliExecution,
+  capabilities: import('../shared/runtime/runtime-interface').ProviderSessionCapabilities,
+): void {
+  const identities = plan.plannedContext.identities;
+  if (active.context.id !== identities.contextId ||
+    active.context.worktreeId !== identities.worktreeId ||
+    active.context.processId !== identities.processId || active.context.ptyId !== identities.ptyId) {
+    throw new GenericCliExecutionError('process-start-failed');
+  }
+  const observed = active.providerSession?.capabilities ?? { resume: false, fork: false };
+  if (observed.resume !== capabilities.resume || observed.fork !== capabilities.fork) {
+    throw new GenericCliExecutionError('process-start-failed');
+  }
+}
+
+function providerSource(
+  session: NonNullable<PrivateTaskExecutionView['providerSession']>,
+  context: NonNullable<PrivateTaskExecutionView['context']>,
+): PrivateProviderSession {
+  return { ...session, context };
+}
+
+function plannedContextFor(
+  execution: TaskExecutionView,
+  context: NonNullable<PrivateTaskExecutionView['context']>,
+  onOutput: (data: string) => void,
+  onExit: (exitCode: number) => void,
+): PlannedExecutionContext {
+  return {
+    task: execution.task,
+    run: execution.run!,
+    attempt: execution.attempt!,
+    identities: {
+      contextId: context.id, worktreeId: context.worktreeId,
+      processId: context.processId, ptyId: context.ptyId,
+    },
+    onOutput,
+    onExit,
+  };
+}
+
+function bindingFor(
+  prepared: import('./provider-session-lifecycle').PreparedProviderAction,
+): import('./generic-cli-execution-adapter').PrivateExecutionBinding {
+  return {
+    task: prepared.execution.task,
+    run: prepared.execution.run!,
+    attempt: prepared.execution.attempt!,
+    context: prepared.context,
+    providerSession: providerSource(prepared.session, prepared.context),
+  };
+}
+
 function sanitizeOutput(value: string): string {
   return [...value.slice(0, MAX_OUTPUT_CHARS * 2)]
     .filter((character) => {
@@ -307,7 +640,8 @@ function sanitizeOutput(value: string): string {
 }
 
 function isTerminal(state: TaskExecutionState | undefined): boolean {
-  return state === 'completed' || state === 'failed' || state === 'cancelled';
+  return state === 'completed' || state === 'failed' ||
+    state === 'cancelled' || state === 'superseded';
 }
 
 class ExitWait {

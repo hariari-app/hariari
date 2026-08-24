@@ -5,6 +5,7 @@ import type {
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
   StartTaskRequest,
+  ProviderSessionActionRequest,
   TaskExecutionView,
   TaskOutputEvent,
   TaskView,
@@ -25,6 +26,8 @@ import {
   TASK_LIST_OPERATION,
   TASK_OUTPUT_SUBSCRIBE_OPERATION,
   TASK_START_OPERATION,
+  PROVIDER_SESSION_FORK_OPERATION,
+  PROVIDER_SESSION_RESUME_OPERATION,
   createClientProof,
   selectHighestMutualVersion,
   verifyServerProof,
@@ -371,7 +374,24 @@ class NodeRuntimeClientSession implements RuntimeClientSession {
       ),
     );
   }
-
+  resumeProviderSession(request: ProviderSessionActionRequest, deadlineMs = 2_000): Promise<TaskExecutionView> {
+    return this.providerSessionAction(PROVIDER_SESSION_RESUME_OPERATION, request, deadlineMs);
+  }
+  forkProviderSession(request: ProviderSessionActionRequest, deadlineMs = 2_000): Promise<TaskExecutionView> {
+    return this.providerSessionAction(PROVIDER_SESSION_FORK_OPERATION, request, deadlineMs);
+  }
+  private providerSessionAction(
+    operation: typeof PROVIDER_SESSION_RESUME_OPERATION | typeof PROVIDER_SESSION_FORK_OPERATION,
+    request: ProviderSessionActionRequest,
+    deadlineMs: number,
+  ): Promise<TaskExecutionView> {
+    return this.enqueue(async () => parseTaskExecutionView(await this.request(
+      operation,
+      { taskId: request.taskId, providerSessionId: request.providerSessionId },
+      request.idempotencyKey,
+      deadlineMs,
+    )));
+  }
   cancelTask(request: CancelTaskRequest, deadlineMs = 2_000): Promise<TaskExecutionView> {
     return this.enqueue(async () =>
       parseTaskExecutionView(
