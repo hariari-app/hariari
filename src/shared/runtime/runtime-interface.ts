@@ -186,6 +186,56 @@ export interface TaskExecutionView {
   readonly providerSessions: readonly ProviderSessionView[];
 }
 
+export const PROVIDER_OBSERVATION_SCHEMA = 'hariari.provider-observation' as const;
+export const RUNTIME_EVENT_SCHEMA = 'hariari.runtime.event' as const;
+export const EVENT_TIMELINE_SCHEMA_VERSION = 1 as const;
+
+export interface EventRedactionMetadata {
+  readonly status: 'allowlisted';
+  readonly omittedFields: readonly ('nativeSessionId' | 'capabilities')[];
+}
+
+export interface RawProviderObservationView {
+  readonly schema: typeof PROVIDER_OBSERVATION_SCHEMA;
+  readonly version: typeof EVENT_TIMELINE_SCHEMA_VERSION;
+  readonly id: string;
+  readonly taskId: string;
+  readonly provider: 'claude';
+  readonly kind: 'provider-session-observed';
+  readonly observedAt: string;
+  readonly redaction: EventRedactionMetadata;
+}
+
+export interface NormalizedRuntimeEventView {
+  readonly schema: typeof RUNTIME_EVENT_SCHEMA;
+  readonly version: typeof EVENT_TIMELINE_SCHEMA_VERSION;
+  readonly id: string;
+  readonly taskId: string;
+  readonly kind: 'provider-session-observed';
+  readonly correlationId: string;
+  readonly causationId: string;
+  readonly idempotencyKey: string;
+  readonly sequence: number;
+  readonly occurrenceAt: string;
+  readonly observedAt: string;
+  readonly redaction: EventRedactionMetadata;
+}
+
+export interface TaskTimelineEntry {
+  readonly eventId: string;
+  readonly sequence: number;
+  readonly occurredAt: string;
+  readonly message: 'Claude provider session observed';
+}
+
+export interface TaskTimelineView {
+  readonly taskId: string;
+  readonly status: TaskExecutionView;
+  readonly rawObservations: readonly RawProviderObservationView[];
+  readonly normalizedEvents: readonly NormalizedRuntimeEventView[];
+  readonly timeline: readonly TaskTimelineEntry[];
+}
+
 export type TaskOutputEvent =
   | {
       readonly kind: 'data';
@@ -275,6 +325,7 @@ export interface RuntimeInterface {
   recoverTask(request: RecoverTaskRequest): Promise<TaskRecoveryDecisionView>;
   cancelTask(request: CancelTaskRequest): Promise<TaskExecutionView>;
   getTaskExecution(taskId: string): Promise<TaskExecutionView>;
+  getTaskTimeline(taskId: string): Promise<TaskTimelineView>;
   subscribeTaskOutput(
     taskId: string,
     listener: (event: TaskOutputEvent) => void,

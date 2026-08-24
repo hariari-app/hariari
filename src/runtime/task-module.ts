@@ -9,6 +9,7 @@ import type {
   TaskExecutionView,
   TaskRecoveryView,
   TaskRecoveryDecisionView,
+  TaskTimelineView,
   TaskView,
 } from '../shared/runtime/runtime-interface';
 import {
@@ -37,6 +38,16 @@ import {
   type ProviderSessionAction,
 } from './provider-session-lifecycle';
 import { TaskEventStore, TaskEventStoreError } from './task-event-store';
+import { TaskEventTimeline } from './task-event-timeline';
+import { TaskStorageError } from './task-storage-error';
+import type {
+  ExecutionReservation,
+  NativeResumeReservation,
+  PlannedProviderRepair,
+  ProviderActionRepair,
+  ProviderForkReservation,
+  StoredExecution,
+} from './task-execution-state';
 import {
   canonicalExecutionFingerprint,
   canonicalTaskFingerprint,
@@ -52,60 +63,6 @@ import {
   resumeParentExecution,
 } from './task-execution-rules';
 
-type TaskFailureCode = 'idempotency-conflict' | 'not-found' | 'task-not-ready'
-  | 'unsupported-operation' | 'internal';
-
-export class TaskStorageError extends Error {
-  constructor(readonly code: TaskFailureCode) {
-    super(`Task storage failed: ${code}`);
-    this.name = 'TaskStorageError';
-  }
-}
-
-export interface StoredExecution {
-  readonly taskId: string;
-  readonly idempotencyKey: string;
-  readonly fingerprint: string;
-  readonly run: StoredRun;
-  readonly attempt: StoredAttempt | null;
-  readonly attempts: readonly StoredAttempt[];
-  readonly context: StoredContext | null;
-  readonly executionContexts: readonly StoredContext[];
-  readonly providerSession: StoredProviderSession | null;
-  readonly providerSessions: readonly StoredProviderSession[];
-  readonly supersession: {
-    readonly actionKey: string;
-    readonly reason: 'native-resume' | 'fork';
-    readonly parentAttemptId: string;
-    readonly parentSessionId: string;
-  } | null;
-  readonly plannedAction: {
-    readonly kind: 'native-resume' | 'fork';
-    readonly actionKey: string;
-    readonly sourceAttemptId: string;
-    readonly sourceSessionId: string;
-    readonly plannedContext: StoredContext;
-  } | null;
-  readonly cancellation: { readonly idempotencyKey: string; readonly fingerprint: string } | null;
-}
-
-export interface ExecutionReservation {
-  readonly execution: TaskExecutionView; readonly created: boolean;
-  readonly providerRepair?: PlannedProviderRepair;
-}
-
-export interface PlannedProviderRepair {
-  readonly kind: 'native-resume' | 'fork'; readonly parentContext: StoredContext;
-  readonly parentSession: StoredProviderSession; readonly plannedContext: StoredContext;
-}
-
-export type ProviderActionRepair = { readonly execution: TaskExecutionView; readonly repair: PlannedProviderRepair | null };
-
-export interface NativeResumeReservation extends PlannedProviderRepair {
-  readonly execution: TaskExecutionView;
-}
-
-export type ProviderForkReservation = NativeResumeReservation;
 /** The sole serialized writer for durable Task and execution lifecycle evidence. */
 export class TaskModule {
   readonly runtimeDirectory: string;
@@ -115,6 +72,7 @@ export class TaskModule {
   private readonly fingerprints = new Map<string, string>();
   private readonly executions = new Map<string, StoredExecution>();
   private readonly executionKeys = new Map<string, StoredExecution>();
+  private readonly eventTimeline = new TaskEventTimeline();
   private readonly providerLifecycle: ProviderSessionLifecycle;
   private readonly recoveryJournal: TaskRecoveryJournal;
   private mutation: Promise<void> = Promise.resolve();
@@ -230,7 +188,20 @@ export class TaskModule {
   }
 
   allocateContext(taskId: string, context: StoredContext, providerSession: StoredProviderSession | null): Promise<TaskExecutionView> {
-    return this.transition(taskId, { type: 'ContextAllocated', version: 1, taskId, context, providerSession });
+    return this.enqueue(async () => {
+      this.throwIfPoisoned();
+      const task = this.taskById(taskId);
+      const current = this.executionFor(task.id);
+      if (current.context) {
+        if (current.context.id !== context.id || current.providerSession?.id !== providerSession?.id) {
+          throw new TaskStorageError('internal');
+        }
+      } else {
+        await this.appendVisible({ type: 'ContextAllocated', version: 1, taskId, context, providerSession });
+      }
+      if (providerSession) await this.recordProviderSessionObservation(taskId, context, providerSession);
+      return this.viewFor(task, this.executionFor(task.id));
+    });
   }
 
   reserveNativeResume(request: ProviderSessionActionRequest): Promise<NativeResumeReservation> {
@@ -419,6 +390,15 @@ export class TaskModule {
     return this.viewFor(task, this.executions.get(task.id) ?? null);
   }
 
+  timeline(taskId: string): TaskTimelineView {
+    this.taskById(taskId);
+    return this.eventTimeline.view(taskId, this.execution(taskId));
+  }
+
+  hasProviderSessionObservation(taskId: string, contextId: string, providerSessionId: string): boolean {
+    return this.eventTimeline.has(taskId, contextId, providerSessionId);
+  }
+
   privateExecution(taskId: string): PrivateTaskExecutionView {
     const task = this.taskById(taskId);
     return this.privateViewFor(task, this.executions.get(task.id) ?? null);
@@ -501,6 +481,11 @@ export class TaskModule {
       case 'RunCreated': return void this.applyRunCreated(event);
       case 'AttemptCreated': return void this.applyAttemptCreated(event);
       case 'ContextAllocated': return void this.applyContextAllocated(event);
+      case 'RawProviderObservationRecorded':
+      case 'NormalizedRuntimeEventRecorded':
+        this.taskById(event.taskId);
+        this.eventTimeline.apply(event);
+        return;
       case 'AttemptStarted': return void this.applyAttemptStarted(event);
       case 'AttemptSupersessionRequested':
         this.applySupersessionRequested(event);
@@ -714,6 +699,22 @@ export class TaskModule {
     if (!parentSession || !parentContext) throw new TaskStorageError('internal');
     return { kind: planned.kind, parentContext, parentSession,
       plannedContext: planned.plannedContext };
+  }
+
+  private async recordProviderSessionObservation(
+    taskId: string,
+    context: StoredContext,
+    providerSession: StoredProviderSession,
+  ): Promise<void> {
+    const execution = this.executionFor(taskId);
+    await this.eventTimeline.record({
+      taskId,
+      context,
+      providerSession,
+      idempotencyKey: execution.idempotencyKey,
+      observedAt: new Date(this.now()).toISOString(),
+      append: (event) => this.appendVisible(event),
+    });
   }
 
   private replaceExecution(current: StoredExecution, replacement: StoredExecution): void {

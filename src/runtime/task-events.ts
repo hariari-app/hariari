@@ -4,6 +4,12 @@ import {
   type TaskRecoveryView,
   type TaskRecoveryDecisionView,
   type TaskView,
+  EVENT_TIMELINE_SCHEMA_VERSION,
+  PROVIDER_OBSERVATION_SCHEMA,
+  RUNTIME_EVENT_SCHEMA,
+  type EventRedactionMetadata,
+  type NormalizedRuntimeEventView,
+  type RawProviderObservationView,
 } from '../shared/runtime/runtime-interface';
 import type {
   ProviderActionDecision,
@@ -80,6 +86,20 @@ export interface ContextAllocatedEvent {
   readonly taskId: string;
   readonly context: StoredContext;
   readonly providerSession: StoredProviderSession | null;
+}
+
+export interface RawProviderObservationRecordedEvent {
+  readonly type: 'RawProviderObservationRecorded';
+  readonly version: 1;
+  readonly taskId: string;
+  readonly observation: RawProviderObservationView;
+}
+
+export interface NormalizedRuntimeEventRecordedEvent {
+  readonly type: 'NormalizedRuntimeEventRecorded';
+  readonly version: 1;
+  readonly taskId: string;
+  readonly event: NormalizedRuntimeEventView;
 }
 
 export type SupersessionReason = 'native-resume' | 'fork';
@@ -161,6 +181,7 @@ export interface TaskRecoveryDecidedEvent extends TaskIdEvent {
 
 export type TaskEvent =
   | TaskCreatedEvent | RunCreatedEvent | AttemptCreatedEvent | ContextAllocatedEvent
+  | RawProviderObservationRecordedEvent | NormalizedRuntimeEventRecordedEvent
   | AttemptStartedEvent | AttemptCompletedEvent | AttemptFailedEvent
   | CancellationRequestedEvent | AttemptCancelledEvent
   | AttemptForkedEvent
@@ -197,6 +218,8 @@ function parseExecutionEvent(value: Record<string, unknown>, type: string): Task
   if (type === 'AttemptSupersessionRequested') return parseSupersessionRequested(value, taskId);
   if (type === 'AttemptSuperseded') return parseAttemptSuperseded(value, taskId);
   if (type === 'ContextAllocated') return parseContextAllocated(value, taskId);
+  if (type === 'RawProviderObservationRecorded') return parseRawProviderObservationRecorded(value, taskId);
+  if (type === 'NormalizedRuntimeEventRecorded') return parseNormalizedRuntimeEventRecorded(value, taskId);
   if (type === 'TaskReconciled') return parseTaskReconciled(value, taskId);
   if (type === 'TaskRecoveryDecided') return parseTaskRecoveryDecided(value, taskId);
   if (type === 'AttemptStarted' || type === 'AttemptFailed' || type === 'AttemptCancelled') {
@@ -205,6 +228,73 @@ function parseExecutionEvent(value: Record<string, unknown>, type: string): Task
   if (type === 'AttemptCompleted') return { type, version: 1, taskId, exitCode: integer(value.exitCode) };
   if (type === 'CancellationRequested') return parseCancellation(value, taskId);
   throw new Error('invalid event');
+}
+
+function parseRawProviderObservationRecorded(
+  value: Record<string, unknown>,
+  taskId: string,
+): RawProviderObservationRecordedEvent {
+  exactKeys(value, ['type', 'version', 'taskId', 'observation']);
+  const observation = parseRawProviderObservation(object(value.observation));
+  if (observation.taskId !== taskId) throw new Error('invalid event');
+  return { type: 'RawProviderObservationRecorded', version: 1, taskId, observation };
+}
+
+function parseNormalizedRuntimeEventRecorded(
+  value: Record<string, unknown>,
+  taskId: string,
+): NormalizedRuntimeEventRecordedEvent {
+  exactKeys(value, ['type', 'version', 'taskId', 'event']);
+  const event = parseNormalizedRuntimeEvent(object(value.event));
+  if (event.taskId !== taskId) throw new Error('invalid event');
+  return { type: 'NormalizedRuntimeEventRecorded', version: 1, taskId, event };
+}
+
+function parseRawProviderObservation(value: Record<string, unknown>): RawProviderObservationView {
+  exactKeys(value, ['schema', 'version', 'id', 'taskId', 'provider', 'kind', 'observedAt', 'redaction']);
+  if (value.schema !== PROVIDER_OBSERVATION_SCHEMA || value.version !== EVENT_TIMELINE_SCHEMA_VERSION ||
+    value.provider !== 'claude' || value.kind !== 'provider-session-observed') throw new Error('invalid event');
+  return {
+    schema: PROVIDER_OBSERVATION_SCHEMA,
+    version: EVENT_TIMELINE_SCHEMA_VERSION,
+    id: string(value.id),
+    taskId: string(value.taskId),
+    provider: 'claude',
+    kind: 'provider-session-observed',
+    observedAt: timestamp(value.observedAt),
+    redaction: parseEventRedaction(object(value.redaction)),
+  };
+}
+
+function parseNormalizedRuntimeEvent(value: Record<string, unknown>): NormalizedRuntimeEventView {
+  exactKeys(value, [
+    'schema', 'version', 'id', 'taskId', 'kind', 'correlationId', 'causationId', 'idempotencyKey',
+    'sequence', 'occurrenceAt', 'observedAt', 'redaction',
+  ]);
+  if (value.schema !== RUNTIME_EVENT_SCHEMA || value.version !== EVENT_TIMELINE_SCHEMA_VERSION ||
+    value.kind !== 'provider-session-observed') throw new Error('invalid event');
+  return {
+    schema: RUNTIME_EVENT_SCHEMA,
+    version: EVENT_TIMELINE_SCHEMA_VERSION,
+    id: string(value.id),
+    taskId: string(value.taskId),
+    kind: 'provider-session-observed',
+    correlationId: string(value.correlationId),
+    causationId: string(value.causationId),
+    idempotencyKey: string(value.idempotencyKey),
+    sequence: positiveInteger(value.sequence),
+    occurrenceAt: timestamp(value.occurrenceAt),
+    observedAt: timestamp(value.observedAt),
+    redaction: parseEventRedaction(object(value.redaction)),
+  };
+}
+
+function parseEventRedaction(value: Record<string, unknown>): EventRedactionMetadata {
+  exactKeys(value, ['status', 'omittedFields']);
+  if (value.status !== 'allowlisted' || !Array.isArray(value.omittedFields) ||
+    value.omittedFields.length !== 2 || value.omittedFields[0] !== 'nativeSessionId' ||
+    value.omittedFields[1] !== 'capabilities') throw new Error('invalid event');
+  return { status: 'allowlisted', omittedFields: ['nativeSessionId', 'capabilities'] };
 }
 
 function parseTaskRecoveryDecided(
@@ -388,4 +478,14 @@ function positiveInteger(value: unknown): number {
 function integer(value: unknown): number {
   if (!Number.isSafeInteger(value)) throw new Error('invalid integer');
   return value as number;
+}
+
+function timestamp(value: unknown): string {
+  const result = string(value);
+  if (!result.endsWith('Z') || !Number.isFinite(Date.parse(result))) throw new Error('invalid timestamp');
+  return result;
+}
+
+function exactKeys(value: Record<string, unknown>, allowed: readonly string[]): void {
+  if (Object.keys(value).some((key) => !allowed.includes(key))) throw new Error('invalid event');
 }

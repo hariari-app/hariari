@@ -17,6 +17,7 @@ export const TASK_RECONCILE_OPERATION = 'task.reconcile' as const;
 export const TASK_RECOVER_OPERATION = 'task.recover' as const;
 export const TASK_CANCEL_OPERATION = 'task.cancel' as const;
 export const TASK_EXECUTION_OPERATION = 'task.execution.get' as const;
+export const TASK_TIMELINE_OPERATION = 'task.timeline.get' as const;
 export const TASK_OUTPUT_SUBSCRIBE_OPERATION = 'task.output.subscribe' as const;
 export const RUNTIME_OPERATION_VERSION = 1 as const;
 
@@ -94,6 +95,7 @@ export type RuntimeOperationName =
   | typeof TASK_RECOVER_OPERATION
   | typeof TASK_CANCEL_OPERATION
   | typeof TASK_EXECUTION_OPERATION
+  | typeof TASK_TIMELINE_OPERATION
   | typeof TASK_OUTPUT_SUBSCRIBE_OPERATION;
 
 export interface RuntimeOperationFrame {

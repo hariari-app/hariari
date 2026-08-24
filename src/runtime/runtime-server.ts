@@ -14,6 +14,7 @@ import {
   TASK_CREATE_OPERATION,
   TASK_CANCEL_OPERATION,
   TASK_EXECUTION_OPERATION,
+  TASK_TIMELINE_OPERATION,
   TASK_LIST_OPERATION,
   TASK_OUTPUT_SUBSCRIBE_OPERATION,
   TASK_START_OPERATION,
@@ -52,7 +53,8 @@ import {
 import { ClaudeCodeExecutionAdapter } from './claude-code-execution-adapter';
 import { ProviderExecutionAdapterRouter } from './provider-execution-adapter-router';
 import { TaskExecutionError, TaskExecutionModule } from './task-execution-module';
-import { TaskModule, TaskStorageError } from './task-module';
+import { TaskModule } from './task-module';
+import { TaskStorageError } from './task-storage-error';
 
 export interface RuntimeServerOptions {
   readonly transport: RuntimeLocalTransport;
@@ -306,6 +308,9 @@ export class RuntimeServer {
     if (request.operation.name === TASK_EXECUTION_OPERATION) {
       return this.handleTaskExecutionLookup(request, protocolVersion);
     }
+    if (request.operation.name === TASK_TIMELINE_OPERATION) {
+      return this.handleTaskTimelineLookup(request, protocolVersion);
+    }
     return this.handleShutdown(request, protocolVersion);
   }
 
@@ -397,6 +402,22 @@ export class RuntimeServer {
     try {
       const taskId = parseTaskExecutionId(request, TASK_EXECUTION_OPERATION);
       return success(request, protocolVersion, this.executions.get(taskId) as unknown as Record<string, unknown>);
+    } catch (error) {
+      return executionFailure(request, protocolVersion, error);
+    }
+  }
+
+  private handleTaskTimelineLookup(
+    request: RuntimeRequestFrame,
+    protocolVersion: number,
+  ): RuntimeResponseFrame {
+    try {
+      const taskId = parseTaskExecutionId(request, TASK_TIMELINE_OPERATION);
+      return success(
+        request,
+        protocolVersion,
+        this.tasks.timeline(taskId) as unknown as Record<string, unknown>,
+      );
     } catch (error) {
       return executionFailure(request, protocolVersion, error);
     }

@@ -18,10 +18,8 @@ import {
   type PrivateProviderSession,
   type ExecutionLaunchPlan,
 } from './generic-cli-execution-adapter';
-import {
-  TaskModule,
-  type PlannedProviderRepair,
-} from './task-module';
+import { TaskModule } from './task-module';
+import type { PlannedProviderRepair } from './task-execution-state';
 import type { PrivateTaskExecutionView } from './task-execution-projection';
 import { isTerminalExecutionState } from './task-execution-rules';
 import { TaskOutputLog } from './task-output-log';
@@ -344,7 +342,7 @@ export class TaskExecutionModule {
 
   private async startNativeResumeReserved(
     taskId: string,
-    reservation: import('./task-module').NativeResumeReservation,
+    reservation: import('./task-execution-state').NativeResumeReservation,
   ): Promise<TaskExecutionView> {
     const execution = reservation.execution;
     if (!execution.run || !execution.attempt) throw new TaskExecutionError('internal');
@@ -362,7 +360,7 @@ export class TaskExecutionModule {
 
   private async startProviderForkReserved(
     taskId: string,
-    reservation: import('./task-module').ProviderForkReservation,
+    reservation: import('./task-execution-state').ProviderForkReservation,
   ): Promise<TaskExecutionView> {
     const execution = reservation.execution;
     if (!execution.run || !execution.attempt) throw new TaskExecutionError('internal');
@@ -470,13 +468,19 @@ export class TaskExecutionModule {
           lineage }
       : null;
     if (!repair) {
-      await this.tasks.allocateContext(taskId, active.context, providerSession);
+      try {
+        await this.tasks.allocateContext(taskId, active.context, providerSession);
+      } catch (error) {
+        if (this.tasks.execution(taskId).context?.id !== active.context.id) throw error;
+        await this.tasks.allocateContext(taskId, active.context, providerSession);
+      }
       return;
     }
     await this.persistWithOneShotRepair(
       taskId,
       (view) => view.context?.id === active.context.id &&
-        (providerSession === null || view.providerSession?.id === providerSession.id),
+        (providerSession === null || (view.providerSession?.id === providerSession.id &&
+          this.tasks.hasProviderSessionObservation(taskId, active.context.id, providerSession.id))),
       () => this.tasks.allocateContext(taskId, active.context, providerSession),
     );
   }

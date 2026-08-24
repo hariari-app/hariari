@@ -14,6 +14,7 @@ import type {
   TaskOutputEvent,
   TaskRecoveryView,
   TaskRecoveryDecisionView,
+  TaskTimelineView,
   TaskView,
 } from '../../shared/runtime/runtime-interface';
 
@@ -72,6 +73,7 @@ export interface RuntimeClientSession {
   recoverTask(request: RecoverTaskRequest, deadlineMs?: number): Promise<TaskRecoveryDecisionView>;
   cancelTask(request: CancelTaskRequest, deadlineMs?: number): Promise<TaskExecutionView>;
   getTaskExecution(taskId: string, deadlineMs?: number): Promise<TaskExecutionView>;
+  getTaskTimeline(taskId: string, deadlineMs?: number): Promise<TaskTimelineView>;
   subscribeTaskOutput(
     taskId: string,
     listener: (event: TaskOutputEvent) => void,

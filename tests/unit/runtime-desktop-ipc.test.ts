@@ -417,6 +417,10 @@ class FakeRuntime implements RuntimeInterface {
     return this.execution;
   }
 
+  async getTaskTimeline(): Promise<never> {
+    throw new Error('not exposed through Desktop IPC');
+  }
+
   async subscribeTaskOutput(): Promise<never> {
     throw new Error('not used by desktop IPC tests');
   }

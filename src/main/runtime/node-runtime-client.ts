@@ -12,6 +12,7 @@ import type {
   TaskOutputEvent,
   TaskRecoveryView,
   TaskRecoveryDecisionView,
+  TaskTimelineView,
   TaskView,
 } from '../../shared/runtime/runtime-interface';
 import {
@@ -27,6 +28,7 @@ import {
   TASK_CREATE_OPERATION,
   TASK_CANCEL_OPERATION,
   TASK_EXECUTION_OPERATION,
+  TASK_TIMELINE_OPERATION,
   TASK_LIST_OPERATION,
   TASK_OUTPUT_SUBSCRIBE_OPERATION,
   TASK_START_OPERATION,
@@ -53,6 +55,7 @@ import {
   parseOutputFrame,
   parseStoppedResult,
   parseTaskExecutionView,
+  parseTaskTimelineView,
   parseTaskRecoveryView,
   parseTaskRecoveryDecisionView,
   parseTaskList,
@@ -433,6 +436,14 @@ class NodeRuntimeClientSession implements RuntimeClientSession {
     return this.enqueue(async () =>
       parseTaskExecutionView(
         await this.request(TASK_EXECUTION_OPERATION, { taskId }, null, deadlineMs),
+      ),
+    );
+  }
+
+  getTaskTimeline(taskId: string, deadlineMs = 2_000): Promise<TaskTimelineView> {
+    return this.enqueue(async () =>
+      parseTaskTimelineView(
+        await this.request(TASK_TIMELINE_OPERATION, { taskId }, null, deadlineMs),
       ),
     );
   }

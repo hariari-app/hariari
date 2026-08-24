@@ -29,7 +29,11 @@ const NATIVE_RESUME_APPEND_CASES = [
   'ProviderSessionActionDecided', 'AttemptSupersessionRequested',
   'AttemptSuperseded', 'AttemptResumed', 'ContextAllocated', 'AttemptStarted',
 ].flatMap((name, index) =>
-  FAILED_APPEND_MODES.map((mode) => ({ name, mode, writeCall: index + 1 })));
+  FAILED_APPEND_MODES.map((mode) => ({
+    name,
+    mode,
+    writeCall: index + 1 + (name === 'AttemptStarted' ? 2 : 0),
+  })));
 
 describe('authenticated Runtime Task start durability', registerTaskStartDurabilityTests);
 

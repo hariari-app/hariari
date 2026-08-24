@@ -687,6 +687,10 @@ class FakeRuntimeSession implements RuntimeClientSession {
     return execution;
   }
 
+  async getTaskTimeline(): Promise<never> {
+    throw new RuntimePortError('unsupported-operation', false);
+  }
+
   async subscribeTaskOutput(
     _taskId: string,
     _listener: (event: TaskOutputEvent) => void,

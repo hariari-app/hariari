@@ -6,7 +6,7 @@ import type {
   StoredContext,
   StoredProviderSession,
 } from './task-events';
-import type { StoredExecution } from './task-module';
+import type { StoredExecution } from './task-execution-state';
 
 export interface PrivateTaskExecutionView extends Omit<
   TaskExecutionView,
