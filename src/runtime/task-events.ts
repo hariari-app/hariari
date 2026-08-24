@@ -4,13 +4,13 @@ import {
   type TaskRecoveryView,
   type TaskRecoveryDecisionView,
   type TaskView,
-  EVENT_TIMELINE_SCHEMA_VERSION,
-  PROVIDER_OBSERVATION_SCHEMA,
-  RUNTIME_EVENT_SCHEMA,
-  type EventRedactionMetadata,
   type NormalizedRuntimeEventView,
   type RawProviderObservationView,
 } from '../shared/runtime/runtime-interface';
+import {
+  parseNormalizedRuntimeEvent,
+  parseRawProviderObservation,
+} from '../shared/runtime/event-timeline-contract';
 import type {
   ProviderActionDecision,
   ProviderActionRejection,
@@ -235,7 +235,7 @@ function parseRawProviderObservationRecorded(
   taskId: string,
 ): RawProviderObservationRecordedEvent {
   exactKeys(value, ['type', 'version', 'taskId', 'observation']);
-  const observation = parseRawProviderObservation(object(value.observation));
+  const observation = parseRawProviderObservation(value.observation);
   if (observation.taskId !== taskId) throw new Error('invalid event');
   return { type: 'RawProviderObservationRecorded', version: 1, taskId, observation };
 }
@@ -245,56 +245,9 @@ function parseNormalizedRuntimeEventRecorded(
   taskId: string,
 ): NormalizedRuntimeEventRecordedEvent {
   exactKeys(value, ['type', 'version', 'taskId', 'event']);
-  const event = parseNormalizedRuntimeEvent(object(value.event));
+  const event = parseNormalizedRuntimeEvent(value.event);
   if (event.taskId !== taskId) throw new Error('invalid event');
   return { type: 'NormalizedRuntimeEventRecorded', version: 1, taskId, event };
-}
-
-function parseRawProviderObservation(value: Record<string, unknown>): RawProviderObservationView {
-  exactKeys(value, ['schema', 'version', 'id', 'taskId', 'provider', 'kind', 'observedAt', 'redaction']);
-  if (value.schema !== PROVIDER_OBSERVATION_SCHEMA || value.version !== EVENT_TIMELINE_SCHEMA_VERSION ||
-    value.provider !== 'claude' || value.kind !== 'provider-session-observed') throw new Error('invalid event');
-  return {
-    schema: PROVIDER_OBSERVATION_SCHEMA,
-    version: EVENT_TIMELINE_SCHEMA_VERSION,
-    id: string(value.id),
-    taskId: string(value.taskId),
-    provider: 'claude',
-    kind: 'provider-session-observed',
-    observedAt: timestamp(value.observedAt),
-    redaction: parseEventRedaction(object(value.redaction)),
-  };
-}
-
-function parseNormalizedRuntimeEvent(value: Record<string, unknown>): NormalizedRuntimeEventView {
-  exactKeys(value, [
-    'schema', 'version', 'id', 'taskId', 'kind', 'correlationId', 'causationId', 'idempotencyKey',
-    'sequence', 'occurrenceAt', 'observedAt', 'redaction',
-  ]);
-  if (value.schema !== RUNTIME_EVENT_SCHEMA || value.version !== EVENT_TIMELINE_SCHEMA_VERSION ||
-    value.kind !== 'provider-session-observed') throw new Error('invalid event');
-  return {
-    schema: RUNTIME_EVENT_SCHEMA,
-    version: EVENT_TIMELINE_SCHEMA_VERSION,
-    id: string(value.id),
-    taskId: string(value.taskId),
-    kind: 'provider-session-observed',
-    correlationId: string(value.correlationId),
-    causationId: string(value.causationId),
-    idempotencyKey: string(value.idempotencyKey),
-    sequence: positiveInteger(value.sequence),
-    occurrenceAt: timestamp(value.occurrenceAt),
-    observedAt: timestamp(value.observedAt),
-    redaction: parseEventRedaction(object(value.redaction)),
-  };
-}
-
-function parseEventRedaction(value: Record<string, unknown>): EventRedactionMetadata {
-  exactKeys(value, ['status', 'omittedFields']);
-  if (value.status !== 'allowlisted' || !Array.isArray(value.omittedFields) ||
-    value.omittedFields.length !== 2 || value.omittedFields[0] !== 'nativeSessionId' ||
-    value.omittedFields[1] !== 'capabilities') throw new Error('invalid event');
-  return { status: 'allowlisted', omittedFields: ['nativeSessionId', 'capabilities'] };
 }
 
 function parseTaskRecoveryDecided(
@@ -478,12 +431,6 @@ function positiveInteger(value: unknown): number {
 function integer(value: unknown): number {
   if (!Number.isSafeInteger(value)) throw new Error('invalid integer');
   return value as number;
-}
-
-function timestamp(value: unknown): string {
-  const result = string(value);
-  if (!result.endsWith('Z') || !Number.isFinite(Date.parse(result))) throw new Error('invalid timestamp');
-  return result;
 }
 
 function exactKeys(value: Record<string, unknown>, allowed: readonly string[]): void {

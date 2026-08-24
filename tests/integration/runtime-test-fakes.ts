@@ -133,6 +133,7 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
       readonly stopError?: Error;
       readonly stopReturnsBeforeExit?: boolean;
       readonly claudeCapabilities?: { readonly resume: boolean; readonly fork: boolean };
+      readonly providerObservation?: (request: GenericCliStartRequest) => unknown;
     } = {},
     private readonly provider: 'shell' | 'claude' = 'shell',
   ) {}
@@ -194,6 +195,7 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
       this.options.claudeCapabilities ?? { resume: true, fork: true },
       this.options.stopError,
       this.options.stopReturnsBeforeExit ?? false,
+      this.options.providerObservation,
     );
     this.executions.set(request.task.id, execution);
     this.executionsByAttempt.set(request.attempt.id, execution);
@@ -288,6 +290,7 @@ class DeferredSignal {
 class FakeGenericCliExecution implements GenericCliExecution {
   readonly context: GenericCliExecution['context'];
   readonly providerSession: GenericCliExecution['providerSession'];
+  readonly providerObservation: unknown | null;
   private active = false;
   private exitActive = false;
   private exitDelivered = false;
@@ -307,6 +310,7 @@ class FakeGenericCliExecution implements GenericCliExecution {
     private readonly claudeCapabilities: { readonly resume: boolean; readonly fork: boolean },
     private readonly stopError: Error | undefined,
     private readonly stopReturnsBeforeExit: boolean,
+    private readonly observationFactory: ((request: GenericCliStartRequest) => unknown) | undefined,
   ) {
     this.context = {
       id: request.identities.contextId,
@@ -320,6 +324,17 @@ class FakeGenericCliExecution implements GenericCliExecution {
     };
     this.providerSession = request.task.provider === 'claude'
       ? { nativeSessionId: nativeSessionId(request), capabilities: this.claudeCapabilities }
+      : null;
+    this.providerObservation = request.task.provider === 'claude'
+      ? this.requestObservation()
+      : null;
+  }
+
+  private requestObservation(): unknown {
+    if (this.observationFactory) return this.observationFactory(this.request);
+    return this.request.task.provider === 'claude'
+      ? { provider: 'claude', kind: 'provider-session-observed', sessionState: 'active',
+          nativeSessionId: nativeSessionId(this.request), capabilities: this.claudeCapabilities }
       : null;
   }
 

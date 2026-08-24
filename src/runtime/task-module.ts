@@ -38,7 +38,7 @@ import {
   type ProviderSessionAction,
 } from './provider-session-lifecycle';
 import { TaskEventStore, TaskEventStoreError } from './task-event-store';
-import { TaskEventTimeline } from './task-event-timeline';
+import { type AttemptLifecycleKind, TaskEventTimeline } from './task-event-timeline';
 import { TaskStorageError } from './task-storage-error';
 import type {
   ExecutionReservation,
@@ -72,7 +72,7 @@ export class TaskModule {
   private readonly fingerprints = new Map<string, string>();
   private readonly executions = new Map<string, StoredExecution>();
   private readonly executionKeys = new Map<string, StoredExecution>();
-  private readonly eventTimeline = new TaskEventTimeline();
+  private readonly eventTimeline = new TaskEventTimeline({ now: () => new Date(this.now()).toISOString(), append: (event) => this.appendVisible(event) });
   private readonly providerLifecycle: ProviderSessionLifecycle;
   private readonly recoveryJournal: TaskRecoveryJournal;
   private mutation: Promise<void> = Promise.resolve();
@@ -112,7 +112,7 @@ export class TaskModule {
       const fingerprint = canonicalTaskFingerprint(request);
       const existing = this.tasks.get(request.idempotencyKey);
       if (existing) {
-        if (this.fingerprints.get(request.idempotencyKey) === fingerprint) return existing;
+        if (this.fingerprints.get(request.idempotencyKey) === fingerprint) { await this.eventTimeline.recordTaskCreated(existing, request.idempotencyKey); return existing; }
         throw new TaskStorageError('idempotency-conflict');
       }
       const task: TaskView = {
@@ -131,6 +131,7 @@ export class TaskModule {
         idempotencyKey: request.idempotencyKey,
         fingerprint,
       });
+      await this.eventTimeline.recordTaskCreated(task, request.idempotencyKey);
       return task;
     });
   }
@@ -187,11 +188,13 @@ export class TaskModule {
     });
   }
 
-  allocateContext(taskId: string, context: StoredContext, providerSession: StoredProviderSession | null): Promise<TaskExecutionView> {
+  allocateContext(taskId: string, context: StoredContext, providerSession: StoredProviderSession | null,
+    providerObservation: unknown | null = null): Promise<TaskExecutionView> {
     return this.enqueue(async () => {
       this.throwIfPoisoned();
       const task = this.taskById(taskId);
       const current = this.executionFor(task.id);
+      const operationKey = current.currentOperationKey;
       if (current.context) {
         if (current.context.id !== context.id || current.providerSession?.id !== providerSession?.id) {
           throw new TaskStorageError('internal');
@@ -199,7 +202,11 @@ export class TaskModule {
       } else {
         await this.appendVisible({ type: 'ContextAllocated', version: 1, taskId, context, providerSession });
       }
-      if (providerSession) await this.recordProviderSessionObservation(taskId, context, providerSession);
+      if (providerSession) {
+        if (providerObservation === null) throw new TaskStorageError('internal');
+        await this.eventTimeline.recordProviderObservation(
+          this.executionFor(taskId), providerSession, operationKey, providerObservation);
+      }
       return this.viewFor(task, this.executionFor(task.id));
     });
   }
@@ -340,8 +347,11 @@ export class TaskModule {
       if (execution.attempt?.state === 'cancelling' || isTerminalExecutionState(execution.attempt?.state)) {
         return this.viewFor(task, execution);
       }
-      await this.appendVisible({ type: 'AttemptStarted', version: 1, taskId });
-      return this.viewFor(task, this.executionFor(task.id));
+      if (execution.attempt?.state === 'starting') await this.appendVisible(
+        { type: 'AttemptStarted', version: 1, taskId });
+      const started = this.executionFor(task.id);
+      await this.eventTimeline.recordAttemptLifecycle(started, 'attempt-started');
+      return this.viewFor(task, started);
     });
   }
 
@@ -394,11 +404,10 @@ export class TaskModule {
     this.taskById(taskId);
     return this.eventTimeline.view(taskId, this.execution(taskId));
   }
-
-  hasProviderSessionObservation(taskId: string, contextId: string, providerSessionId: string): boolean {
-    return this.eventTimeline.has(taskId, contextId, providerSessionId);
-  }
-
+  hasCompleteProviderSessionObservation(taskId: string, attemptId: string, providerSessionId: string): boolean {
+    return this.eventTimeline.hasMatchingProviderObservation(taskId, attemptId, providerSessionId); }
+  hasAttemptLifecycleEvent(taskId: string, attemptId: string, kind: AttemptLifecycleKind): boolean {
+    return this.eventTimeline.hasLifecycleEvent(taskId, attemptId, kind); }
   privateExecution(taskId: string): PrivateTaskExecutionView {
     const task = this.taskById(taskId);
     return this.privateViewFor(task, this.executions.get(task.id) ?? null);
@@ -454,7 +463,8 @@ export class TaskModule {
       this.throwIfPoisoned();
       const task = this.taskById(taskId);
       const execution = this.executionFor(task.id);
-      if (isTerminalExecutionState(execution.attempt?.state)) return this.viewFor(task, execution);
+      if (isTerminalExecutionState(execution.attempt?.state)) {
+        await this.eventTimeline.recordTerminalLifecycle(execution); return this.viewFor(task, execution); }
       const cancelled = requested === 'cancelled' || execution.attempt?.state === 'cancelling';
       const event = cancelled
         ? { type: 'AttemptCancelled' as const, version: 1 as const, taskId }
@@ -462,7 +472,9 @@ export class TaskModule {
           ? { type: 'AttemptCompleted' as const, version: 1 as const, taskId, exitCode: exitCode ?? 0 }
           : { type: 'AttemptFailed' as const, version: 1 as const, taskId };
       await this.appendVisible(event);
-      return this.viewFor(task, this.executionFor(task.id));
+      const terminal = this.executionFor(task.id);
+      await this.eventTimeline.recordTerminalLifecycle(terminal);
+      return this.viewFor(task, terminal);
     });
   }
 
@@ -484,7 +496,7 @@ export class TaskModule {
       case 'RawProviderObservationRecorded':
       case 'NormalizedRuntimeEventRecorded':
         this.taskById(event.taskId);
-        this.eventTimeline.apply(event);
+        this.eventTimeline.apply(event, event.type === 'NormalizedRuntimeEventRecorded' && event.event.kind !== 'task-created' ? this.executionFor(event.taskId) : undefined);
         return;
       case 'AttemptStarted': return void this.applyAttemptStarted(event);
       case 'AttemptSupersessionRequested':
@@ -548,6 +560,7 @@ export class TaskModule {
       taskId: event.taskId,
       idempotencyKey: event.idempotencyKey,
       fingerprint: event.fingerprint,
+      currentOperationKey: event.idempotencyKey,
       run: event.run,
       attempt: null,
       attempts: [],
@@ -633,6 +646,7 @@ export class TaskModule {
         sourceAttemptId: event.sourceAttemptId,
         sourceSessionId: event.sourceSessionId, plannedContext: event.plannedContext,
       },
+      currentOperationKey: event.actionKey,
     });
   }
 
@@ -657,6 +671,7 @@ export class TaskModule {
         idempotencyKey: event.idempotencyKey,
         fingerprint: event.fingerprint,
       },
+      currentOperationKey: event.idempotencyKey,
     });
   }
 
@@ -682,6 +697,7 @@ export class TaskModule {
       attempts: [...execution.attempts.map((attempt) =>
         attempt.id === parent.id ? parent : attempt), event.attempt], context: null,
       providerSession: null, cancellation: null, supersession: null,
+      currentOperationKey: event.forkKey,
       plannedAction: event.plannedContext ? {
         kind: 'fork', actionKey: event.forkKey,
         sourceAttemptId: event.parentAttemptId,
@@ -699,22 +715,6 @@ export class TaskModule {
     if (!parentSession || !parentContext) throw new TaskStorageError('internal');
     return { kind: planned.kind, parentContext, parentSession,
       plannedContext: planned.plannedContext };
-  }
-
-  private async recordProviderSessionObservation(
-    taskId: string,
-    context: StoredContext,
-    providerSession: StoredProviderSession,
-  ): Promise<void> {
-    const execution = this.executionFor(taskId);
-    await this.eventTimeline.record({
-      taskId,
-      context,
-      providerSession,
-      idempotencyKey: execution.idempotencyKey,
-      observedAt: new Date(this.now()).toISOString(),
-      append: (event) => this.appendVisible(event),
-    });
   }
 
   private replaceExecution(current: StoredExecution, replacement: StoredExecution): void {

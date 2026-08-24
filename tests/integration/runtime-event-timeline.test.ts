@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { RuntimeClientSession } from '../../src/main/runtime/runtime-ports';
+import { RuntimePortError, type RuntimeClientSession } from '../../src/main/runtime/runtime-ports';
 import type {
   TaskExecutionView,
   TaskTimelineView,
@@ -38,12 +38,48 @@ function registerEventTimelineTests(): void {
     rejectsFutureProviderEvidence);
   it('fails closed when a normalized event crosses Task identities',
     rejectsCrossTaskNormalizedEvidence);
+  it('retains operation-specific identities through native resume and fork',
+    retainsProviderOperationIdentities);
+  it('stores only allowlisted evidence from the provider observation boundary',
+    storesActualAllowlistedProviderEvidence);
+  it.each(['completed', 'failed', 'cancelled'] as const)(
+    'rebuilds the %s Task, status, and full lifecycle timeline after projection deletion',
+    rebuildsTerminalLifecycle,
+  );
+  it.each(FAILED_APPEND_MODES)(
+    'repairs task-created normalized evidence after a %s append and same-key retry',
+    repairsTaskCreatedEvidence,
+  );
+  it.each(FAILED_APPEND_MODES)(
+    'repairs attempt-started normalized evidence after a %s append and same-key retry',
+    repairsAttemptStartedEvidence,
+  );
+  it.each(PROVIDER_OPERATION_APPEND_CASES)(
+    'repairs $operation $boundary $mode evidence before same-key retry and restart',
+    repairsProviderOperationEvidence,
+  );
+  it.each(TERMINAL_APPEND_CASES)(
+    'repairs $state normalized evidence after a $mode append and restart',
+    repairsTerminalEvidence,
+  );
 }
 
 const PROVIDER_OBSERVATION_APPEND_BOUNDARIES = [
   { name: 'raw observation', write: 4 },
   { name: 'normalized event', write: 5 },
 ] as const;
+
+const PROVIDER_OPERATION_APPEND_CASES = (['resume', 'fork'] as const).flatMap((operation) =>
+  ([
+    { boundary: 'raw observation', write: 6 },
+    { boundary: 'normalized observation', write: 7 },
+    { boundary: 'normalized attempt start', write: 9 },
+  ] as const).flatMap(({ boundary, write }) => FAILED_APPEND_MODES.map((mode) => ({
+    operation, boundary, write, mode,
+  }))));
+
+const TERMINAL_APPEND_CASES = (['completed', 'failed', 'cancelled'] as const).flatMap((state) =>
+  FAILED_APPEND_MODES.map((mode) => ({ state, mode })));
 
 async function projectsProviderEvidenceTimeline(): Promise<void> {
   const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter());
@@ -60,19 +96,28 @@ function assertTimelineProjection(
   started: TaskExecutionView,
   timeline: TaskTimelineView,
 ): void {
-  expect(timeline).toMatchObject({
-    taskId: task.id,
-    status: started,
-    rawObservations: [{
+  expect(timeline).toMatchObject({ taskId: task.id, status: started });
+  expect(timeline.rawObservations).toMatchObject([{
       schema: 'hariari.provider-observation',
       version: 1,
       taskId: task.id,
       provider: 'claude',
       kind: 'provider-session-observed',
       observedAt: '2026-08-21T10:00:00.000Z',
+      evidence: { sessionState: 'active' },
       redaction: { status: 'allowlisted', omittedFields: ['nativeSessionId', 'capabilities'] },
-    }],
-    normalizedEvents: [{
+  }]);
+  assertNormalizedProjection(task, timeline);
+  assertReadableTimeline(timeline);
+}
+
+function assertNormalizedProjection(task: TaskView, timeline: TaskTimelineView): void {
+  expect(timeline.normalizedEvents).toMatchObject([{
+      schema: 'hariari.runtime.event', version: 1, taskId: task.id,
+      kind: 'task-created', idempotencyKey: 'timeline-create', sequence: 1,
+      occurrenceAt: '2026-08-21T10:00:00.000Z', observedAt: '2026-08-21T10:00:00.000Z',
+      redaction: { status: 'allowlisted', omittedFields: [] },
+    }, {
       schema: 'hariari.runtime.event',
       version: 1,
       taskId: task.id,
@@ -80,21 +125,31 @@ function assertTimelineProjection(
       idempotencyKey: 'timeline-start',
       occurrenceAt: '2026-08-21T10:00:00.000Z',
       observedAt: '2026-08-21T10:00:00.000Z',
-      sequence: 1,
+      sequence: 2,
       redaction: { status: 'allowlisted', omittedFields: ['nativeSessionId', 'capabilities'] },
-    }],
-    timeline: [{
-      sequence: 1,
+    }, {
+      schema: 'hariari.runtime.event', version: 1, taskId: task.id,
+      kind: 'attempt-started', idempotencyKey: 'timeline-start', sequence: 3,
+      occurrenceAt: '2026-08-21T10:00:00.000Z', observedAt: '2026-08-21T10:00:00.000Z',
+      redaction: { status: 'allowlisted', omittedFields: [] },
+  }]);
+  expect(timeline.rawObservations[0]?.id).not.toBe(timeline.normalizedEvents[1]?.id);
+  expect(timeline.normalizedEvents[1]).toMatchObject({
+    correlationId: 'timeline-start', causationId: timeline.rawObservations[0]?.id,
+  });
+}
+
+function assertReadableTimeline(timeline: TaskTimelineView): void {
+  expect(timeline.timeline).toMatchObject([{
+      sequence: 1, occurredAt: '2026-08-21T10:00:00.000Z', message: 'Task created',
+    }, {
+      sequence: 2,
       occurredAt: '2026-08-21T10:00:00.000Z',
       message: 'Claude provider session observed',
-    }],
-  });
-  expect(timeline.rawObservations[0]?.id).not.toBe(timeline.normalizedEvents[0]?.id);
-  expect(timeline.normalizedEvents[0]).toMatchObject({
-    correlationId: timeline.rawObservations[0]?.id,
-    causationId: timeline.rawObservations[0]?.id,
-  });
-  expect(timeline.timeline[0]?.eventId).toBe(timeline.normalizedEvents[0]?.id);
+    }, {
+      sequence: 3, occurredAt: '2026-08-21T10:00:00.000Z', message: 'Attempt started',
+  }]);
+  expect(timeline.timeline[1]?.eventId).toBe(timeline.normalizedEvents[1]?.id);
 }
 
 function assertSafeRawEvidence(
@@ -151,13 +206,101 @@ async function repairsProviderObservationAppend(
   const timeline = await runtime.getTaskTimeline(task.id);
   await expect(runtime.startTask(request)).resolves.toEqual(started);
   expect(timeline.rawObservations).toHaveLength(1);
-  expect(timeline.normalizedEvents).toHaveLength(1);
+  expect(timeline.normalizedEvents).toHaveLength(3);
   await runtime.disconnect();
 
   await subject.restart();
   const restarted = await subject.connect();
   await expect(restarted.getTaskTimeline(task.id)).resolves.toEqual(timeline);
   await restarted.disconnect();
+}
+
+async function repairsTaskCreatedEvidence(
+  mode: (typeof FAILED_APPEND_MODES)[number],
+): Promise<void> {
+  const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter());
+  const runtime = await subject.connect();
+  const request = {
+    objective: 'Repair Task creation evidence.', project: 'Hariari',
+    repository: 'fake-local-checkout', baseRef: 'HEAD', provider: 'claude' as const,
+    idempotencyKey: `task-created-${mode}`,
+  };
+  corruptExecutionAppend(path.join(subject.runtimeDirectory, 'tasks', 'events.log'), 2, mode);
+
+  await expect(runtime.createTask(request)).rejects.toEqual(new RuntimePortError('internal', true));
+  const task = await runtime.createTask(request);
+  const timeline = await runtime.getTaskTimeline(task.id);
+  expect(timeline.normalizedEvents.map((event) => event.kind)).toEqual(['task-created']);
+  await assertTimelineReplay(subject, runtime, task, timeline.status, timeline);
+}
+
+async function repairsAttemptStartedEvidence(
+  mode: (typeof FAILED_APPEND_MODES)[number],
+): Promise<void> {
+  const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter());
+  const runtime = await subject.connect();
+  const task = await runtime.createTask({
+    objective: 'Repair attempt start evidence.', project: 'Hariari',
+    repository: 'fake-local-checkout', baseRef: 'HEAD', provider: 'claude',
+    idempotencyKey: `attempt-started-${mode}-create`,
+  });
+  const request = { taskId: task.id, idempotencyKey: `attempt-started-${mode}` };
+  corruptExecutionAppend(path.join(subject.runtimeDirectory, 'tasks', 'events.log'), 7, mode);
+
+  const started = await runtime.startTask(request);
+  await expect(runtime.startTask(request)).resolves.toEqual(started);
+  const timeline = await runtime.getTaskTimeline(task.id);
+  expect(timeline.normalizedEvents.map((event) => event.kind)).toEqual([
+    'task-created', 'provider-session-observed', 'attempt-started',
+  ]);
+  await assertTimelineReplay(subject, runtime, task, started, timeline);
+}
+
+async function repairsProviderOperationEvidence(
+  fault: (typeof PROVIDER_OPERATION_APPEND_CASES)[number],
+): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const { task, started } = await startTimelineTask(runtime, `repair-${fault.operation}-${fault.mode}`);
+  if (fault.operation === 'resume') adapter.lose(task.id);
+  const request = {
+    taskId: task.id, providerSessionId: started.providerSession!.id,
+    idempotencyKey: `repair-${fault.operation}-${fault.boundary}-${fault.mode}`,
+  };
+  corruptExecutionAppend(
+    path.join(subject.runtimeDirectory, 'tasks', 'events.log'), fault.write, fault.mode,
+  );
+
+  const result = fault.operation === 'resume'
+    ? await runtime.resumeProviderSession(request) : await runtime.forkProviderSession(request);
+  const retry = fault.operation === 'resume'
+    ? runtime.resumeProviderSession(request) : runtime.forkProviderSession(request);
+  await expect(retry).resolves.toEqual(result);
+  const timeline = await runtime.getTaskTimeline(task.id);
+  expect(timeline.rawObservations).toHaveLength(2);
+  expect(timeline.normalizedEvents).toHaveLength(5);
+  await assertTimelineReplay(subject, runtime, task, result, timeline);
+}
+
+async function repairsTerminalEvidence(
+  fault: (typeof TERMINAL_APPEND_CASES)[number],
+): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const key = `repair-${fault.state}-${fault.mode}`;
+  const { task } = await startTimelineTask(runtime, key);
+  const write = fault.state === 'cancelled' ? 3 : 2;
+  corruptExecutionAppend(path.join(subject.runtimeDirectory, 'tasks', 'events.log'), write, fault.mode);
+
+  await settleTimelineTask(runtime, adapter, task.id, fault.state);
+  const status = await runtime.getTaskExecution(task.id);
+  const timeline = await runtime.getTaskTimeline(task.id);
+  await expect(runtime.startTask({ taskId: task.id, idempotencyKey: `${key}-start` }))
+    .resolves.toEqual(status);
+  expect(timeline.normalizedEvents.at(-1)?.kind).toBe(`attempt-${fault.state}`);
+  await assertTimelineReplay(subject, runtime, task, status, timeline);
 }
 
 async function rejectsUnsafeProviderEvidence(): Promise<void> {
@@ -215,12 +358,140 @@ async function rejectsCrossTaskNormalizedEvidence(): Promise<void> {
     type: 'NormalizedRuntimeEventRecorded', version: 1, taskId: first.taskId,
     event: {
       ...second.normalizedEvents[0], id: `${second.normalizedEvents[0]?.id}-cross-task`,
-      taskId: first.taskId, sequence: 2,
+      taskId: first.taskId, runId: first.status.run?.id,
+      attemptId: first.status.attempt?.id, providerSessionId: first.status.providerSession?.id,
+      sequence: first.normalizedEvents.length + 1,
     },
   });
   await runtime.disconnect();
 
   await expect(subject.restart()).rejects.toBeInstanceOf(Error);
+}
+
+async function retainsProviderOperationIdentities(): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const { task, started } = await startTimelineTask(runtime, 'operation-identities');
+  adapter.lose(task.id);
+  const resumed = await runtime.resumeProviderSession({
+    taskId: task.id, providerSessionId: started.providerSession!.id,
+    idempotencyKey: 'operation-identities-resume',
+  });
+  const forked = await runtime.forkProviderSession({
+    taskId: task.id, providerSessionId: resumed.providerSession!.id,
+    idempotencyKey: 'operation-identities-fork',
+  });
+
+  const timeline = await runtime.getTaskTimeline(task.id);
+  const providerEvents = timeline.normalizedEvents
+    .filter((event) => event.kind === 'provider-session-observed');
+  expect(providerEvents).toHaveLength(3);
+  assertProviderOperation(providerEvents[0], timeline.rawObservations[0], started,
+    'operation-identities-start', 2);
+  assertProviderOperation(providerEvents[1], timeline.rawObservations[1], resumed,
+    'operation-identities-resume', 4);
+  assertProviderOperation(providerEvents[2], timeline.rawObservations[2], forked,
+    'operation-identities-fork', 6);
+  await runtime.disconnect();
+}
+
+function assertProviderOperation(
+  event: TaskTimelineView['normalizedEvents'][number] | undefined,
+  observation: TaskTimelineView['rawObservations'][number] | undefined,
+  execution: TaskExecutionView,
+  idempotencyKey: string,
+  sequence: number,
+): void {
+  expect(event).toMatchObject({
+    taskId: execution.task.id, runId: execution.run?.id, attemptId: execution.attempt?.id,
+    providerSessionId: execution.providerSession?.id, idempotencyKey,
+    correlationId: idempotencyKey, sequence,
+  });
+  expect(event?.id).not.toBe(execution.providerSession?.id);
+  expect(event?.causationId).toBe(observation?.id);
+  expect(event?.id).not.toBe(observation?.id);
+}
+
+async function storesActualAllowlistedProviderEvidence(): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter({
+    providerObservation: () => ({
+      provider: 'claude', kind: 'provider-session-observed', sessionState: 'active',
+      nativeSessionId: 'native-unsafe-value', capabilities: { resume: true, fork: true },
+      absolutePath: '/private/provider/unsafe-path', command: 'print unsafe-command-value',
+      environment: { SECRET_TOKEN: 'unsafe-environment-value' },
+      providerNativeId: 'unsafe-provider-id', token: 'unsafe-token-value',
+      nested: { secret: 'unsafe-nested-value' },
+    }),
+  });
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const { task, timeline } = await startTimelineTask(runtime, 'actual-evidence');
+
+  expect(timeline.rawObservations[0]).toMatchObject({
+    taskId: task.id,
+    evidence: { sessionState: 'active' },
+    redaction: { status: 'allowlisted', omittedFields: [
+      'nativeSessionId', 'capabilities', 'providerNativeId', 'absolutePath',
+      'command', 'environment', 'secret', 'unproven',
+    ] },
+  });
+  const durable = fs.readFileSync(path.join(subject.runtimeDirectory, 'tasks', 'events.log'), 'utf8');
+  expect(durable).not.toMatch(
+    /native-unsafe-value|unsafe-path|unsafe-command-value|unsafe-environment-value|unsafe-provider-id|unsafe-token-value|unsafe-nested-value/,
+  );
+  await runtime.disconnect();
+}
+
+async function rebuildsTerminalLifecycle(
+  terminalState: 'completed' | 'failed' | 'cancelled',
+): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const { task } = await startTimelineTask(runtime, `lifecycle-${terminalState}`);
+  await settleTimelineTask(runtime, adapter, task.id, terminalState);
+  const status = await runtime.getTaskExecution(task.id);
+  const timeline = await runtime.getTaskTimeline(task.id);
+
+  expect(timeline.normalizedEvents.map((event) => event.kind)).toEqual([
+    'task-created', 'provider-session-observed', 'attempt-started', `attempt-${terminalState}`,
+  ]);
+  expect(timeline.timeline.map((entry) => entry.message)).toEqual([
+    'Task created', 'Claude provider session observed', 'Attempt started',
+    terminalState === 'completed' ? 'Attempt completed'
+      : terminalState === 'failed' ? 'Attempt failed' : 'Attempt cancelled',
+  ]);
+  await assertTimelineReplay(subject, runtime, task, status, timeline);
+}
+
+async function settleTimelineTask(
+  runtime: RuntimeClientSession,
+  adapter: FakeClaudeCodeExecutionAdapter,
+  taskId: string,
+  terminalState: 'completed' | 'failed' | 'cancelled',
+): Promise<void> {
+  if (terminalState === 'cancelled') {
+    await runtime.cancelTask({ taskId, idempotencyKey: 'lifecycle-cancelled-cancel' });
+  } else {
+    adapter.exit(taskId, terminalState === 'completed' ? 0 : 1);
+  }
+  await waitForExecutionState(runtime, taskId, terminalState);
+}
+
+async function waitForExecutionState(
+  runtime: RuntimeClientSession,
+  taskId: string,
+  expected: 'completed' | 'failed' | 'cancelled',
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const execution = await runtime.getTaskExecution(taskId);
+    const timeline = await runtime.getTaskTimeline(taskId);
+    if (execution.task.executionState === expected &&
+      timeline.normalizedEvents.some((event) => event.kind === `attempt-${expected}`)) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Task did not reach ${expected}`);
 }
 
 async function createStartedTimelineTask(

@@ -18,6 +18,7 @@ import {
   type TaskRecoveryDecisionView,
   type TaskTimelineView,
 } from '../shared/runtime/runtime-interface';
+import { parseTaskTimeline as parseCanonicalTaskTimeline } from '../shared/runtime/event-timeline-contract';
 import {
   RUNTIME_HANDSHAKE_VERSION,
   RUNTIME_HEALTH_OPERATION,
@@ -333,24 +334,11 @@ export function parseTaskExecutionView(value: Record<string, unknown>): TaskExec
 }
 
 export function parseTaskTimelineView(value: Record<string, unknown>): TaskTimelineView {
-  exactKeys(value, ['taskId', 'status', 'rawObservations', 'normalizedEvents', 'timeline']);
-  const taskId = identifier(value.taskId);
-  const status = parseTaskExecutionView(object(value.status));
-  if (status.task.id !== taskId) invalid();
-  const rawObservations = array(value.rawObservations).map((entry) =>
-    parseRawProviderObservationView(object(entry), taskId));
-  const normalizedEvents = array(value.normalizedEvents).map((entry) =>
-    parseNormalizedRuntimeEventView(object(entry), taskId, rawObservations));
-  const timeline = array(value.timeline).map((entry) =>
-    parseTimelineEntry(object(entry), normalizedEvents));
-  if (
-    new Set(rawObservations.map((observation) => observation.id)).size !== rawObservations.length ||
-    normalizedEvents.some((event, index) => event.sequence !== index + 1) ||
-    timeline.length !== normalizedEvents.length ||
-    timeline.some((entry, index) =>
-      entry.eventId !== normalizedEvents[index]?.id || entry.sequence !== index + 1)
-  ) invalid();
-  return { taskId, status, rawObservations, normalizedEvents, timeline };
+  try {
+    return parseCanonicalTaskTimeline(value, (status) => parseTaskExecutionView(object(status)));
+  } catch {
+    invalid();
+  }
 }
 
 export function parseTaskRecoveryView(value: Record<string, unknown>): TaskRecoveryView {
@@ -433,74 +421,6 @@ function operation(value: unknown): RuntimeOperationFrame {
   )
     invalid();
   return { name, version: RUNTIME_OPERATION_VERSION };
-}
-
-function parseRawProviderObservationView(
-  value: Record<string, unknown>,
-  taskId: string,
-): TaskTimelineView['rawObservations'][number] {
-  exactKeys(value, ['schema', 'version', 'id', 'taskId', 'provider', 'kind', 'observedAt', 'redaction']);
-  if (value.schema !== 'hariari.provider-observation' || value.version !== 1 ||
-    value.taskId !== taskId || value.provider !== 'claude' || value.kind !== 'provider-session-observed') invalid();
-  return {
-    schema: 'hariari.provider-observation', version: 1, id: identifier(value.id), taskId,
-    provider: 'claude', kind: 'provider-session-observed', observedAt: timestamp(value.observedAt),
-    redaction: parseEventRedaction(object(value.redaction)),
-  };
-}
-
-function parseNormalizedRuntimeEventView(
-  value: Record<string, unknown>,
-  taskId: string,
-  rawObservations: TaskTimelineView['rawObservations'],
-): TaskTimelineView['normalizedEvents'][number] {
-  exactKeys(value, [
-    'schema', 'version', 'id', 'taskId', 'kind', 'correlationId', 'causationId', 'idempotencyKey',
-    'sequence', 'occurrenceAt', 'observedAt', 'redaction',
-  ]);
-  const correlationId = identifier(value.correlationId);
-  const causationId = identifier(value.causationId);
-  const raw = rawObservations.find((observation) => observation.id === causationId);
-  if (value.schema !== 'hariari.runtime.event' || value.version !== 1 || value.taskId !== taskId ||
-    value.kind !== 'provider-session-observed' || correlationId !== causationId || !raw ||
-    raw.id === value.id || raw.observedAt !== value.observedAt ||
-    JSON.stringify(raw.redaction) !== JSON.stringify(value.redaction)) invalid();
-  return {
-    schema: 'hariari.runtime.event', version: 1, id: identifier(value.id), taskId,
-    kind: 'provider-session-observed', correlationId, causationId,
-    idempotencyKey: identifier(value.idempotencyKey), sequence: positiveInteger(value.sequence),
-    occurrenceAt: timestamp(value.occurrenceAt), observedAt: timestamp(value.observedAt),
-    redaction: parseEventRedaction(object(value.redaction)),
-  };
-}
-
-function parseTimelineEntry(
-  value: Record<string, unknown>,
-  normalizedEvents: TaskTimelineView['normalizedEvents'],
-): TaskTimelineView['timeline'][number] {
-  exactKeys(value, ['eventId', 'sequence', 'occurredAt', 'message']);
-  const eventId = identifier(value.eventId);
-  const event = normalizedEvents.find((candidate) => candidate.id === eventId);
-  if (!event || value.sequence !== event.sequence || value.occurredAt !== event.occurrenceAt ||
-    value.message !== 'Claude provider session observed') invalid();
-  return {
-    eventId,
-    sequence: positiveInteger(value.sequence),
-    occurredAt: timestamp(value.occurredAt),
-    message: 'Claude provider session observed',
-  };
-}
-
-function parseEventRedaction(value: Record<string, unknown>): TaskTimelineView['rawObservations'][number]['redaction'] {
-  exactKeys(value, ['status', 'omittedFields']);
-  if (value.status !== 'allowlisted' || !Array.isArray(value.omittedFields) ||
-    value.omittedFields.length !== 2 || value.omittedFields[0] !== 'nativeSessionId' ||
-    value.omittedFields[1] !== 'capabilities') invalid();
-  return { status: 'allowlisted', omittedFields: ['nativeSessionId', 'capabilities'] };
-}
-
-function exactKeys(value: Record<string, unknown>, allowed: readonly string[]): void {
-  if (Object.keys(value).some((key) => !allowed.includes(key))) invalid();
 }
 
 function parseRun(value: Record<string, unknown>): { readonly id: string; readonly number: number } {

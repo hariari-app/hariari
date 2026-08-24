@@ -21,7 +21,6 @@ import {
 import { TaskModule } from './task-module';
 import type { PlannedProviderRepair } from './task-execution-state';
 import type { PrivateTaskExecutionView } from './task-execution-projection';
-import { isTerminalExecutionState } from './task-execution-rules';
 import { TaskOutputLog } from './task-output-log';
 import { RecoveryReconciler } from './recovery-reconciler';
 
@@ -413,7 +412,7 @@ export class TaskExecutionModule {
         taskId, execution, active, attachment.parentId,
         attachment.repair, attachment.lineage,
       );
-      const started = await this.tasks.markStarted(taskId);
+      const started = await this.markStartedWithRepair(taskId, execution.attempt.id);
       active.activateExit();
       if (started.attempt?.state === 'cancelling') {
         void this.stopCancelled(taskId, active).catch(() => undefined);
@@ -451,6 +450,21 @@ export class TaskExecutionModule {
     throw new TaskExecutionError('internal');
   }
 
+  private async markStartedWithRepair(
+    taskId: string,
+    attemptId: string,
+  ): Promise<TaskExecutionView> {
+    try {
+      return await this.tasks.markStarted(taskId);
+    } catch (error) {
+      if (this.tasks.execution(taskId).attempt?.state !== 'running') throw error;
+      if (!this.tasks.hasAttemptLifecycleEvent(taskId, attemptId, 'attempt-started')) {
+        return this.tasks.markStarted(taskId);
+      }
+      return this.tasks.execution(taskId);
+    }
+  }
+
   private async attachContext(
     taskId: string,
     execution: TaskExecutionView,
@@ -469,10 +483,14 @@ export class TaskExecutionModule {
       : null;
     if (!repair) {
       try {
-        await this.tasks.allocateContext(taskId, active.context, providerSession);
+        await this.tasks.allocateContext(
+          taskId, active.context, providerSession, active.providerObservation,
+        );
       } catch (error) {
         if (this.tasks.execution(taskId).context?.id !== active.context.id) throw error;
-        await this.tasks.allocateContext(taskId, active.context, providerSession);
+        await this.tasks.allocateContext(
+          taskId, active.context, providerSession, active.providerObservation,
+        );
       }
       return;
     }
@@ -480,8 +498,12 @@ export class TaskExecutionModule {
       taskId,
       (view) => view.context?.id === active.context.id &&
         (providerSession === null || (view.providerSession?.id === providerSession.id &&
-          this.tasks.hasProviderSessionObservation(taskId, active.context.id, providerSession.id))),
-      () => this.tasks.allocateContext(taskId, active.context, providerSession),
+          this.tasks.hasCompleteProviderSessionObservation(
+            taskId, execution.attempt!.id, providerSession.id,
+          ))),
+      () => this.tasks.allocateContext(
+        taskId, active.context, providerSession, active.providerObservation,
+      ),
     );
   }
 
@@ -530,9 +552,16 @@ export class TaskExecutionModule {
   private persistTerminalWithRepair(taskId: string, transition: TerminalTransition): Promise<void> {
     return this.persistWithOneShotRepair(
       taskId,
-      (view) => isTerminalExecutionState(view.attempt?.state),
+      (view) => this.hasPersistedTerminalLifecycle(taskId, view),
       () => this.persistTerminal(taskId, transition),
     );
+  }
+
+  private hasPersistedTerminalLifecycle(taskId: string, view: TaskExecutionView): boolean {
+    const state = view.attempt?.state;
+    if (state === 'superseded') return true;
+    return (state === 'completed' || state === 'failed' || state === 'cancelled') &&
+      this.tasks.hasAttemptLifecycleEvent(taskId, view.attempt!.id, `attempt-${state}`);
   }
 
   private release(taskId: string, attemptId: string): void {
@@ -558,7 +587,19 @@ export class TaskExecutionModule {
 
   private async persistTerminal(taskId: string, transition: TerminalTransition): Promise<void> {
     const view = this.tasks.execution(taskId);
-    if (!view.attempt || isTerminalExecutionState(view.attempt.state)) return;
+    if (!view.attempt || view.attempt.state === 'superseded') return;
+    if (view.attempt.state === 'completed') {
+      await this.tasks.complete(taskId, view.attempt.exitCode ?? 0);
+      return;
+    }
+    if (view.attempt.state === 'failed') {
+      await this.tasks.fail(taskId);
+      return;
+    }
+    if (view.attempt.state === 'cancelled') {
+      await this.tasks.cancel(taskId);
+      return;
+    }
     if (view.attempt.state === 'superseding') {
       await this.tasks.completeProviderSupersession(taskId, view.attempt.id);
     } else if (view.attempt.state === 'cancelling') await this.tasks.cancel(taskId);

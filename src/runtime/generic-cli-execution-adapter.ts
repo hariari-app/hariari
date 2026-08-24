@@ -137,6 +137,7 @@ export interface ActiveExecution {
     readonly ptyId: string;
   };
   readonly providerSession: { readonly nativeSessionId: string; readonly capabilities: { readonly resume: boolean; readonly fork: boolean } } | null;
+  readonly providerObservation: unknown | null;
   isRunning(): boolean;
   activateOutput(): void;
   activateExit(): void;
@@ -378,6 +379,7 @@ function bufferedPtyExecution(
   return {
     context,
     providerSession: null,
+    providerObservation: null,
     isRunning: () => lifecycle.isRunning(),
     activateOutput: () => lifecycle.activateOutput(),
     activateExit: () => lifecycle.activateExit(),

@@ -234,6 +234,13 @@ function activeClaudeExecution(
   return {
     context,
     providerSession: { nativeSessionId, capabilities: { resume: capabilities.resume, fork: capabilities.fork } },
+    providerObservation: {
+      provider: 'claude',
+      kind: 'provider-session-observed',
+      sessionState: 'active',
+      nativeSessionId,
+      capabilities: { resume: capabilities.resume, fork: capabilities.fork },
+    },
     isRunning: () => lifecycle.isRunning(),
     activateOutput: () => lifecycle.activateOutput(),
     activateExit: () => lifecycle.activateExit(),

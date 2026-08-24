@@ -10,6 +10,7 @@ export interface StoredExecution {
   readonly taskId: string;
   readonly idempotencyKey: string;
   readonly fingerprint: string;
+  readonly currentOperationKey: string;
   readonly run: StoredRun;
   readonly attempt: StoredAttempt | null;
   readonly attempts: readonly StoredAttempt[];

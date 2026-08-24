@@ -192,7 +192,10 @@ export const EVENT_TIMELINE_SCHEMA_VERSION = 1 as const;
 
 export interface EventRedactionMetadata {
   readonly status: 'allowlisted';
-  readonly omittedFields: readonly ('nativeSessionId' | 'capabilities')[];
+  readonly omittedFields: readonly (
+    | 'nativeSessionId' | 'capabilities' | 'providerNativeId' | 'absolutePath'
+    | 'command' | 'environment' | 'secret' | 'unproven'
+  )[];
 }
 
 export interface RawProviderObservationView {
@@ -203,6 +206,7 @@ export interface RawProviderObservationView {
   readonly provider: 'claude';
   readonly kind: 'provider-session-observed';
   readonly observedAt: string;
+  readonly evidence: { readonly sessionState: 'active' };
   readonly redaction: EventRedactionMetadata;
 }
 
@@ -211,9 +215,18 @@ export interface NormalizedRuntimeEventView {
   readonly version: typeof EVENT_TIMELINE_SCHEMA_VERSION;
   readonly id: string;
   readonly taskId: string;
-  readonly kind: 'provider-session-observed';
+  readonly runId: string | null;
+  readonly attemptId: string | null;
+  readonly providerSessionId: string | null;
+  readonly kind:
+    | 'task-created'
+    | 'provider-session-observed'
+    | 'attempt-started'
+    | 'attempt-completed'
+    | 'attempt-failed'
+    | 'attempt-cancelled';
   readonly correlationId: string;
-  readonly causationId: string;
+  readonly causationId: string | null;
   readonly idempotencyKey: string;
   readonly sequence: number;
   readonly occurrenceAt: string;
@@ -225,7 +238,13 @@ export interface TaskTimelineEntry {
   readonly eventId: string;
   readonly sequence: number;
   readonly occurredAt: string;
-  readonly message: 'Claude provider session observed';
+  readonly message:
+    | 'Task created'
+    | 'Claude provider session observed'
+    | 'Attempt started'
+    | 'Attempt completed'
+    | 'Attempt failed'
+    | 'Attempt cancelled';
 }
 
 export interface TaskTimelineView {
