@@ -89,23 +89,37 @@ export interface RecoverTaskRequest {
   readonly idempotencyKey: string;
 }
 
-export type RecoveryResourceKind =
-  | 'provider-session'
-  | 'process'
-  | 'pty'
-  | 'worktree'
-  | 'branch';
+export const RECOVERY_RESOURCE_KINDS = [
+  'provider-session', 'process', 'pty', 'worktree', 'branch',
+] as const;
+export type RecoveryResourceKind = (typeof RECOVERY_RESOURCE_KINDS)[number];
 
-export type RecoveryClassification =
-  | 'healthy'
-  | 'stale'
-  | 'missing'
-  | 'duplicated'
-  | 'externally-modified'
-  | 'orphaned'
-  | 'unknown';
+export const RECOVERY_CLASSIFICATIONS = [
+  'healthy', 'stale', 'missing', 'duplicated', 'externally-modified',
+  'orphaned', 'unknown',
+] as const;
+export type RecoveryClassification = (typeof RECOVERY_CLASSIFICATIONS)[number];
 
-export type RecoveryDecision = 'resume' | 'fork' | 'adopt' | 'archive' | 'fail';
+export const RECOVERY_DECISIONS = ['resume', 'fork', 'adopt', 'archive', 'fail'] as const;
+export type RecoveryDecision = (typeof RECOVERY_DECISIONS)[number];
+export const RECOVERY_ATTENTION_REASON = 'ambiguous-recovery' as const;
+
+export function isRecoveryResourceKind(value: unknown): value is RecoveryResourceKind {
+  return typeof value === 'string' && RECOVERY_RESOURCE_KINDS.some((kind) => kind === value);
+}
+
+export function isRecoveryClassification(value: unknown): value is RecoveryClassification {
+  return typeof value === 'string' &&
+    RECOVERY_CLASSIFICATIONS.some((classification) => classification === value);
+}
+
+export function isRecoveryDecision(value: unknown): value is RecoveryDecision {
+  return typeof value === 'string' && RECOVERY_DECISIONS.some((decision) => decision === value);
+}
+
+export function recoveryNeedsAttention(decision: RecoveryDecision): boolean {
+  return decision === 'fail';
+}
 
 export interface TaskRecoveryView {
   readonly id: string;
@@ -119,7 +133,7 @@ export interface TaskRecoveryView {
   }[];
   readonly attention: {
     readonly id: string;
-    readonly reason: 'ambiguous-recovery';
+    readonly reason: typeof RECOVERY_ATTENTION_REASON;
   } | null;
 }
 

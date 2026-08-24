@@ -6,6 +6,7 @@ import type {
   ExecutionResourceObservation,
   PrivateExecutionBinding,
 } from './generic-cli-execution-adapter';
+import { observeRecoveryOwnership } from './local-recovery-markers';
 
 /** Reads local Git/filesystem facts without granting recovery mutation authority. */
 export async function observeLocalRecovery(
@@ -16,28 +17,96 @@ export async function observeLocalRecovery(
   const worktreePath = path.join(worktreeRoot, binding.context.worktreeId);
   const worktree = await observeWorktree(worktreePath);
   const branch = await observeBranch(binding, worktreePath, worktree.state === 'active');
-  const orphans = await observeOrphanBranches(binding);
+  const ownership = await observeRecoveryOwnership(path.dirname(worktreeRoot), binding, baseline);
+  const orphanWorktrees = await observeOrphanWorktrees(binding, worktreeRoot);
+  const adoptableBranches = new Set(
+    orphanWorktrees.flatMap((orphan) => orphan.branchName ? [orphan.branchName] : []),
+  );
+  const orphanBranches = await observeOrphanBranches(binding, adoptableBranches);
   return {
-    resources: [...baseline.resources.map((resource) => {
+    resources: [...ownership.resources.map((resource) => {
       if (resource.kind === 'worktree') return worktree;
       if (resource.kind === 'branch') return branch;
       return resource;
-    }), ...orphans],
+    }), ...orphanWorktrees.map((orphan) => orphan.resource), ...orphanBranches],
   };
 }
 
 async function observeOrphanBranches(
   binding: PrivateExecutionBinding,
+  adoptableBranches: ReadonlySet<string>,
 ): Promise<readonly ExecutionResourceObservation[]> {
   const prefix = `hariari/task-${binding.task.id}/`;
   const branches = await git(binding.task.repository, [
     'for-each-ref', '--format=%(refname:short)', `refs/heads/${prefix}`,
   ]);
-  if (!branches.ok || branches.stdout.length === 0) return [];
-  return branches.stdout.split('\n')
-    .filter((branch) => branch !== binding.context.branchName)
-    .slice(0, 15)
-    .map(() => ({ ...healthy('branch'), expected: false }));
+  if (!branches.ok) return [unknown('branch', false)];
+  if (branches.stdout.length === 0) return [];
+  return Promise.all(branches.stdout.split('\n')
+    .filter((candidate) => candidate !== binding.context.branchName)
+    .slice(0, 16)
+    .map(async (candidate) => {
+      const ancestry = await git(binding.task.repository, [
+        'merge-base', '--is-ancestor', binding.context.baseCommit, candidate,
+      ]);
+      return { ...healthy('branch'), expected: false,
+        fingerprint: ancestry.ok ? 'matching' as const : 'changed' as const,
+        adoptable: ancestry.ok && adoptableBranches.has(candidate) };
+    }));
+}
+
+interface OrphanWorktreeObservation {
+  readonly branchName: string | null;
+  readonly resource: ExecutionResourceObservation;
+}
+
+async function observeOrphanWorktrees(
+  binding: PrivateExecutionBinding,
+  worktreeRoot: string,
+): Promise<readonly OrphanWorktreeObservation[]> {
+  let entries: readonly fs.Dirent[];
+  try {
+    entries = await fs.promises.readdir(worktreeRoot, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return [];
+    return [{ branchName: null, resource: unknown('worktree', false) }];
+  }
+  return Promise.all(entries
+    .filter((entry) => entry.name !== binding.context.worktreeId)
+    .slice(0, 16)
+    .map((entry) => observeOrphanWorktree(binding, worktreeRoot, entry)));
+}
+
+async function observeOrphanWorktree(
+  binding: PrivateExecutionBinding,
+  worktreeRoot: string,
+  entry: fs.Dirent,
+): Promise<OrphanWorktreeObservation> {
+  if (!entry.isDirectory() || entry.isSymbolicLink()) {
+    return { branchName: null, resource: unknown('worktree', false) };
+  }
+  const candidatePath = path.join(worktreeRoot, entry.name);
+  const root = await git(candidatePath, ['rev-parse', '--show-toplevel']);
+  const branch = await git(candidatePath, ['branch', '--show-current']);
+  const ancestry = await git(candidatePath, [
+    'merge-base', '--is-ancestor', binding.context.baseCommit, 'HEAD',
+  ]);
+  const expectedPrefix = `hariari/task-${binding.task.id}/`;
+  const safe = root.ok && branch.ok && ancestry.ok && branch.stdout.startsWith(expectedPrefix) &&
+    await sameRealPath(candidatePath, root.stdout);
+  if (!safe) return { branchName: null, resource: unknown('worktree', false) };
+  return {
+    branchName: branch.stdout,
+    resource: { ...healthy('worktree'), expected: false, adoptable: true },
+  };
+}
+
+async function sameRealPath(left: string, right: string): Promise<boolean> {
+  try {
+    return await fs.promises.realpath(left) === await fs.promises.realpath(right);
+  } catch {
+    return false;
+  }
 }
 
 async function observeWorktree(worktreePath: string): Promise<ExecutionResourceObservation> {
@@ -111,7 +180,10 @@ function missing(kind: 'worktree' | 'branch'): ExecutionResourceObservation {
     fingerprint: 'matching', copies: 0, adoptable: false };
 }
 
-function unknown(kind: 'worktree' | 'branch'): ExecutionResourceObservation {
-  return { kind, expected: true, state: 'unknown', identity: 'unknown',
+function unknown(
+  kind: 'worktree' | 'branch',
+  expected = true,
+): ExecutionResourceObservation {
+  return { kind, expected, state: 'unknown', identity: 'unknown',
     fingerprint: 'unknown', copies: 0, adoptable: false };
 }

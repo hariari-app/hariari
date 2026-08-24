@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { expect, it } from 'vitest';
+import type { TaskRecoveryView } from '../../src/shared/runtime/runtime-interface';
 import type { ExecutionResourceObservation } from '../../src/runtime/generic-cli-execution-adapter';
 import { FakeClaudeCodeExecutionAdapter } from './runtime-test-fakes';
 import {
@@ -33,21 +34,7 @@ it('classifies one stale observed process and chooses native resume', async () =
     idempotencyKey: 'recovery-reconcile',
   });
 
-  expect(recovery).toMatchObject({
-    taskId: task.id,
-    desiredState: 'running',
-    status: 'ready',
-    decision: 'resume',
-    resources: [
-      { kind: 'provider-session', classification: 'stale' },
-      { kind: 'process', classification: 'stale' },
-      { kind: 'pty', classification: 'stale' },
-      { kind: 'worktree', classification: 'healthy' },
-      { kind: 'branch', classification: 'healthy' },
-    ],
-    attention: null,
-  });
-  expect(JSON.stringify(recovery)).not.toMatch(PRIVATE_RECOVERY_FIELDS);
+  expectStaleResumeRecovery(recovery, task.id);
   await expect(
     runtime.recoverTask({
       taskId: task.id,
@@ -292,6 +279,26 @@ it('replays a reconciliation committed before its acknowledgement connection was
   await restarted.disconnect();
 });
 
+it('rejects conflicting reconciliation and recovery keys before and after restart', async () => {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const firstTask = await createStartedClaudeTask(runtime, 'conflict-first');
+  const secondTask = await createStartedClaudeTask(runtime, 'conflict-second');
+  const first = await runtime.reconcileTask({
+    taskId: firstTask.id, idempotencyKey: 'shared-reconciliation-key',
+  });
+  const second = await runtime.reconcileTask({
+    taskId: secondTask.id, idempotencyKey: 'second-reconciliation-key',
+  });
+  await expectRecoveryKeyConflicts(runtime, firstTask.id, secondTask.id, first.id, second.id);
+  await runtime.disconnect();
+  await subject.restart();
+  const restarted = await subject.connect();
+  await expectRecoveryKeyConflicts(restarted, firstTask.id, secondTask.id, first.id, second.id);
+  await restarted.disconnect();
+});
+
 it('durably commits the central recovery decision without implicit ambiguous effects', async () => {
   const adapter = new FakeClaudeCodeExecutionAdapter();
   const subject = await createSubject(() => adapter);
@@ -430,6 +437,44 @@ async function createStartedClaudeTask(
   });
   await runtime.startTask({ taskId: task.id, idempotencyKey: `${key}-start` });
   return task;
+}
+
+function expectStaleResumeRecovery(
+  recovery: TaskRecoveryView,
+  taskId: string,
+): void {
+  expect(recovery).toMatchObject({
+    taskId, desiredState: 'running', status: 'ready', decision: 'resume',
+    resources: [
+      { kind: 'provider-session', classification: 'stale' },
+      { kind: 'process', classification: 'stale' },
+      { kind: 'pty', classification: 'stale' },
+      { kind: 'worktree', classification: 'healthy' },
+      { kind: 'branch', classification: 'healthy' },
+    ],
+    attention: null,
+  });
+  expect(JSON.stringify(recovery)).not.toMatch(PRIVATE_RECOVERY_FIELDS);
+}
+
+async function expectRecoveryKeyConflicts(
+  runtime: Awaited<ReturnType<Awaited<ReturnType<typeof createSubject>>['connect']>>,
+  firstTaskId: string,
+  secondTaskId: string,
+  firstRecoveryId: string,
+  secondRecoveryId: string,
+): Promise<void> {
+  await expect(runtime.reconcileTask({
+    taskId: secondTaskId, idempotencyKey: 'shared-reconciliation-key',
+  })).rejects.toMatchObject({ code: 'idempotency-conflict' });
+  await runtime.recoverTask({
+    taskId: firstTaskId, recoveryId: firstRecoveryId,
+    idempotencyKey: 'shared-recovery-key',
+  });
+  await expect(runtime.recoverTask({
+    taskId: secondTaskId, recoveryId: secondRecoveryId,
+    idempotencyKey: 'shared-recovery-key',
+  })).rejects.toMatchObject({ code: 'idempotency-conflict' });
 }
 
 function healthyHostResources(): readonly ExecutionResourceObservation[] {

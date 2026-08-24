@@ -20,6 +20,10 @@ import {
 } from './generic-cli-execution-adapter';
 import type { ProviderSessionCapabilities, TaskView } from '../shared/runtime/runtime-interface';
 import { observeLocalRecovery } from './local-recovery-observer';
+import {
+  observeLostRecoveryOwnership,
+  recordRecoveryOwnership,
+} from './local-recovery-markers';
 
 const STRUCTURED_MODE = ['--print', '--verbose', '--output-format', 'stream-json'] as const;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -66,7 +70,9 @@ export class ClaudeCodeExecutionAdapter implements ExecutionAdapter {
 
   async observe(binding: PrivateExecutionBinding): Promise<ExecutionObservation> {
     const active = this.executions.get(binding.context.id);
-    if (!active) return 'unknown';
+    if (!active) return observeLostRecoveryOwnership(
+      this.options.runtimeDirectory, binding,
+    );
     return active.isRunning() ? 'live' : 'lost';
   }
 
@@ -139,6 +145,7 @@ export class ClaudeCodeExecutionAdapter implements ExecutionAdapter {
         name: 'xterm-256color', cols: 120, rows: 30, cwd: worktreePath, env: runtimeEnvironment(),
       });
       lifecycle = new ClaudePtyLifecycle(pty, request);
+      recordRecoveryOwnership(this.options.runtimeDirectory, request.task.id, context, pty.pid);
       const nativeSessionId = await lifecycle.waitForNativeSessionId();
       validateNativeIdentity(request, nativeSessionId);
       return activeClaudeExecution(context, nativeSessionId, capabilities, lifecycle);

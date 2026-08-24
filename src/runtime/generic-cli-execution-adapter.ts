@@ -9,6 +9,10 @@ import type {
   TaskView,
 } from '../shared/runtime/runtime-interface';
 import { observeLocalRecovery } from './local-recovery-observer';
+import {
+  observeLostRecoveryOwnership,
+  recordRecoveryOwnership,
+} from './local-recovery-markers';
 
 const TRACER_TEXT = 'hariari-runtime-tracer';
 
@@ -171,7 +175,9 @@ export class LocalGenericCliExecutionAdapter implements ExecutionAdapter {
 
   async observe(binding: PrivateExecutionBinding): Promise<ExecutionObservation> {
     const active = this.executions.get(binding.context.id);
-    if (!active) return 'unknown';
+    if (!active) return observeLostRecoveryOwnership(
+      this.worktreeRootDirectory(), binding,
+    );
     return active.isRunning() ? 'live' : 'lost';
   }
 
@@ -199,19 +205,26 @@ export class LocalGenericCliExecutionAdapter implements ExecutionAdapter {
     worktreePath: string,
     context: GenericCliExecution['context'],
   ): GenericCliExecution {
+    let pty: PtyProcess | null = null;
     try {
       const command = tracerCommand();
-      const pty = this.getPty().spawn(command.file, command.args, {
+      pty = this.getPty().spawn(command.file, command.args, {
         name: 'xterm-256color',
         cols: 120,
         rows: 30,
         cwd: worktreePath,
         env: runtimeEnvironment(),
       });
+      recordRecoveryOwnership(this.worktreeRootDirectory(), request.task.id, context, pty.pid);
       return bufferedPtyExecution(pty, request, context);
     } catch {
+      try { pty?.kill(); } catch { /* Failed start remains fail-closed. */ }
       throw new GenericCliExecutionError('process-start-failed', context);
     }
+  }
+
+  private worktreeRootDirectory(): string {
+    return path.dirname(this.worktreeRoot);
   }
 
   private readonly nodeModulesRoot: string | undefined;

@@ -18,6 +18,7 @@ function registerClaudeProviderSessionTests(): void {
   it('records adapter-discovered Claude provider-session identity through the authenticated Runtime seam', recordsClaudeProviderSession);
   it('starts Claude through the production provider adapter', startsProductionClaudeProvider);
   it('reattaches live and passes fork argv through the production Claude adapter', invokesProductionClaudeLifecycle);
+  it('chooses resume then fork from production recovery observations', choosesProductionRecovery);
   it('persists false Claude capabilities discovered by the production adapter', discoversFalseClaudeCapabilities);
   it('projects immutable Claude attempt and provider-session histories through Runtime restart', projectsClaudeExecutionHistories);
 }
@@ -84,6 +85,50 @@ async function invokesProductionClaudeLifecycle(): Promise<void> {
   await runtime.disconnect();
 }
 
+async function choosesProductionRecovery(): Promise<void> {
+  const repository = createTestRepository();
+  const firstPty = new RecordingClaudePty();
+  const subject = await createProductionClaudeSubject(new RecordingClaudeExecutable(), firstPty);
+  const runtime = await subject.connect();
+  const task = await createClaudeTask(runtime, repository.path, 'production-recovery');
+  const started = await runtime.startTask({ taskId: task.id, idempotencyKey: 'production-recovery-start' });
+  await runtime.disconnect();
+  const secondPty = new RecordingClaudePty();
+  await subject.restartWith(productionClaudeAdapter(
+    subject.runtimeDirectory, new RecordingClaudeExecutable(), secondPty,
+  ));
+  const restarted = await subject.connect();
+
+  await expectCommittedRecovery(restarted, task.id, 'production-recovery-resume-choice', 'resume');
+  const resumed = await restarted.resumeProviderSession({
+    taskId: task.id, providerSessionId: started.providerSession!.id,
+    idempotencyKey: 'production-recovery-resume',
+  });
+  expect(resumed.providerSession).toMatchObject({ lineage: 'native-resume' });
+  await restarted.disconnect();
+  const thirdPty = new RecordingClaudePty();
+  await subject.restartWith(productionClaudeAdapter(
+    subject.runtimeDirectory, new RecordingClaudeExecutable(), thirdPty,
+  ));
+  const recovered = await subject.connect();
+  await expectCommittedRecovery(recovered, task.id, 'production-recovery-fork-choice', 'fork');
+  expect(thirdPty.starts).toEqual([]);
+  await recovered.disconnect();
+}
+
+async function expectCommittedRecovery(
+  runtime: RuntimeClientSession,
+  taskId: string,
+  key: string,
+  decision: 'resume' | 'fork',
+): Promise<void> {
+  const recovery = await runtime.reconcileTask({ taskId, idempotencyKey: key });
+  expect(recovery).toMatchObject({ status: 'ready', decision, attention: null });
+  await expect(runtime.recoverTask({
+    taskId, recoveryId: recovery.id, idempotencyKey: `${key}-commit`,
+  })).resolves.toMatchObject({ status: 'decided', decision, attention: null });
+}
+
 async function discoversFalseClaudeCapabilities(): Promise<void> {
   const executable = new RecordingClaudeExecutable('  --session-id <uuid>\n');
   const pty = new RecordingClaudePty();
@@ -125,10 +170,18 @@ async function projectsClaudeExecutionHistories(): Promise<void> {
 const STRUCTURED_CLAUDE_ARGS = ['--print', '--verbose', '--output-format', 'stream-json'] as const;
 
 async function createProductionClaudeSubject(executable: RecordingClaudeExecutable, pty: RecordingClaudePty): Promise<RuntimeSubject> {
-  return createSubject((runtimeDirectory) => new ProviderExecutionAdapterRouter({
+  return createSubject((runtimeDirectory) => productionClaudeAdapter(runtimeDirectory, executable, pty));
+}
+
+function productionClaudeAdapter(
+  runtimeDirectory: string,
+  executable: RecordingClaudeExecutable,
+  pty: RecordingClaudePty,
+): ProviderExecutionAdapterRouter {
+  return new ProviderExecutionAdapterRouter({
     shell: new LocalGenericCliExecutionAdapter({ runtimeDirectory }),
     claude: new ClaudeCodeExecutionAdapter({ runtimeDirectory, executable, pty }),
-  }));
+  });
 }
 
 function createClaudeTask(runtime: RuntimeClientSession, repository: string, key: string) {
@@ -163,7 +216,7 @@ class RecordingClaudePty {
 }
 
 class RecordingClaudeProcess {
-  readonly pid = 4242;
+  readonly pid = 2_147_483_647;
   private exitListener: ((event: { readonly exitCode: number }) => void) | null = null;
 
   constructor(private readonly sessionId: string) {}

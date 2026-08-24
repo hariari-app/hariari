@@ -1,6 +1,11 @@
 import {
   RUNTIME_IDENTIFIER_MAX_LENGTH,
+  RECOVERY_ATTENTION_REASON,
   TASK_PROVIDERS,
+  isRecoveryClassification,
+  isRecoveryDecision,
+  isRecoveryResourceKind,
+  recoveryNeedsAttention,
   type CancelTaskRequest,
   type CreateTaskRequest,
   type RuntimeHealth,
@@ -330,10 +335,11 @@ export function parseTaskRecoveryView(value: Record<string, unknown>): TaskRecov
   const status = value.status;
   if (status !== 'ready' && status !== 'attention') invalid();
   const decision = value.decision;
-  if (typeof decision !== 'string' || !RECOVERY_DECISIONS.has(decision)) invalid();
+  if (!isRecoveryDecision(decision)) invalid();
   const resources = array(value.resources).map((entry) => parseRecoveryResource(object(entry)));
   const attention = value.attention === null ? null : parseRecoveryAttention(object(value.attention));
-  if ((status === 'attention') !== (attention !== null) || (decision === 'fail') !== (attention !== null)) invalid();
+  if ((status === 'attention') !== (attention !== null) ||
+    recoveryNeedsAttention(decision) !== (attention !== null)) invalid();
   return {
     id: identifier(value.id),
     taskId: identifier(value.taskId),
@@ -351,10 +357,10 @@ export function parseTaskRecoveryDecisionView(
   const status = value.status;
   if (status !== 'decided' && status !== 'attention') invalid();
   const decision = value.decision;
-  if (typeof decision !== 'string' || !RECOVERY_DECISIONS.has(decision)) invalid();
+  if (!isRecoveryDecision(decision)) invalid();
   const attention = value.attention === null ? null : parseRecoveryAttention(object(value.attention));
   if ((status === 'attention') !== (attention !== null) ||
-    (decision === 'fail') !== (attention !== null)) invalid();
+    recoveryNeedsAttention(decision) !== (attention !== null)) invalid();
   return {
     id: identifier(value.id), taskId: identifier(value.taskId),
     recoveryId: identifier(value.recoveryId),
@@ -365,9 +371,8 @@ export function parseTaskRecoveryDecisionView(
 function parseRecoveryResource(
   value: Record<string, unknown>,
 ): TaskRecoveryView['resources'][number] {
-  if (typeof value.kind !== 'string' || !RECOVERY_RESOURCE_KINDS.has(value.kind) ||
-    typeof value.classification !== 'string' ||
-    !RECOVERY_CLASSIFICATIONS.has(value.classification)) invalid();
+  if (!isRecoveryResourceKind(value.kind) ||
+    !isRecoveryClassification(value.classification)) invalid();
   return {
     kind: value.kind as TaskRecoveryView['resources'][number]['kind'],
     classification: value.classification as TaskRecoveryView['resources'][number]['classification'],
@@ -377,7 +382,7 @@ function parseRecoveryResource(
 function parseRecoveryAttention(
   value: Record<string, unknown>,
 ): NonNullable<TaskRecoveryView['attention']> {
-  if (value.reason !== 'ambiguous-recovery') invalid();
+  if (value.reason !== RECOVERY_ATTENTION_REASON) invalid();
   return { id: identifier(value.id), reason: value.reason };
 }
 
@@ -582,12 +587,4 @@ const OPERATION_FAILURE_CODES = new Set([
   'process-start-failed',
   'runtime-stopping',
   'internal',
-]);
-
-const RECOVERY_DECISIONS = new Set(['resume', 'fork', 'adopt', 'archive', 'fail']);
-const RECOVERY_RESOURCE_KINDS = new Set([
-  'provider-session', 'process', 'pty', 'worktree', 'branch',
-]);
-const RECOVERY_CLASSIFICATIONS = new Set([
-  'healthy', 'stale', 'missing', 'duplicated', 'externally-modified', 'orphaned', 'unknown',
 ]);

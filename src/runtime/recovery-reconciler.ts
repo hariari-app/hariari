@@ -80,12 +80,15 @@ function decide(
   if (hasAmbiguity(classifications)) return 'fail';
   if (classifications.has('orphaned')) {
     return observation.resources
-      .filter((resource) => !resource.expected)
+      .filter((resource) => !resource.expected &&
+        (resource.state === 'active' || resource.state === 'inactive'))
       .every((resource) => resource.adoptable) ? 'adopt' : 'fail';
   }
   if (isTerminal(desired.task.executionState)) return 'archive';
   if (missingIsolation(resources)) return 'fail';
   if (classifications.has('missing') || classifications.has('stale')) {
+    if (desired.providerSession?.lineage === 'native-resume' &&
+      desired.providerSession.capabilities.fork) return 'fork';
     if (desired.providerSession?.capabilities.resume) return 'resume';
     if (desired.providerSession?.capabilities.fork) return 'fork';
     return 'fail';

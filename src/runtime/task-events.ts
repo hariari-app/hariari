@@ -1,9 +1,14 @@
-import type {
-  ProviderSessionView,
-  TaskExecutionState,
-  TaskRecoveryView,
-  TaskRecoveryDecisionView,
-  TaskView,
+import {
+  RECOVERY_ATTENTION_REASON,
+  isRecoveryClassification,
+  isRecoveryDecision,
+  isRecoveryResourceKind,
+  recoveryNeedsAttention,
+  type ProviderSessionView,
+  type TaskExecutionState,
+  type TaskRecoveryView,
+  type TaskRecoveryDecisionView,
+  type TaskView,
 } from '../shared/runtime/runtime-interface';
 import type {
   ProviderActionDecision,
@@ -217,11 +222,11 @@ function parseTaskRecoveryDecided(
 function parseRecoveryDecision(value: Record<string, unknown>): TaskRecoveryDecisionView {
   const decision = string(value.decision);
   const status = string(value.status);
-  if (!['resume', 'fork', 'adopt', 'archive', 'fail'].includes(decision) ||
+  if (!isRecoveryDecision(decision) ||
     (status !== 'decided' && status !== 'attention')) throw new Error('invalid recovery decision');
   const attention = value.attention === null ? null : object(value.attention);
   if ((status === 'attention') !== (attention !== null) ||
-    (decision === 'fail') !== (attention !== null)) throw new Error('invalid recovery decision');
+    recoveryNeedsAttention(decision) !== (attention !== null)) throw new Error('invalid recovery decision');
   return {
     id: string(value.id), taskId: string(value.taskId), recoveryId: string(value.recoveryId),
     decision: decision as TaskRecoveryDecisionView['decision'], status,
@@ -245,13 +250,13 @@ function parseRecovery(value: Record<string, unknown>): TaskRecoveryView {
   const status = string(value.status);
   const decision = string(value.decision);
   if ((status !== 'ready' && status !== 'attention') ||
-    !['resume', 'fork', 'adopt', 'archive', 'fail'].includes(decision)) {
+    !isRecoveryDecision(decision)) {
     throw new Error('invalid recovery');
   }
   const resources = array(value.resources).map((entry) => parseRecoveryResource(object(entry)));
   const attention = value.attention === null ? null : object(value.attention);
   if ((status === 'attention') !== (attention !== null) ||
-    (decision === 'fail') !== (attention !== null)) throw new Error('invalid recovery');
+    recoveryNeedsAttention(decision) !== (attention !== null)) throw new Error('invalid recovery');
   return {
     id: string(value.id), taskId: string(value.taskId),
     desiredState: executionState(string(value.desiredState)),
@@ -266,15 +271,14 @@ function parseRecoveryResource(
 ): TaskRecoveryView['resources'][number] {
   const kind = string(value.kind);
   const classification = string(value.classification);
-  if (!['provider-session', 'process', 'pty', 'worktree', 'branch'].includes(kind) ||
-    !['healthy', 'stale', 'missing', 'duplicated', 'externally-modified',
-      'orphaned', 'unknown'].includes(classification)) throw new Error('invalid recovery');
+  if (!isRecoveryResourceKind(kind) ||
+    !isRecoveryClassification(classification)) throw new Error('invalid recovery');
   return { kind: kind as TaskRecoveryView['resources'][number]['kind'],
     classification: classification as TaskRecoveryView['resources'][number]['classification'] };
 }
 
 function recoveryAttentionReason(value: unknown): 'ambiguous-recovery' {
-  if (value !== 'ambiguous-recovery') throw new Error('invalid recovery');
+  if (value !== RECOVERY_ATTENTION_REASON) throw new Error('invalid recovery');
   return value;
 }
 
