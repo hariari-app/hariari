@@ -277,10 +277,15 @@ export class TaskExecutionModule {
   }
 
   async reconcile(request: ReconcileTaskRequest): Promise<TaskRecoveryView> {
+    const existing = this.tasks.reconciliation(request);
+    if (existing) return existing;
     const desired = this.tasks.privateExecution(request.taskId);
     const binding = recoveryBinding(desired);
-    const observation = await this.adapter.observe(binding);
-    return this.recovery.reconcile(desired, observation);
+    const observation = await this.adapter.observeRecovery(binding);
+    return this.tasks.recordReconciliation(
+      request,
+      this.recovery.reconcile(desired, observation),
+    );
   }
 
   subscribe(

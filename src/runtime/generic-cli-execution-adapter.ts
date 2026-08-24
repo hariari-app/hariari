@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type {
   ProviderSessionCapabilities,
+  RecoveryResourceKind,
   TaskProvider,
   TaskView,
 } from '../shared/runtime/runtime-interface';
@@ -23,10 +24,25 @@ export class GenericCliExecutionError extends Error {
 export interface ExecutionAdapter {
   capabilities(task: TaskView): Promise<ProviderSessionCapabilities>;
   observe(binding: PrivateExecutionBinding): Promise<ExecutionObservation>;
+  observeRecovery(binding: PrivateExecutionBinding): Promise<ExecutionRecoveryObservation>;
   launch(plan: ExecutionLaunchPlan): Promise<ActiveExecution>;
 }
 
 export type ExecutionObservation = 'live' | 'lost' | 'unknown';
+
+export interface ExecutionResourceObservation {
+  readonly kind: RecoveryResourceKind;
+  readonly expected: boolean;
+  readonly state: 'active' | 'inactive' | 'absent' | 'unknown';
+  readonly identity: 'matching' | 'different' | 'unknown';
+  readonly fingerprint: 'matching' | 'changed' | 'unknown';
+  readonly copies: number;
+  readonly adoptable: boolean;
+}
+
+export interface ExecutionRecoveryObservation {
+  readonly resources: readonly ExecutionResourceObservation[];
+}
 
 export interface ExecutionStartRequest {
   readonly task: TaskView;
@@ -158,6 +174,10 @@ export class LocalGenericCliExecutionAdapter implements ExecutionAdapter {
     return active.isRunning() ? 'live' : 'lost';
   }
 
+  async observeRecovery(binding: PrivateExecutionBinding): Promise<ExecutionRecoveryObservation> {
+    return recoveryObservation(binding, this.executions.get(binding.context.id) ?? null);
+  }
+
   async launch(plan: ExecutionLaunchPlan): Promise<GenericCliExecution> {
     const request = executionStartRequest(plan);
     if (request.task.provider !== 'shell' || request.instruction.kind !== 'new') {
@@ -200,6 +220,86 @@ export class LocalGenericCliExecutionAdapter implements ExecutionAdapter {
 export type GenericCliExecutionAdapter = ExecutionAdapter;
 export type GenericCliStartRequest = ExecutionStartRequest;
 export type GenericCliExecution = ActiveExecution;
+
+export function recoveryObservation(
+  binding: PrivateExecutionBinding,
+  active: ActiveExecution | null,
+): ExecutionRecoveryObservation {
+  if (!active) return unknownRecoveryObservation(binding);
+  const lifecycle = active.isRunning() ? 'active' : 'inactive';
+  return { resources: [
+    providerObservation(binding, active, lifecycle),
+    contextObservation('process', binding.context.processId, active.context.processId, lifecycle),
+    contextObservation('pty', binding.context.ptyId, active.context.ptyId, lifecycle),
+    contextObservation('worktree', binding.context.worktreeId, active.context.worktreeId, 'active'),
+    branchObservation(binding, active),
+  ] };
+}
+
+function unknownRecoveryObservation(
+  binding: PrivateExecutionBinding,
+): ExecutionRecoveryObservation {
+  return { resources: [
+    unknownResource('provider-session', binding.providerSession !== null),
+    unknownResource('process', true),
+    unknownResource('pty', true),
+    unknownResource('worktree', true),
+    unknownResource('branch', true),
+  ] };
+}
+
+function providerObservation(
+  binding: PrivateExecutionBinding,
+  active: ActiveExecution,
+  state: 'active' | 'inactive',
+): ExecutionResourceObservation {
+  if (!binding.providerSession) {
+    return { ...knownResource('provider-session', false, 'absent'), copies: 0 };
+  }
+  return {
+    ...knownResource('provider-session', true, state),
+    identity: active.providerSession?.nativeSessionId === binding.providerSession.nativeSessionId
+      ? 'matching' : 'different',
+  };
+}
+
+function contextObservation(
+  kind: Extract<RecoveryResourceKind, 'process' | 'pty' | 'worktree'>,
+  expected: string,
+  observed: string,
+  state: 'active' | 'inactive',
+): ExecutionResourceObservation {
+  return { ...knownResource(kind, true, state),
+    identity: expected === observed ? 'matching' : 'different' };
+}
+
+function branchObservation(
+  binding: PrivateExecutionBinding,
+  active: ActiveExecution,
+): ExecutionResourceObservation {
+  return {
+    ...knownResource('branch', true, 'active'),
+    identity: binding.context.branchName === active.context.branchName ? 'matching' : 'different',
+    fingerprint: binding.context.baseCommit === active.context.baseCommit ? 'matching' : 'changed',
+  };
+}
+
+function knownResource(
+  kind: RecoveryResourceKind,
+  expected: boolean,
+  state: 'active' | 'inactive' | 'absent',
+): ExecutionResourceObservation {
+  return { kind, expected, state, identity: 'matching', fingerprint: 'matching',
+    copies: state === 'absent' ? 0 : 1, adoptable: false };
+}
+
+function unknownResource(
+  kind: RecoveryResourceKind,
+  expected: boolean,
+): ExecutionResourceObservation {
+  return { kind, expected, state: 'unknown', identity: 'unknown', fingerprint: 'unknown',
+    copies: 0, adoptable: false };
+}
 
 export function executionStartRequest(plan: ExecutionLaunchPlan): ExecutionStartRequest {
   const instruction: ProviderStartInstruction = plan.kind === 'new'

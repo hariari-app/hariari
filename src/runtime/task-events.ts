@@ -1,6 +1,7 @@
 import type {
   ProviderSessionView,
   TaskExecutionState,
+  TaskRecoveryView,
   TaskView,
 } from '../shared/runtime/runtime-interface';
 import type {
@@ -139,13 +140,21 @@ export interface CancellationRequestedEvent extends TaskIdEvent {
   readonly fingerprint: string;
 }
 
+export interface TaskReconciledEvent extends TaskIdEvent {
+  readonly type: 'TaskReconciled';
+  readonly idempotencyKey: string;
+  readonly fingerprint: string;
+  readonly recovery: TaskRecoveryView;
+}
+
 export type TaskEvent =
   | TaskCreatedEvent | RunCreatedEvent | AttemptCreatedEvent | ContextAllocatedEvent
   | AttemptStartedEvent | AttemptCompletedEvent | AttemptFailedEvent
   | CancellationRequestedEvent | AttemptCancelledEvent
   | AttemptForkedEvent
   | AttemptSupersessionRequestedEvent | AttemptSupersededEvent | AttemptResumedEvent
-  | ProviderSessionActionDecidedEvent | ProviderSessionActionAbortedEvent;
+  | ProviderSessionActionDecidedEvent | ProviderSessionActionAbortedEvent
+  | TaskReconciledEvent;
 
 export function parseTaskEvent(payload: Buffer): TaskEvent {
   const value = object(JSON.parse(payload.toString('utf8')));
@@ -176,12 +185,61 @@ function parseExecutionEvent(value: Record<string, unknown>, type: string): Task
   if (type === 'AttemptSupersessionRequested') return parseSupersessionRequested(value, taskId);
   if (type === 'AttemptSuperseded') return parseAttemptSuperseded(value, taskId);
   if (type === 'ContextAllocated') return parseContextAllocated(value, taskId);
+  if (type === 'TaskReconciled') return parseTaskReconciled(value, taskId);
   if (type === 'AttemptStarted' || type === 'AttemptFailed' || type === 'AttemptCancelled') {
     return { type, version: 1, taskId };
   }
   if (type === 'AttemptCompleted') return { type, version: 1, taskId, exitCode: integer(value.exitCode) };
   if (type === 'CancellationRequested') return parseCancellation(value, taskId);
   throw new Error('invalid event');
+}
+
+function parseTaskReconciled(
+  value: Record<string, unknown>,
+  taskId: string,
+): TaskReconciledEvent {
+  const recovery = parseRecovery(object(value.recovery));
+  if (recovery.taskId !== taskId) throw new Error('invalid recovery');
+  return { type: 'TaskReconciled', version: 1, taskId,
+    idempotencyKey: string(value.idempotencyKey),
+    fingerprint: string(value.fingerprint), recovery };
+}
+
+function parseRecovery(value: Record<string, unknown>): TaskRecoveryView {
+  const status = string(value.status);
+  const decision = string(value.decision);
+  if ((status !== 'ready' && status !== 'attention') ||
+    !['resume', 'fork', 'adopt', 'archive', 'fail'].includes(decision)) {
+    throw new Error('invalid recovery');
+  }
+  const resources = array(value.resources).map((entry) => parseRecoveryResource(object(entry)));
+  const attention = value.attention === null ? null : object(value.attention);
+  if ((status === 'attention') !== (attention !== null) ||
+    (decision === 'fail') !== (attention !== null)) throw new Error('invalid recovery');
+  return {
+    id: string(value.id), taskId: string(value.taskId),
+    desiredState: executionState(string(value.desiredState)),
+    status, decision: decision as TaskRecoveryView['decision'], resources,
+    attention: attention ? { id: string(attention.id),
+      reason: recoveryAttentionReason(attention.reason) } : null,
+  };
+}
+
+function parseRecoveryResource(
+  value: Record<string, unknown>,
+): TaskRecoveryView['resources'][number] {
+  const kind = string(value.kind);
+  const classification = string(value.classification);
+  if (!['provider-session', 'process', 'pty', 'worktree', 'branch'].includes(kind) ||
+    !['healthy', 'stale', 'missing', 'duplicated', 'externally-modified',
+      'orphaned', 'unknown'].includes(classification)) throw new Error('invalid recovery');
+  return { kind: kind as TaskRecoveryView['resources'][number]['kind'],
+    classification: classification as TaskRecoveryView['resources'][number]['classification'] };
+}
+
+function recoveryAttentionReason(value: unknown): 'ambiguous-recovery' {
+  if (value !== 'ambiguous-recovery') throw new Error('invalid recovery');
+  return value;
 }
 
 function parseProviderActionDecided(
@@ -328,6 +386,19 @@ function parseLineage(value: unknown): StoredProviderSession['lineage'] {
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid object');
   return value as Record<string, unknown>;
+}
+
+function array(value: unknown): readonly unknown[] {
+  if (!Array.isArray(value)) throw new Error('invalid array');
+  return value;
+}
+
+function executionState(value: string): TaskExecutionState {
+  if (!['ready', 'starting', 'running', 'completed', 'failed', 'cancelling',
+    'cancelled', 'superseding', 'superseded'].includes(value)) {
+    throw new Error('invalid execution state');
+  }
+  return value as TaskExecutionState;
 }
 
 function string(value: unknown): string {

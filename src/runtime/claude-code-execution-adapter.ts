@@ -7,10 +7,12 @@ import {
   loadNodePty,
   runtimeEnvironment,
   executionStartRequest,
+  recoveryObservation,
   type ActiveExecution,
   type ExecutionAdapter,
   type ExecutionLaunchPlan,
   type ExecutionObservation,
+  type ExecutionRecoveryObservation,
   type PrivateExecutionBinding,
   type ExecutionStartRequest,
   type PtyPort,
@@ -65,6 +67,10 @@ export class ClaudeCodeExecutionAdapter implements ExecutionAdapter {
     const active = this.executions.get(binding.context.id);
     if (!active) return 'unknown';
     return active.isRunning() ? 'live' : 'lost';
+  }
+
+  async observeRecovery(binding: PrivateExecutionBinding): Promise<ExecutionRecoveryObservation> {
+    return recoveryObservation(binding, this.executions.get(binding.context.id) ?? null);
   }
 
   async launch(plan: ExecutionLaunchPlan): Promise<ActiveExecution> {

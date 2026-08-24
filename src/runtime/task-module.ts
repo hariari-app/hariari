@@ -3,8 +3,10 @@ import type {
   CreateTaskRequest,
   StartTaskRequest,
   ProviderSessionActionRequest,
+  ReconcileTaskRequest,
   TaskExecutionState,
   TaskExecutionView,
+  TaskRecoveryView,
   TaskView,
 } from '../shared/runtime/runtime-interface';
 import {
@@ -23,6 +25,7 @@ import {
   type StoredRun,
   type TaskCreatedEvent,
   type TaskEvent,
+  type TaskReconciledEvent,
 } from './task-events';
 import {
   ProviderSessionLifecycle,
@@ -101,6 +104,7 @@ export class TaskModule {
   private readonly taskIds = new Map<string, TaskView>();
   private readonly fingerprints = new Map<string, string>();
   private readonly executions = new Map<string, StoredExecution>();
+  private readonly recoveries = new Map<string, TaskReconciledEvent>();
   private readonly executionKeys = new Map<string, StoredExecution>();
   private readonly providerLifecycle: ProviderSessionLifecycle;
   private mutation: Promise<void> = Promise.resolve();
@@ -396,6 +400,40 @@ export class TaskModule {
     return this.privateViewFor(task, this.executions.get(task.id) ?? null);
   }
 
+  reconciliation(request: ReconcileTaskRequest): TaskRecoveryView | null {
+    this.throwIfPoisoned();
+    const existing = this.recoveries.get(request.idempotencyKey);
+    if (!existing) return null;
+    if (existing.fingerprint !== recoveryFingerprint(request.taskId)) {
+      throw new TaskStorageError('idempotency-conflict');
+    }
+    return existing.recovery;
+  }
+
+  recordReconciliation(
+    request: ReconcileTaskRequest,
+    recovery: TaskRecoveryView,
+  ): Promise<TaskRecoveryView> {
+    return this.enqueue(async () => {
+      this.throwIfPoisoned();
+      const task = this.taskById(request.taskId);
+      const existing = this.recoveries.get(request.idempotencyKey);
+      const fingerprint = recoveryFingerprint(task.id);
+      if (existing) {
+        if (existing.fingerprint !== fingerprint) {
+          throw new TaskStorageError('idempotency-conflict');
+        }
+        return existing.recovery;
+      }
+      if (recovery.taskId !== task.id) throw new TaskStorageError('internal');
+      await this.appendVisible({
+        type: 'TaskReconciled', version: 1, taskId: task.id,
+        idempotencyKey: request.idempotencyKey, fingerprint, recovery,
+      });
+      return this.recoveries.get(request.idempotencyKey)!.recovery;
+    });
+  }
+
   private transition(
     taskId: string,
     event: Exclude<
@@ -479,6 +517,9 @@ export class TaskModule {
       case 'AttemptForked':
         this.applyAttemptForked(event);
         return;
+      case 'TaskReconciled':
+        this.applyTaskReconciled(event);
+        return;
     }
   }
 
@@ -495,6 +536,18 @@ export class TaskModule {
     this.tasks.set(event.idempotencyKey, event.task);
     this.taskIds.set(event.task.id, event.task);
     this.fingerprints.set(event.idempotencyKey, event.fingerprint);
+  }
+
+  private applyTaskReconciled(event: TaskReconciledEvent): void {
+    if (!this.taskIds.has(event.taskId) || event.recovery.taskId !== event.taskId) {
+      throw new TaskStorageError('internal');
+    }
+    const existing = this.recoveries.get(event.idempotencyKey);
+    if (existing && (existing.fingerprint !== event.fingerprint ||
+      JSON.stringify(existing.recovery) !== JSON.stringify(event.recovery))) {
+      throw new TaskStorageError('internal');
+    }
+    this.recoveries.set(event.idempotencyKey, event);
   }
 
   private applyRunCreated(event: RunCreatedEvent): void {
@@ -768,6 +821,10 @@ function canonicalTaskFingerprint(request: CreateTaskRequest): string {
 
 function canonicalExecutionFingerprint(taskId: string): string {
   return JSON.stringify([taskId]);
+}
+
+function recoveryFingerprint(taskId: string): string {
+  return JSON.stringify(['reconcile', taskId]);
 }
 
 function isTerminal(state: TaskExecutionState | undefined): boolean {

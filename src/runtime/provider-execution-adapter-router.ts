@@ -4,6 +4,7 @@ import {
   type ExecutionAdapter,
   type ExecutionLaunchPlan,
   type ExecutionObservation,
+  type ExecutionRecoveryObservation,
   type PrivateExecutionBinding,
 } from './generic-cli-execution-adapter';
 import type { ProviderSessionCapabilities, TaskView } from '../shared/runtime/runtime-interface';
@@ -23,6 +24,10 @@ export class ProviderExecutionAdapterRouter implements ExecutionAdapter {
 
   observe(binding: PrivateExecutionBinding): Promise<ExecutionObservation> {
     return this.adapterFor(binding.task.provider).observe(binding);
+  }
+
+  observeRecovery(binding: PrivateExecutionBinding): Promise<ExecutionRecoveryObservation> {
+    return this.adapterFor(binding.task.provider).observeRecovery(binding);
   }
 
   launch(plan: ExecutionLaunchPlan): Promise<ActiveExecution> {
