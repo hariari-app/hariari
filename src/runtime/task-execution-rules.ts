@@ -1,7 +1,4 @@
-import type {
-  CreateTaskRequest,
-  TaskExecutionState,
-} from '../shared/runtime/runtime-interface';
+import type { TaskExecutionState } from '../shared/runtime/runtime-interface';
 import type {
   StoredAttempt,
   StoredContext,
@@ -14,7 +11,7 @@ interface ResumeParentExecution {
   readonly providerSession: StoredProviderSession | null;
 }
 
-export function resumeParent(
+export function resumeParentExecution(
   execution: ResumeParentExecution,
   providerSessionId: string,
 ): {
@@ -32,21 +29,7 @@ export function resumeParent(
   };
 }
 
-export function canonicalTaskFingerprint(request: CreateTaskRequest): string {
-  return JSON.stringify([
-    request.objective,
-    request.project,
-    request.repository,
-    request.baseRef,
-    request.provider,
-  ]);
-}
-
-export function canonicalExecutionFingerprint(taskId: string): string {
-  return JSON.stringify([taskId]);
-}
-
-export function isTerminal(state: TaskExecutionState | undefined): boolean {
+export function isTerminalExecutionState(state: TaskExecutionState | undefined): boolean {
   return state === 'completed' || state === 'failed' ||
     state === 'cancelled' || state === 'superseded';
 }

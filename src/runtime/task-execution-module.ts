@@ -5,7 +5,6 @@ import type {
   RecoverTaskRequest,
   StartTaskRequest,
   ProviderSessionActionRequest,
-  TaskExecutionState,
   TaskExecutionView,
   TaskOutputEvent,
   TaskRecoveryView,
@@ -24,6 +23,7 @@ import {
   type PlannedProviderRepair,
 } from './task-module';
 import type { PrivateTaskExecutionView } from './task-execution-projection';
+import { isTerminalExecutionState } from './task-execution-rules';
 import { TaskOutputLog } from './task-output-log';
 import { RecoveryReconciler } from './recovery-reconciler';
 
@@ -526,7 +526,7 @@ export class TaskExecutionModule {
   private persistTerminalWithRepair(taskId: string, transition: TerminalTransition): Promise<void> {
     return this.persistWithOneShotRepair(
       taskId,
-      (view) => isTerminal(view.attempt?.state),
+      (view) => isTerminalExecutionState(view.attempt?.state),
       () => this.persistTerminal(taskId, transition),
     );
   }
@@ -554,7 +554,7 @@ export class TaskExecutionModule {
 
   private async persistTerminal(taskId: string, transition: TerminalTransition): Promise<void> {
     const view = this.tasks.execution(taskId);
-    if (!view.attempt || isTerminal(view.attempt.state)) return;
+    if (!view.attempt || isTerminalExecutionState(view.attempt.state)) return;
     if (view.attempt.state === 'superseding') {
       await this.tasks.completeProviderSupersession(taskId, view.attempt.id);
     } else if (view.attempt.state === 'cancelling') await this.tasks.cancel(taskId);
@@ -684,10 +684,6 @@ function sanitizeOutput(value: string): string {
     .slice(0, MAX_OUTPUT_CHARS);
 }
 
-function isTerminal(state: TaskExecutionState | undefined): boolean {
-  return state === 'completed' || state === 'failed' ||
-    state === 'cancelled' || state === 'superseded';
-}
 
 class ExitWait {
   private resolvePromise: () => void = () => undefined;

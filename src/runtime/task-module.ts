@@ -38,17 +38,19 @@ import {
 } from './provider-session-lifecycle';
 import { TaskEventStore, TaskEventStoreError } from './task-event-store';
 import {
+  canonicalExecutionFingerprint,
+  canonicalTaskFingerprint,
+} from './task-fingerprints';
+import {
   privateExecutionProjection,
   projectExecution,
   type PrivateTaskExecutionView,
 } from './task-execution-projection';
 import { TaskRecoveryJournal } from './task-recovery-journal';
 import {
-  canonicalExecutionFingerprint,
-  canonicalTaskFingerprint,
-  isTerminal,
-  resumeParent,
-} from './task-storage-rules';
+  isTerminalExecutionState,
+  resumeParentExecution,
+} from './task-execution-rules';
 
 type TaskFailureCode = 'idempotency-conflict' | 'not-found' | 'task-not-ready'
   | 'unsupported-operation' | 'internal';
@@ -236,7 +238,7 @@ export class TaskModule {
       this.throwIfPoisoned();
       const task = this.taskById(request.taskId);
       const execution = this.executionFor(task.id);
-      const parent = resumeParent(execution, request.providerSessionId);
+      const parent = resumeParentExecution(execution, request.providerSessionId);
       if (!parent) throw new TaskStorageError('task-not-ready');
       if (parent.attempt.state === 'running') await this.appendVisible({
           type: 'AttemptSupersessionRequested', version: 1, taskId: task.id,
@@ -348,7 +350,7 @@ export class TaskModule {
       const planned = execution.plannedAction;
       if (!planned || planned.kind !== kind || planned.actionKey !== request.idempotencyKey ||
         planned.sourceSessionId !== request.providerSessionId) return null;
-      if (isTerminal(execution.attempt?.state)) return { execution: this.viewFor(task, execution), repair: null };
+      if (isTerminalExecutionState(execution.attempt?.state)) return { execution: this.viewFor(task, execution), repair: null };
       const repair = this.providerRepair(execution);
       if (!repair) throw new TaskStorageError('internal');
       return { execution: this.viewFor(task, execution), repair };
@@ -364,7 +366,7 @@ export class TaskModule {
       this.throwIfPoisoned();
       const task = this.taskById(taskId);
       const execution = this.executionFor(task.id);
-      if (execution.attempt?.state === 'cancelling' || isTerminal(execution.attempt?.state)) {
+      if (execution.attempt?.state === 'cancelling' || isTerminalExecutionState(execution.attempt?.state)) {
         return this.viewFor(task, execution);
       }
       await this.appendVisible({ type: 'AttemptStarted', version: 1, taskId });
@@ -387,7 +389,7 @@ export class TaskModule {
       const execution = this.executions.get(task.id);
       if (!execution?.attempt) throw new TaskStorageError('task-not-ready');
       const fingerprint = canonicalExecutionFingerprint(request.taskId);
-      if (isTerminal(execution.attempt.state)) return this.viewFor(task, execution);
+      if (isTerminalExecutionState(execution.attempt.state)) return this.viewFor(task, execution);
       if (execution.cancellation) {
         if (execution.cancellation.idempotencyKey !== request.idempotencyKey) {
           throw new TaskStorageError('task-not-ready');
@@ -472,7 +474,7 @@ export class TaskModule {
       this.throwIfPoisoned();
       const task = this.taskById(taskId);
       const execution = this.executionFor(task.id);
-      if (isTerminal(execution.attempt?.state)) return this.viewFor(task, execution);
+      if (isTerminalExecutionState(execution.attempt?.state)) return this.viewFor(task, execution);
       const cancelled = requested === 'cancelled' || execution.attempt?.state === 'cancelling';
       const event = cancelled
         ? { type: 'AttemptCancelled' as const, version: 1 as const, taskId }
@@ -617,7 +619,7 @@ export class TaskModule {
     if (!execution.attempt || !execution.providerSession ||
       execution.attempt.id !== event.parentAttemptId ||
       execution.providerSession.id !== event.parentSessionId ||
-      isTerminal(execution.attempt.state)) throw new TaskStorageError('internal');
+      isTerminalExecutionState(execution.attempt.state)) throw new TaskStorageError('internal');
     this.replaceAttempt(execution, { ...execution.attempt, state: 'superseding' });
     const updated = this.executionFor(event.taskId);
     this.replaceExecution(updated, { ...updated, supersession: {
@@ -661,7 +663,7 @@ export class TaskModule {
 
   private applyCancellationRequested(event: CancellationRequestedEvent): void {
     const execution = this.executionFor(event.taskId);
-    if (!execution.attempt || isTerminal(execution.attempt.state) || execution.cancellation) {
+    if (!execution.attempt || isTerminalExecutionState(execution.attempt.state) || execution.cancellation) {
       throw new TaskStorageError('internal');
     }
     this.replaceExecution(execution, {
@@ -679,7 +681,7 @@ export class TaskModule {
     exitCode?: number,
   ): void {
     const execution = this.executionFor(taskId);
-    if (!execution.attempt || isTerminal(execution.attempt.state)) throw new TaskStorageError('internal');
+    if (!execution.attempt || isTerminalExecutionState(execution.attempt.state)) throw new TaskStorageError('internal');
     this.replaceAttempt(execution, {
       ...execution.attempt,
       state,

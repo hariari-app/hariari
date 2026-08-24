@@ -7,6 +7,7 @@ import type {
   ExecutionResourceObservation,
 } from './generic-cli-execution-adapter';
 import type { PrivateTaskExecutionView } from './task-execution-projection';
+import { isTerminalExecutionState } from './task-execution-rules';
 
 const MAX_RECOVERY_RESOURCES = 20;
 
@@ -84,7 +85,7 @@ function decide(
         (resource.state === 'active' || resource.state === 'inactive'))
       .every((resource) => resource.adoptable) ? 'adopt' : 'fail';
   }
-  if (isTerminal(desired.task.executionState)) return 'archive';
+  if (isTerminalExecutionState(desired.task.executionState)) return 'archive';
   if (missingIsolation(resources)) return 'fail';
   if (classifications.has('missing') || classifications.has('stale')) {
     if (desired.providerSession?.lineage === 'native-resume' &&
@@ -106,9 +107,4 @@ function hasAmbiguity(classifications: ReadonlySet<string>): boolean {
   return classifications.has('unknown') ||
     classifications.has('duplicated') ||
     classifications.has('externally-modified');
-}
-
-function isTerminal(state: PrivateTaskExecutionView['task']['executionState']): boolean {
-  return state === 'completed' || state === 'failed' ||
-    state === 'cancelled' || state === 'superseded';
 }
