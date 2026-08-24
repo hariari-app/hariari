@@ -5,9 +5,11 @@ import type {
   RuntimeShutdownRequest,
   RuntimeShutdownResult,
   StartTaskRequest,
+  ReconcileTaskRequest,
   ProviderSessionActionRequest,
   TaskExecutionView,
   TaskOutputEvent,
+  TaskRecoveryView,
   TaskView,
 } from '../../shared/runtime/runtime-interface';
 import {
@@ -28,6 +30,7 @@ import {
   TASK_START_OPERATION,
   PROVIDER_SESSION_FORK_OPERATION,
   PROVIDER_SESSION_RESUME_OPERATION,
+  TASK_RECONCILE_OPERATION,
   createClientProof,
   selectHighestMutualVersion,
   verifyServerProof,
@@ -47,6 +50,7 @@ import {
   parseOutputFrame,
   parseStoppedResult,
   parseTaskExecutionView,
+  parseTaskRecoveryView,
   parseTaskList,
   parseTaskView,
 } from '../../runtime/protocol-validation';
@@ -379,6 +383,14 @@ class NodeRuntimeClientSession implements RuntimeClientSession {
   }
   forkProviderSession(request: ProviderSessionActionRequest, deadlineMs = 2_000): Promise<TaskExecutionView> {
     return this.providerSessionAction(PROVIDER_SESSION_FORK_OPERATION, request, deadlineMs);
+  }
+  reconcileTask(request: ReconcileTaskRequest, deadlineMs = 2_000): Promise<TaskRecoveryView> {
+    return this.enqueue(async () => parseTaskRecoveryView(await this.request(
+      TASK_RECONCILE_OPERATION,
+      { taskId: request.taskId },
+      request.idempotencyKey,
+      deadlineMs,
+    )));
   }
   private providerSessionAction(
     operation: typeof PROVIDER_SESSION_RESUME_OPERATION | typeof PROVIDER_SESSION_FORK_OPERATION,

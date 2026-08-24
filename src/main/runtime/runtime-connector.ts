@@ -7,8 +7,10 @@ import type {
   RuntimeShutdownResult,
   StartTaskRequest,
   ProviderSessionActionRequest,
+  ReconcileTaskRequest,
   TaskExecutionView,
   TaskOutputEvent,
+  TaskRecoveryView,
   TaskView,
 } from '../../shared/runtime/runtime-interface';
 import {
@@ -117,6 +119,10 @@ class RuntimeConnector implements RuntimeInterface {
 
   forkProviderSession(request: ProviderSessionActionRequest): Promise<TaskExecutionView> {
     return this.withSession((session) => session.forkProviderSession(request));
+  }
+
+  reconcileTask(request: ReconcileTaskRequest): Promise<TaskRecoveryView> {
+    return this.withSession((session) => session.reconcileTask(request));
   }
 
   cancelTask(request: CancelTaskRequest): Promise<TaskExecutionView> {

@@ -8,8 +8,10 @@ import type {
   RuntimeShutdownResult,
   StartTaskRequest,
   ProviderSessionActionRequest,
+  ReconcileTaskRequest,
   TaskExecutionView,
   TaskOutputEvent,
+  TaskRecoveryView,
   TaskView,
 } from '../../shared/runtime/runtime-interface';
 
@@ -64,6 +66,7 @@ export interface RuntimeClientSession {
   startTask(request: StartTaskRequest, deadlineMs?: number): Promise<TaskExecutionView>;
   resumeProviderSession(request: ProviderSessionActionRequest, deadlineMs?: number): Promise<TaskExecutionView>;
   forkProviderSession(request: ProviderSessionActionRequest, deadlineMs?: number): Promise<TaskExecutionView>;
+  reconcileTask(request: ReconcileTaskRequest, deadlineMs?: number): Promise<TaskRecoveryView>;
   cancelTask(request: CancelTaskRequest, deadlineMs?: number): Promise<TaskExecutionView>;
   getTaskExecution(taskId: string, deadlineMs?: number): Promise<TaskExecutionView>;
   subscribeTaskOutput(

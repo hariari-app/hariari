@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type {
   CancelTaskRequest,
+  ReconcileTaskRequest,
   StartTaskRequest,
   ProviderSessionActionRequest,
   TaskExecutionState,
   TaskExecutionView,
   TaskOutputEvent,
+  TaskRecoveryView,
 } from '../shared/runtime/runtime-interface';
 import {
   GenericCliExecutionError,
@@ -21,6 +23,7 @@ import {
 } from './task-module';
 import type { PrivateTaskExecutionView } from './task-execution-projection';
 import { TaskOutputLog } from './task-output-log';
+import { RecoveryReconciler } from './recovery-reconciler';
 
 const MAX_OUTPUT_CHARS = 4 * 1024;
 
@@ -41,7 +44,7 @@ interface PlannedAttachment {
 }
 
 export class TaskExecutionError extends Error {
-  constructor(readonly code: 'worktree-unavailable' | 'process-start-failed' | 'internal') {
+  constructor(readonly code: 'worktree-unavailable' | 'process-start-failed' | 'task-not-ready' | 'internal') {
     super(`Task execution failed: ${code}`);
     this.name = 'TaskExecutionError';
   }
@@ -58,6 +61,7 @@ export class TaskExecutionModule {
   private readonly outputSequences = new Map<string, number>();
   private readonly outputPoisoned = new Set<string>();
   private readonly outputLog: TaskOutputLog;
+  private readonly recovery: RecoveryReconciler;
 
   constructor(
     private readonly tasks: TaskModule,
@@ -65,6 +69,7 @@ export class TaskExecutionModule {
     private readonly randomId: () => string,
   ) {
     this.outputLog = new TaskOutputLog(tasks.runtimeDirectory);
+    this.recovery = new RecoveryReconciler(randomId);
   }
 
   start(request: StartTaskRequest): Promise<TaskExecutionView> {
@@ -269,6 +274,13 @@ export class TaskExecutionModule {
 
   get(taskId: string): TaskExecutionView {
     return this.tasks.execution(taskId);
+  }
+
+  async reconcile(request: ReconcileTaskRequest): Promise<TaskRecoveryView> {
+    const desired = this.tasks.privateExecution(request.taskId);
+    const binding = recoveryBinding(desired);
+    const observation = await this.adapter.observe(binding);
+    return this.recovery.reconcile(desired, observation);
   }
 
   subscribe(
@@ -626,6 +638,23 @@ function bindingFor(
     attempt: prepared.execution.attempt!,
     context: prepared.context,
     providerSession: providerSource(prepared.session, prepared.context),
+  };
+}
+
+function recoveryBinding(
+  desired: PrivateTaskExecutionView,
+): import('./generic-cli-execution-adapter').PrivateExecutionBinding {
+  if (!desired.run || !desired.attempt || !desired.context) {
+    throw new TaskExecutionError('task-not-ready');
+  }
+  return {
+    task: desired.task,
+    run: desired.run,
+    attempt: desired.attempt,
+    context: desired.context,
+    providerSession: desired.providerSession
+      ? providerSource(desired.providerSession, desired.context)
+      : null,
   };
 }
 

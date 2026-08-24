@@ -78,6 +78,45 @@ export interface ProviderSessionActionRequest {
   readonly idempotencyKey: string;
 }
 
+export interface ReconcileTaskRequest {
+  readonly taskId: string;
+  readonly idempotencyKey: string;
+}
+
+export type RecoveryResourceKind =
+  | 'provider-session'
+  | 'process'
+  | 'pty'
+  | 'worktree'
+  | 'branch';
+
+export type RecoveryClassification =
+  | 'healthy'
+  | 'stale'
+  | 'missing'
+  | 'duplicated'
+  | 'externally-modified'
+  | 'orphaned'
+  | 'unknown';
+
+export type RecoveryDecision = 'resume' | 'fork' | 'adopt' | 'archive' | 'fail';
+
+export interface TaskRecoveryView {
+  readonly id: string;
+  readonly taskId: string;
+  readonly desiredState: TaskExecutionState;
+  readonly status: 'ready' | 'attention';
+  readonly decision: RecoveryDecision;
+  readonly resources: readonly {
+    readonly kind: RecoveryResourceKind;
+    readonly classification: RecoveryClassification;
+  }[];
+  readonly attention: {
+    readonly id: string;
+    readonly reason: 'ambiguous-recovery';
+  } | null;
+}
+
 export interface TaskAttemptView {
   readonly id: string;
   readonly number: number;
@@ -203,6 +242,7 @@ export interface RuntimeInterface {
   startTask(request: StartTaskRequest): Promise<TaskExecutionView>;
   resumeProviderSession(request: ProviderSessionActionRequest): Promise<TaskExecutionView>;
   forkProviderSession(request: ProviderSessionActionRequest): Promise<TaskExecutionView>;
+  reconcileTask(request: ReconcileTaskRequest): Promise<TaskRecoveryView>;
   cancelTask(request: CancelTaskRequest): Promise<TaskExecutionView>;
   getTaskExecution(taskId: string): Promise<TaskExecutionView>;
   subscribeTaskOutput(

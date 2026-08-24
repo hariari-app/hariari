@@ -9,9 +9,11 @@ import {
   type RuntimeShutdownRequest,
   type StartTaskRequest,
   type ProviderSessionActionRequest,
+  type ReconcileTaskRequest,
   type TaskExecutionState,
   type TaskExecutionView,
   type TaskOutputEvent,
+  type TaskRecoveryView,
 } from '../shared/runtime/runtime-interface';
 import {
   RUNTIME_HANDSHAKE_VERSION,
@@ -26,6 +28,7 @@ import {
   TASK_START_OPERATION,
   PROVIDER_SESSION_FORK_OPERATION,
   PROVIDER_SESSION_RESUME_OPERATION,
+  TASK_RECONCILE_OPERATION,
   type RuntimeAuthenticateFrame,
   type RuntimeAuthenticatedReplyEnvelope,
   type RuntimeChallengeFrame,
@@ -228,6 +231,14 @@ export function parseProviderSessionActionRequest(
   };
 }
 
+export function parseReconcileTaskRequest(request: RuntimeRequestFrame): ReconcileTaskRequest {
+  if (request.operation.name !== TASK_RECONCILE_OPERATION || !request.idempotencyKey) invalid();
+  return {
+    taskId: identifier(request.payload.taskId),
+    idempotencyKey: request.idempotencyKey,
+  };
+}
+
 export function parseTaskLifecycleRequest(value: unknown): StartTaskRequest {
   const request = object(value);
   return {
@@ -303,6 +314,44 @@ export function parseTaskExecutionView(value: Record<string, unknown>): TaskExec
   };
 }
 
+export function parseTaskRecoveryView(value: Record<string, unknown>): TaskRecoveryView {
+  const status = value.status;
+  if (status !== 'ready' && status !== 'attention') invalid();
+  const decision = value.decision;
+  if (typeof decision !== 'string' || !RECOVERY_DECISIONS.has(decision)) invalid();
+  const resources = array(value.resources).map((entry) => parseRecoveryResource(object(entry)));
+  const attention = value.attention === null ? null : parseRecoveryAttention(object(value.attention));
+  if ((status === 'attention') !== (attention !== null) || (decision === 'fail') !== (attention !== null)) invalid();
+  return {
+    id: identifier(value.id),
+    taskId: identifier(value.taskId),
+    desiredState: executionStateValue(value.desiredState),
+    status,
+    decision: decision as TaskRecoveryView['decision'],
+    resources,
+    attention,
+  };
+}
+
+function parseRecoveryResource(
+  value: Record<string, unknown>,
+): TaskRecoveryView['resources'][number] {
+  if (typeof value.kind !== 'string' || !RECOVERY_RESOURCE_KINDS.has(value.kind) ||
+    typeof value.classification !== 'string' ||
+    !RECOVERY_CLASSIFICATIONS.has(value.classification)) invalid();
+  return {
+    kind: value.kind as TaskRecoveryView['resources'][number]['kind'],
+    classification: value.classification as TaskRecoveryView['resources'][number]['classification'],
+  };
+}
+
+function parseRecoveryAttention(
+  value: Record<string, unknown>,
+): NonNullable<TaskRecoveryView['attention']> {
+  if (value.reason !== 'ambiguous-recovery') invalid();
+  return { id: identifier(value.id), reason: value.reason };
+}
+
 export function parseOutputFrame(value: unknown, protocolVersion: number): RuntimeOutputFrame {
   const frame = object(value);
   if (frame.kind !== 'runtime.output' || positiveInteger(frame.protocolVersion) !== protocolVersion) invalid();
@@ -356,6 +405,7 @@ function operation(value: unknown): RuntimeOperationFrame {
     name !== TASK_START_OPERATION &&
     name !== PROVIDER_SESSION_RESUME_OPERATION &&
     name !== PROVIDER_SESSION_FORK_OPERATION &&
+    name !== TASK_RECONCILE_OPERATION &&
     name !== TASK_CANCEL_OPERATION &&
     name !== TASK_EXECUTION_OPERATION &&
     name !== TASK_OUTPUT_SUBSCRIBE_OPERATION
@@ -502,4 +552,12 @@ const OPERATION_FAILURE_CODES = new Set([
   'process-start-failed',
   'runtime-stopping',
   'internal',
+]);
+
+const RECOVERY_DECISIONS = new Set(['resume', 'fork', 'adopt', 'archive', 'fail']);
+const RECOVERY_RESOURCE_KINDS = new Set([
+  'provider-session', 'process', 'pty', 'worktree', 'branch',
+]);
+const RECOVERY_CLASSIFICATIONS = new Set([
+  'healthy', 'stale', 'missing', 'duplicated', 'externally-modified', 'orphaned', 'unknown',
 ]);
