@@ -671,6 +671,10 @@ class FakeRuntimeSession implements RuntimeClientSession {
     throw new RuntimePortError('unsupported-operation', false);
   }
 
+  async recoverTask(): Promise<never> {
+    throw new RuntimePortError('unsupported-operation', false);
+  }
+
   async cancelTask(_request: CancelTaskRequest): Promise<TaskExecutionView> {
     throw new RuntimePortError('unsupported-operation', false);
   }

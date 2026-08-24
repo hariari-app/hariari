@@ -10,10 +10,12 @@ import {
   type StartTaskRequest,
   type ProviderSessionActionRequest,
   type ReconcileTaskRequest,
+  type RecoverTaskRequest,
   type TaskExecutionState,
   type TaskExecutionView,
   type TaskOutputEvent,
   type TaskRecoveryView,
+  type TaskRecoveryDecisionView,
 } from '../shared/runtime/runtime-interface';
 import {
   RUNTIME_HANDSHAKE_VERSION,
@@ -29,6 +31,7 @@ import {
   PROVIDER_SESSION_FORK_OPERATION,
   PROVIDER_SESSION_RESUME_OPERATION,
   TASK_RECONCILE_OPERATION,
+  TASK_RECOVER_OPERATION,
   type RuntimeAuthenticateFrame,
   type RuntimeAuthenticatedReplyEnvelope,
   type RuntimeChallengeFrame,
@@ -239,6 +242,15 @@ export function parseReconcileTaskRequest(request: RuntimeRequestFrame): Reconci
   };
 }
 
+export function parseRecoverTaskRequest(request: RuntimeRequestFrame): RecoverTaskRequest {
+  if (request.operation.name !== TASK_RECOVER_OPERATION || !request.idempotencyKey) invalid();
+  return {
+    taskId: identifier(request.payload.taskId),
+    recoveryId: identifier(request.payload.recoveryId),
+    idempotencyKey: request.idempotencyKey,
+  };
+}
+
 export function parseTaskLifecycleRequest(value: unknown): StartTaskRequest {
   const request = object(value);
   return {
@@ -333,6 +345,23 @@ export function parseTaskRecoveryView(value: Record<string, unknown>): TaskRecov
   };
 }
 
+export function parseTaskRecoveryDecisionView(
+  value: Record<string, unknown>,
+): TaskRecoveryDecisionView {
+  const status = value.status;
+  if (status !== 'decided' && status !== 'attention') invalid();
+  const decision = value.decision;
+  if (typeof decision !== 'string' || !RECOVERY_DECISIONS.has(decision)) invalid();
+  const attention = value.attention === null ? null : parseRecoveryAttention(object(value.attention));
+  if ((status === 'attention') !== (attention !== null) ||
+    (decision === 'fail') !== (attention !== null)) invalid();
+  return {
+    id: identifier(value.id), taskId: identifier(value.taskId),
+    recoveryId: identifier(value.recoveryId),
+    decision: decision as TaskRecoveryDecisionView['decision'], status, attention,
+  };
+}
+
 function parseRecoveryResource(
   value: Record<string, unknown>,
 ): TaskRecoveryView['resources'][number] {
@@ -406,6 +435,7 @@ function operation(value: unknown): RuntimeOperationFrame {
     name !== PROVIDER_SESSION_RESUME_OPERATION &&
     name !== PROVIDER_SESSION_FORK_OPERATION &&
     name !== TASK_RECONCILE_OPERATION &&
+    name !== TASK_RECOVER_OPERATION &&
     name !== TASK_CANCEL_OPERATION &&
     name !== TASK_EXECUTION_OPERATION &&
     name !== TASK_OUTPUT_SUBSCRIBE_OPERATION

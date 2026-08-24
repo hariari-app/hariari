@@ -8,6 +8,7 @@ import type {
   TaskProvider,
   TaskView,
 } from '../shared/runtime/runtime-interface';
+import { observeLocalRecovery } from './local-recovery-observer';
 
 const TRACER_TEXT = 'hariari-runtime-tracer';
 
@@ -175,7 +176,11 @@ export class LocalGenericCliExecutionAdapter implements ExecutionAdapter {
   }
 
   async observeRecovery(binding: PrivateExecutionBinding): Promise<ExecutionRecoveryObservation> {
-    return recoveryObservation(binding, this.executions.get(binding.context.id) ?? null);
+    return observeLocalRecovery(
+      binding,
+      recoveryObservation(binding, this.executions.get(binding.context.id) ?? null),
+      this.worktreeRoot,
+    );
   }
 
   async launch(plan: ExecutionLaunchPlan): Promise<GenericCliExecution> {
@@ -240,7 +245,9 @@ function unknownRecoveryObservation(
   binding: PrivateExecutionBinding,
 ): ExecutionRecoveryObservation {
   return { resources: [
-    unknownResource('provider-session', binding.providerSession !== null),
+    binding.providerSession
+      ? unknownResource('provider-session', true)
+      : { ...knownResource('provider-session', false, 'absent'), copies: 0 },
     unknownResource('process', true),
     unknownResource('pty', true),
     unknownResource('worktree', true),

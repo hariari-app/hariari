@@ -19,6 +19,7 @@ import {
   type PtyProcess,
 } from './generic-cli-execution-adapter';
 import type { ProviderSessionCapabilities, TaskView } from '../shared/runtime/runtime-interface';
+import { observeLocalRecovery } from './local-recovery-observer';
 
 const STRUCTURED_MODE = ['--print', '--verbose', '--output-format', 'stream-json'] as const;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -70,7 +71,11 @@ export class ClaudeCodeExecutionAdapter implements ExecutionAdapter {
   }
 
   async observeRecovery(binding: PrivateExecutionBinding): Promise<ExecutionRecoveryObservation> {
-    return recoveryObservation(binding, this.executions.get(binding.context.id) ?? null);
+    return observeLocalRecovery(
+      binding,
+      recoveryObservation(binding, this.executions.get(binding.context.id) ?? null),
+      this.worktreeRoot,
+    );
   }
 
   async launch(plan: ExecutionLaunchPlan): Promise<ActiveExecution> {

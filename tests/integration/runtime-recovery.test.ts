@@ -47,6 +47,17 @@ describe('authenticated Runtime recovery', () => {
       attention: null,
     });
     expect(JSON.stringify(recovery)).not.toMatch(/processId|ptyId|nativeSessionId|repository|branchName/);
+    await expect(runtime.recoverTask({
+      taskId: task.id,
+      recoveryId: recovery.id,
+      idempotencyKey: 'recovery-decide',
+    })).resolves.toMatchObject({
+      taskId: task.id,
+      recoveryId: recovery.id,
+      status: 'decided',
+      decision: 'resume',
+      attention: null,
+    });
     await runtime.disconnect();
   });
 
@@ -121,12 +132,66 @@ describe('authenticated Runtime recovery', () => {
     await runtime.disconnect();
   });
 
+  it('fails closed when recovery would resume without its desired worktree', async () => {
+    const adapter = new FakeClaudeCodeExecutionAdapter();
+    const subject = await createSubject(() => adapter);
+    const runtime = await subject.connect();
+    const task = await createStartedClaudeTask(runtime, 'missing-worktree');
+    adapter.setRecoveryResources([
+      observed('provider-session', 'active'),
+      observed('process', 'active'),
+      observed('pty', 'active'),
+      observed('worktree', 'absent'),
+      observed('branch', 'active'),
+    ]);
+
+    const recovery = await runtime.reconcileTask({
+      taskId: task.id,
+      idempotencyKey: 'missing-worktree-reconcile',
+    });
+
+    expect(recovery).toMatchObject({
+      status: 'attention',
+      decision: 'fail',
+      resources: expect.arrayContaining([
+        { kind: 'worktree', classification: 'missing' },
+      ]),
+      attention: { reason: 'ambiguous-recovery' },
+    });
+    expect(adapter.startCount(task.id)).toBe(1);
+    expect(adapter.stopCount(task.id)).toBe(0);
+    await runtime.disconnect();
+  });
+
+  it('bounds excessive observed resources and fails into Attention', async () => {
+    const adapter = new FakeClaudeCodeExecutionAdapter();
+    const subject = await createSubject(() => adapter);
+    const runtime = await subject.connect();
+    const task = await createStartedClaudeTask(runtime, 'bounded-observations');
+    adapter.setRecoveryResources(Array.from({ length: 25 }, () =>
+      observed('worktree', 'active', { expected: false, adoptable: true })));
+
+    const recovery = await runtime.reconcileTask({
+      taskId: task.id,
+      idempotencyKey: 'bounded-observations-reconcile',
+    });
+
+    expect(recovery.resources).toHaveLength(20);
+    expect(recovery).toMatchObject({
+      status: 'attention',
+      decision: 'fail',
+      attention: { reason: 'ambiguous-recovery' },
+    });
+    await runtime.disconnect();
+  });
+
   it('turns a fresh-adapter unknown into bounded Attention without lifecycle effects', async () => {
     const firstAdapter = new FakeClaudeCodeExecutionAdapter();
     const freshAdapter = new FakeClaudeCodeExecutionAdapter();
     const subject = await createSubject(() => firstAdapter);
     const runtime = await subject.connect();
     const task = await createStartedClaudeTask(runtime, 'fresh-adapter');
+    const before = await runtime.getTaskExecution(task.id);
     await runtime.disconnect();
     await subject.restartWith(freshAdapter);
     const restarted = await subject.connect();
@@ -149,6 +214,12 @@ describe('authenticated Runtime recovery', () => {
       attention: { reason: 'ambiguous-recovery' },
     });
     expect(JSON.stringify(recovery).length).toBeLessThan(1_024);
+    await expect(restarted.recoverTask({
+      taskId: task.id,
+      recoveryId: recovery.id,
+      idempotencyKey: 'fresh-adapter-recover',
+    })).resolves.toMatchObject({ status: 'attention', decision: 'fail' });
+    await expect(restarted.getTaskExecution(task.id)).resolves.toEqual(before);
     expect(freshAdapter.startCount(task.id)).toBe(0);
     expect(freshAdapter.stopCount(task.id)).toBe(0);
     await restarted.disconnect();
@@ -215,6 +286,106 @@ describe('authenticated Runtime recovery', () => {
 
     expect(replayed).toMatchObject({ decision: 'fail', status: 'attention' });
     expect(adapter.recoveryObservationCount(task.id)).toBe(1);
+    await restarted.disconnect();
+  });
+
+  it('durably commits the central recovery decision without implicit ambiguous effects', async () => {
+    const adapter = new FakeClaudeCodeExecutionAdapter();
+    const subject = await createSubject(() => adapter);
+    const runtime = await subject.connect();
+    const task = await createStartedClaudeTask(runtime, 'recover-command');
+    adapter.forget(task.id);
+    const reconciliation = await runtime.reconcileTask({
+      taskId: task.id,
+      idempotencyKey: 'recover-command-reconcile',
+    });
+    const request = {
+      taskId: task.id,
+      recoveryId: reconciliation.id,
+      idempotencyKey: 'recover-command-decide',
+    };
+
+    const decided = await runtime.recoverTask(request);
+
+    expect(decided).toMatchObject({
+      taskId: task.id,
+      recoveryId: reconciliation.id,
+      decision: 'fail',
+      status: 'attention',
+      attention: reconciliation.attention,
+    });
+    expect(adapter.startCount(task.id)).toBe(1);
+    expect(adapter.stopCount(task.id)).toBe(0);
+    await expect(runtime.recoverTask(request)).resolves.toEqual(decided);
+    await runtime.disconnect();
+    await subject.restart();
+    const restarted = await subject.connect();
+    await expect(restarted.recoverTask(request)).resolves.toEqual(decided);
+    await restarted.disconnect();
+  });
+
+  it.each(FAILED_APPEND_MODES)(
+    'repairs a %s TaskRecoveryDecided append before same-key retry and restart',
+    async (mode) => {
+      const adapter = new FakeClaudeCodeExecutionAdapter();
+      const subject = await createSubject(() => adapter);
+      const runtime = await subject.connect();
+      const task = await createStartedClaudeTask(runtime, `decision-append-${mode}`);
+      adapter.forget(task.id);
+      const recovery = await runtime.reconcileTask({
+        taskId: task.id,
+        idempotencyKey: `decision-append-${mode}-reconcile`,
+      });
+      corruptExecutionAppend(
+        path.join(subject.runtimeDirectory, 'tasks', 'events.log'),
+        1,
+        mode,
+      );
+      const request = {
+        taskId: task.id,
+        recoveryId: recovery.id,
+        idempotencyKey: `decision-append-${mode}-recover`,
+      };
+
+      await expect(runtime.recoverTask(request)).rejects.toMatchObject({ code: 'internal' });
+      const repaired = await runtime.recoverTask(request);
+      await runtime.disconnect();
+      await subject.restart();
+      const restarted = await subject.connect();
+      await expect(restarted.recoverTask(request)).resolves.toEqual(repaired);
+      expect(adapter.startCount(task.id)).toBe(1);
+      expect(adapter.stopCount(task.id)).toBe(0);
+      await restarted.disconnect();
+    },
+  );
+
+  it('replays a recovery decision committed before its acknowledgement connection was lost', async () => {
+    const adapter = new FakeClaudeCodeExecutionAdapter();
+    const subject = await createSubject(() => adapter);
+    const runtime = await subject.connect();
+    const task = await createStartedClaudeTask(runtime, 'decision-lost-ack');
+    const recovery = await runtime.reconcileTask({
+      taskId: task.id,
+      idempotencyKey: 'decision-lost-ack-reconcile',
+    });
+    subject.transport.dropNextResponse('task.recover');
+    const request = {
+      taskId: task.id,
+      recoveryId: recovery.id,
+      idempotencyKey: 'decision-lost-ack-recover',
+    };
+
+    await expect(runtime.recoverTask(request)).rejects.toMatchObject({ code: 'transport-lost' });
+    await runtime.disconnect();
+    await subject.restart();
+    const restarted = await subject.connect();
+    await expect(restarted.recoverTask(request)).resolves.toMatchObject({
+      recoveryId: recovery.id,
+      decision: 'resume',
+      status: 'decided',
+    });
+    expect(adapter.startCount(task.id)).toBe(1);
+    expect(adapter.stopCount(task.id)).toBe(0);
     await restarted.disconnect();
   });
 

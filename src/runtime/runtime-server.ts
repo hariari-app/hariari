@@ -18,6 +18,7 @@ import {
   TASK_OUTPUT_SUBSCRIBE_OPERATION,
   TASK_START_OPERATION,
   TASK_RECONCILE_OPERATION,
+  TASK_RECOVER_OPERATION,
   PROVIDER_SESSION_FORK_OPERATION,
   PROVIDER_SESSION_RESUME_OPERATION,
   createAuthenticatedReplyEnvelope,
@@ -40,6 +41,7 @@ import {
   parseStartTaskRequest,
   parseProviderSessionActionRequest,
   parseReconcileTaskRequest,
+  parseRecoverTaskRequest,
   parseTaskExecutionId,
   parseShutdownRequest,
 } from './protocol-validation';
@@ -293,6 +295,9 @@ export class RuntimeServer {
     if (request.operation.name === TASK_RECONCILE_OPERATION) {
       return this.handleReconciliation(request, protocolVersion);
     }
+    if (request.operation.name === TASK_RECOVER_OPERATION) {
+      return this.handleRecovery(request, protocolVersion);
+    }
     if (request.operation.name === TASK_CANCEL_OPERATION) {
       return this.handleExecutionRequest(request, protocolVersion, (parsed) =>
         this.executions.cancel(parsed),
@@ -326,6 +331,18 @@ export class RuntimeServer {
   ): Promise<RuntimeResponseFrame> {
     try {
       const recovery = await this.executions.reconcile(parseReconcileTaskRequest(request));
+      return success(request, protocolVersion, recovery as unknown as Record<string, unknown>);
+    } catch (error) {
+      return executionFailure(request, protocolVersion, error);
+    }
+  }
+
+  private async handleRecovery(
+    request: RuntimeRequestFrame,
+    protocolVersion: number,
+  ): Promise<RuntimeResponseFrame> {
+    try {
+      const recovery = await this.executions.recover(parseRecoverTaskRequest(request));
       return success(request, protocolVersion, recovery as unknown as Record<string, unknown>);
     } catch (error) {
       return executionFailure(request, protocolVersion, error);

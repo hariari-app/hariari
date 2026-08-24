@@ -404,6 +404,10 @@ class FakeRuntime implements RuntimeInterface {
     throw new Error('not exposed through Desktop IPC');
   }
 
+  async recoverTask(): Promise<never> {
+    throw new Error('not exposed through Desktop IPC');
+  }
+
   async cancelTask(request: CancelTaskRequest): Promise<TaskExecutionView> {
     this.cancelRequests.push(request);
     return this.execution;

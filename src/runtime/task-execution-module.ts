@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto';
 import type {
   CancelTaskRequest,
   ReconcileTaskRequest,
+  RecoverTaskRequest,
   StartTaskRequest,
   ProviderSessionActionRequest,
   TaskExecutionState,
   TaskExecutionView,
   TaskOutputEvent,
   TaskRecoveryView,
+  TaskRecoveryDecisionView,
 } from '../shared/runtime/runtime-interface';
 import {
   GenericCliExecutionError,
@@ -286,6 +288,13 @@ export class TaskExecutionModule {
       request,
       this.recovery.reconcile(desired, observation),
     );
+  }
+
+  recover(request: RecoverTaskRequest): Promise<TaskRecoveryDecisionView> {
+    const existing = this.tasks.recoveryDecision(request);
+    if (existing) return Promise.resolve(existing);
+    const recovery = this.tasks.recovery(request);
+    return this.tasks.recordRecoveryDecision(request, this.recovery.commit(recovery));
   }
 
   subscribe(

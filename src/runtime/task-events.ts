@@ -2,6 +2,7 @@ import type {
   ProviderSessionView,
   TaskExecutionState,
   TaskRecoveryView,
+  TaskRecoveryDecisionView,
   TaskView,
 } from '../shared/runtime/runtime-interface';
 import type {
@@ -147,6 +148,13 @@ export interface TaskReconciledEvent extends TaskIdEvent {
   readonly recovery: TaskRecoveryView;
 }
 
+export interface TaskRecoveryDecidedEvent extends TaskIdEvent {
+  readonly type: 'TaskRecoveryDecided';
+  readonly idempotencyKey: string;
+  readonly fingerprint: string;
+  readonly result: TaskRecoveryDecisionView;
+}
+
 export type TaskEvent =
   | TaskCreatedEvent | RunCreatedEvent | AttemptCreatedEvent | ContextAllocatedEvent
   | AttemptStartedEvent | AttemptCompletedEvent | AttemptFailedEvent
@@ -154,7 +162,7 @@ export type TaskEvent =
   | AttemptForkedEvent
   | AttemptSupersessionRequestedEvent | AttemptSupersededEvent | AttemptResumedEvent
   | ProviderSessionActionDecidedEvent | ProviderSessionActionAbortedEvent
-  | TaskReconciledEvent;
+  | TaskReconciledEvent | TaskRecoveryDecidedEvent;
 
 export function parseTaskEvent(payload: Buffer): TaskEvent {
   const value = object(JSON.parse(payload.toString('utf8')));
@@ -186,12 +194,40 @@ function parseExecutionEvent(value: Record<string, unknown>, type: string): Task
   if (type === 'AttemptSuperseded') return parseAttemptSuperseded(value, taskId);
   if (type === 'ContextAllocated') return parseContextAllocated(value, taskId);
   if (type === 'TaskReconciled') return parseTaskReconciled(value, taskId);
+  if (type === 'TaskRecoveryDecided') return parseTaskRecoveryDecided(value, taskId);
   if (type === 'AttemptStarted' || type === 'AttemptFailed' || type === 'AttemptCancelled') {
     return { type, version: 1, taskId };
   }
   if (type === 'AttemptCompleted') return { type, version: 1, taskId, exitCode: integer(value.exitCode) };
   if (type === 'CancellationRequested') return parseCancellation(value, taskId);
   throw new Error('invalid event');
+}
+
+function parseTaskRecoveryDecided(
+  value: Record<string, unknown>,
+  taskId: string,
+): TaskRecoveryDecidedEvent {
+  const result = parseRecoveryDecision(object(value.result));
+  if (result.taskId !== taskId) throw new Error('invalid recovery decision');
+  return { type: 'TaskRecoveryDecided', version: 1, taskId,
+    idempotencyKey: string(value.idempotencyKey),
+    fingerprint: string(value.fingerprint), result };
+}
+
+function parseRecoveryDecision(value: Record<string, unknown>): TaskRecoveryDecisionView {
+  const decision = string(value.decision);
+  const status = string(value.status);
+  if (!['resume', 'fork', 'adopt', 'archive', 'fail'].includes(decision) ||
+    (status !== 'decided' && status !== 'attention')) throw new Error('invalid recovery decision');
+  const attention = value.attention === null ? null : object(value.attention);
+  if ((status === 'attention') !== (attention !== null) ||
+    (decision === 'fail') !== (attention !== null)) throw new Error('invalid recovery decision');
+  return {
+    id: string(value.id), taskId: string(value.taskId), recoveryId: string(value.recoveryId),
+    decision: decision as TaskRecoveryDecisionView['decision'], status,
+    attention: attention ? { id: string(attention.id),
+      reason: recoveryAttentionReason(attention.reason) } : null,
+  };
 }
 
 function parseTaskReconciled(

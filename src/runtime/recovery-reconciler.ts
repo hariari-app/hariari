@@ -1,9 +1,14 @@
-import type { TaskRecoveryView } from '../shared/runtime/runtime-interface';
+import type {
+  TaskRecoveryDecisionView,
+  TaskRecoveryView,
+} from '../shared/runtime/runtime-interface';
 import type {
   ExecutionRecoveryObservation,
   ExecutionResourceObservation,
 } from './generic-cli-execution-adapter';
 import type { PrivateTaskExecutionView } from './task-execution-projection';
+
+const MAX_RECOVERY_RESOURCES = 20;
 
 /** Central deterministic desired-versus-observed recovery decision table. */
 export class RecoveryReconciler {
@@ -13,11 +18,15 @@ export class RecoveryReconciler {
     desired: PrivateTaskExecutionView,
     observation: ExecutionRecoveryObservation,
   ): TaskRecoveryView {
-    const resources = observation.resources.map((resource) => ({
+    const overflow = observation.resources.length > MAX_RECOVERY_RESOURCES;
+    const boundedObservation = {
+      resources: observation.resources.slice(0, MAX_RECOVERY_RESOURCES),
+    };
+    const resources = boundedObservation.resources.map((resource) => ({
       kind: resource.kind,
       classification: classify(resource),
     }));
-    const decision = decide(desired, observation, resources);
+    const decision = overflow ? 'fail' : decide(desired, boundedObservation, resources);
     const id = this.randomId();
     return {
       id,
@@ -30,6 +39,17 @@ export class RecoveryReconciler {
         id: this.randomId(),
         reason: 'ambiguous-recovery',
       } : null,
+    };
+  }
+
+  commit(recovery: TaskRecoveryView): TaskRecoveryDecisionView {
+    return {
+      id: this.randomId(),
+      taskId: recovery.taskId,
+      recoveryId: recovery.id,
+      decision: recovery.decision,
+      status: recovery.decision === 'fail' ? 'attention' : 'decided',
+      attention: recovery.attention,
     };
   }
 }
@@ -64,12 +84,19 @@ function decide(
       .every((resource) => resource.adoptable) ? 'adopt' : 'fail';
   }
   if (isTerminal(desired.task.executionState)) return 'archive';
+  if (missingIsolation(resources)) return 'fail';
   if (classifications.has('missing') || classifications.has('stale')) {
     if (desired.providerSession?.capabilities.resume) return 'resume';
     if (desired.providerSession?.capabilities.fork) return 'fork';
     return 'fail';
   }
   return 'resume';
+}
+
+function missingIsolation(resources: TaskRecoveryView['resources']): boolean {
+  return resources.some((resource) =>
+    (resource.kind === 'worktree' || resource.kind === 'branch') &&
+    (resource.classification === 'missing' || resource.classification === 'stale'));
 }
 
 function hasAmbiguity(classifications: ReadonlySet<string>): boolean {
