@@ -4,11 +4,6 @@ import type {
   TaskView,
 } from '../shared/runtime/runtime-interface';
 import type {
-  AttemptForkedEvent,
-  ClaudeForkRequestedEvent,
-  ClaudeResumeRejectedEvent,
-} from './claude-session-lifecycle';
-import type {
   ProviderActionDecision,
   ProviderActionRejection,
   ProviderSessionAction,
@@ -113,6 +108,17 @@ export interface AttemptResumedEvent {
   readonly plannedContext: StoredContext;
 }
 
+export interface AttemptForkedEvent {
+  readonly type: 'AttemptForked';
+  readonly version: 1;
+  readonly taskId: string;
+  readonly attempt: StoredAttempt;
+  readonly parentAttemptId: string;
+  readonly parentSessionId: string;
+  readonly forkKey: string;
+  readonly plannedContext?: StoredContext;
+}
+
 interface TaskIdEvent {
   readonly version: 1;
   readonly taskId: string;
@@ -137,7 +143,7 @@ export type TaskEvent =
   | TaskCreatedEvent | RunCreatedEvent | AttemptCreatedEvent | ContextAllocatedEvent
   | AttemptStartedEvent | AttemptCompletedEvent | AttemptFailedEvent
   | CancellationRequestedEvent | AttemptCancelledEvent
-  | ClaudeResumeRejectedEvent | ClaudeForkRequestedEvent | AttemptForkedEvent
+  | AttemptForkedEvent
   | AttemptSupersessionRequestedEvent | AttemptSupersededEvent | AttemptResumedEvent
   | ProviderSessionActionDecidedEvent | ProviderSessionActionAbortedEvent;
 
@@ -174,8 +180,6 @@ function parseExecutionEvent(value: Record<string, unknown>, type: string): Task
     return { type, version: 1, taskId };
   }
   if (type === 'AttemptCompleted') return { type, version: 1, taskId, exitCode: integer(value.exitCode) };
-  if (type === 'ClaudeResumeRejected') return parseResumeRejected(value, taskId);
-  if (type === 'ClaudeForkRequested') return parseForkRequested(value, taskId);
   if (type === 'CancellationRequested') return parseCancellation(value, taskId);
   throw new Error('invalid event');
 }
@@ -269,20 +273,6 @@ function parseContextAllocated(value: Record<string, unknown>, taskId: string): 
     ? null : parseProviderSession(object(value.providerSession));
   return { type: 'ContextAllocated', version: 1, taskId,
     context: parseContext(object(value.context)), providerSession };
-}
-
-function parseResumeRejected(value: Record<string, unknown>, taskId: string): ClaudeResumeRejectedEvent {
-  const reason = string(value.reason);
-  if (reason !== 'unsupported' && reason !== 'scope-mismatch' && reason !== 'not-current') throw new Error('invalid event');
-  return { type: 'ClaudeResumeRejected', version: 1, taskId,
-    providerSessionId: string(value.providerSessionId), idempotencyKey: string(value.idempotencyKey),
-    fingerprint: string(value.fingerprint), reason };
-}
-
-function parseForkRequested(value: Record<string, unknown>, taskId: string): ClaudeForkRequestedEvent {
-  return { type: 'ClaudeForkRequested', version: 1, taskId,
-    providerSessionId: string(value.providerSessionId), idempotencyKey: string(value.idempotencyKey),
-    fingerprint: string(value.fingerprint) };
 }
 
 function parseCancellation(value: Record<string, unknown>, taskId: string): CancellationRequestedEvent {

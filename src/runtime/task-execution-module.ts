@@ -20,7 +20,6 @@ import {
   type PlannedProviderRepair,
 } from './task-module';
 import type { PrivateTaskExecutionView } from './task-execution-projection';
-import type { ClaudeForkRepair } from './claude-session-lifecycle';
 import { TaskOutputLog } from './task-output-log';
 
 const MAX_OUTPUT_CHARS = 4 * 1024;
@@ -98,7 +97,7 @@ export class TaskExecutionModule {
     if (recovery && !recovery.repair) return recovery.execution;
     if (recovery?.repair) return this.startReserved(
       { taskId: request.taskId, idempotencyKey: request.idempotencyKey },
-      recovery.execution, undefined, recovery.repair,
+      recovery.execution, recovery.repair,
     );
     if (prepared.prior?.decision === 'native-resume') {
       this.releaseLostActive(request.taskId);
@@ -147,7 +146,7 @@ export class TaskExecutionModule {
     if (recovery && !recovery.repair) return recovery.execution;
     if (recovery?.repair) return this.startReserved(
       { taskId: request.taskId, idempotencyKey: request.idempotencyKey },
-      recovery.execution, undefined, recovery.repair,
+      recovery.execution, recovery.repair,
     );
     await this.tasks.acceptProviderAction(prepared, 'fork');
     if (current.attempt?.state !== 'superseded') {
@@ -226,8 +225,7 @@ export class TaskExecutionModule {
     const reservation = await this.tasks.reserveExecution(request);
     return reservation.created
       ? this.startReserved(
-          request, reservation.execution,
-          reservation.claudeForkRepair, reservation.providerRepair,
+          request, reservation.execution, reservation.providerRepair,
         )
       : reservation.execution;
   }
@@ -290,7 +288,6 @@ export class TaskExecutionModule {
   private async startReserved(
     request: StartTaskRequest,
     execution: TaskExecutionView,
-    forkRepair?: ClaudeForkRepair,
     providerRepair?: PlannedProviderRepair,
   ): Promise<TaskExecutionView> {
     if (!execution.run || !execution.attempt) throw new TaskExecutionError('internal');
@@ -300,23 +297,19 @@ export class TaskExecutionModule {
           (data) => this.publishOutput(request.taskId, execution.attempt!.id, data),
           (exitCode) => void this.settle(request.taskId, execution.attempt!.id, exitCode),
         )
-      : this.newPlannedContext(request.taskId, execution, forkRepair);
-    const sourceRepair = providerRepair ?? forkRepair;
+      : this.newPlannedContext(request.taskId, execution);
+    const sourceRepair = providerRepair;
     const plan: ExecutionLaunchPlan = providerRepair
       ? { kind: providerRepair.kind, source: providerSource(
           providerRepair.parentSession, providerRepair.parentContext,
         ), plannedContext } as ExecutionLaunchPlan
-      : forkRepair
-        ? { kind: 'fork', source: providerSource(
-            forkRepair.parentSession, forkRepair.parentContext,
-          ), plannedContext }
-        : { kind: 'new',
-            nativeSessionId: execution.task.provider === 'claude' ? randomUUID() : null,
-            plannedContext };
+      : { kind: 'new',
+          nativeSessionId: execution.task.provider === 'claude' ? randomUUID() : null,
+          plannedContext };
     return this.launchPlannedAttempt(request.taskId, execution, plan, {
       parentId: sourceRepair?.parentSession.id ?? null,
       repair: sourceRepair !== undefined,
-      lineage: providerRepair?.kind ?? (forkRepair ? 'fork' : 'new'),
+      lineage: providerRepair?.kind ?? 'new',
     });
   }
 
@@ -358,7 +351,6 @@ export class TaskExecutionModule {
   private newPlannedContext(
     taskId: string,
     execution: TaskExecutionView,
-    forkRepair?: ClaudeForkRepair,
   ): PlannedExecutionContext {
     return {
       task: execution.task,
@@ -366,7 +358,7 @@ export class TaskExecutionModule {
       attempt: execution.attempt!,
       identities: {
         contextId: this.randomId(),
-        worktreeId: forkRepair?.parentContext.worktreeId ?? this.randomId(),
+        worktreeId: this.randomId(),
         processId: this.randomId(),
         ptyId: this.randomId(),
       },

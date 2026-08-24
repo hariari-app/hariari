@@ -24,8 +24,6 @@ import {
   TASK_LIST_OPERATION,
   TASK_OUTPUT_SUBSCRIBE_OPERATION,
   TASK_START_OPERATION,
-  CLAUDE_RESUME_OPERATION,
-  CLAUDE_FORK_OPERATION,
   PROVIDER_SESSION_FORK_OPERATION,
   PROVIDER_SESSION_RESUME_OPERATION,
   type RuntimeAuthenticateFrame,
@@ -39,16 +37,6 @@ import {
   type RuntimeUnauthorizedFrame,
   type RuntimeWelcomeFrame,
 } from './protocol';
-
-interface LegacyClaudeResumeRequest {
-  readonly taskId: string; readonly providerSessionId: string;
-  readonly repository: string; readonly worktreeId: string; readonly branchName: string;
-  readonly idempotencyKey: string;
-}
-
-interface LegacyClaudeForkRequest {
-  readonly taskId: string; readonly providerSessionId: string; readonly idempotencyKey: string;
-}
 
 const MAX_VERSION_LENGTH = 128;
 const MAX_PROOF_LENGTH = 128;
@@ -227,15 +215,6 @@ export function parseCancelTaskRequest(request: RuntimeRequestFrame): CancelTask
   if (request.operation.name !== TASK_CANCEL_OPERATION || !request.idempotencyKey) invalid();
   return { taskId: identifier(request.payload.taskId), idempotencyKey: request.idempotencyKey };
 }
-export function parseResumeClaudeSessionRequest(request: RuntimeRequestFrame): LegacyClaudeResumeRequest {
-  if (request.operation.name !== CLAUDE_RESUME_OPERATION || !request.idempotencyKey) invalid();
-  return { taskId: identifier(request.payload.taskId), providerSessionId: identifier(request.payload.providerSessionId), repository: requiredTaskField(request.payload.repository), worktreeId: identifier(request.payload.worktreeId), branchName: requiredTaskField(request.payload.branchName), idempotencyKey: request.idempotencyKey };
-}
-export function parseForkClaudeSessionRequest(request: RuntimeRequestFrame): LegacyClaudeForkRequest {
-  if (request.operation.name !== CLAUDE_FORK_OPERATION || !request.idempotencyKey) invalid();
-  return { taskId: identifier(request.payload.taskId), providerSessionId: identifier(request.payload.providerSessionId), idempotencyKey: request.idempotencyKey };
-}
-
 export function parseProviderSessionActionRequest(
   request: RuntimeRequestFrame,
 ): ProviderSessionActionRequest {
@@ -377,8 +356,6 @@ function operation(value: unknown): RuntimeOperationFrame {
     name !== TASK_START_OPERATION &&
     name !== PROVIDER_SESSION_RESUME_OPERATION &&
     name !== PROVIDER_SESSION_FORK_OPERATION &&
-    name !== CLAUDE_RESUME_OPERATION &&
-    name !== CLAUDE_FORK_OPERATION &&
     name !== TASK_CANCEL_OPERATION &&
     name !== TASK_EXECUTION_OPERATION &&
     name !== TASK_OUTPUT_SUBSCRIBE_OPERATION

@@ -8,13 +8,8 @@ import type {
   TaskView,
 } from '../shared/runtime/runtime-interface';
 import {
-  ClaudeSessionLifecycle,
-  providerDecisionForLegacy,
-  type AttemptForkedEvent,
-  type ClaudeForkRepair,
-} from './claude-session-lifecycle';
-import {
   type AttemptCreatedEvent,
+  type AttemptForkedEvent,
   type AttemptResumedEvent,
   type AttemptSupersededEvent,
   type AttemptSupersessionRequestedEvent,
@@ -83,7 +78,7 @@ export interface StoredExecution {
 
 export interface ExecutionReservation {
   readonly execution: TaskExecutionView; readonly created: boolean;
-  readonly claudeForkRepair?: ClaudeForkRepair; readonly providerRepair?: PlannedProviderRepair;
+  readonly providerRepair?: PlannedProviderRepair;
 }
 
 export interface PlannedProviderRepair {
@@ -107,7 +102,6 @@ export class TaskModule {
   private readonly fingerprints = new Map<string, string>();
   private readonly executions = new Map<string, StoredExecution>();
   private readonly executionKeys = new Map<string, StoredExecution>();
-  private readonly claudeLifecycle: ClaudeSessionLifecycle;
   private readonly providerLifecycle: ProviderSessionLifecycle;
   private mutation: Promise<void> = Promise.resolve();
 
@@ -118,7 +112,6 @@ export class TaskModule {
   ) {
     this.runtimeDirectory = runtimeDirectory;
     this.store = new TaskEventStore(runtimeDirectory, randomId);
-    this.claudeLifecycle = new ClaudeSessionLifecycle((taskId) => this.lifecycleView(taskId));
     this.providerLifecycle = new ProviderSessionLifecycle({
       view: (taskId) => this.lifecycleView(taskId),
       append: (event) => this.appendVisible(event),
@@ -186,12 +179,9 @@ export class TaskModule {
         }
         if (keyed.attempt.state === 'starting' && !keyed.context) {
           const providerRepair = this.providerRepair(keyed);
-          const claudeForkRepair = keyed.attempt.number > 1
-            && !providerRepair ? this.claudeLifecycle.repairFork(keyed.attempt.id)
-            : undefined;
           return {
             execution: this.viewFor(task, keyed), created: true,
-            claudeForkRepair, providerRepair,
+            providerRepair,
           };
         }
         return { execution: this.viewFor(task, keyed), created: false };
@@ -268,14 +258,6 @@ export class TaskModule {
     reason: ProviderActionRejection,
   ): Promise<never> {
     return this.enqueue(() => this.runProvider(() => this.providerLifecycle.reject(prepared, reason)));
-  }
-
-  rejectProviderAlias(
-    request: ProviderSessionActionRequest, action: ProviderSessionAction,
-    fingerprint: string, reason: ProviderActionRejection,
-  ): Promise<never> {
-    return this.enqueue(() => this.runProvider(() =>
-      this.providerLifecycle.rejectWithFingerprint(request, action, fingerprint, reason)));
   }
 
   abortProviderAction(prepared: PreparedProviderAction): Promise<void> {
@@ -494,13 +476,7 @@ export class TaskModule {
       case 'AttemptCancelled':
         this.applyTerminal(event.taskId, 'cancelled');
         return;
-      case 'ClaudeResumeRejected':
-      case 'ClaudeForkRequested':
-        this.claudeLifecycle.replay(event);
-        this.providerLifecycle.replay(providerDecisionForLegacy(event));
-        return;
       case 'AttemptForked':
-        if (!event.plannedContext) this.claudeLifecycle.replay(event);
         this.applyAttemptForked(event);
         return;
     }

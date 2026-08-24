@@ -1,25 +1,14 @@
-import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { RuntimePortError, type RuntimeClientSession } from '../../src/main/runtime/runtime-ports';
 import type { TaskExecutionView } from '../../src/shared/runtime/runtime-interface';
 import {
-  LocalGenericCliExecutionAdapter,
-} from '../../src/runtime/generic-cli-execution-adapter';
-import {
-  ClaudeCodeExecutionAdapter,
-  type ClaudeExecutablePort,
-} from '../../src/runtime/claude-code-execution-adapter';
-import { ProviderExecutionAdapterRouter } from '../../src/runtime/provider-execution-adapter-router';
-import {
   FakeClaudeCodeExecutionAdapter,
 } from './runtime-test-fakes';
 import {
   FAILED_APPEND_MODES,
-  type RuntimeSubject, appendLegacyTaskEvent,
   corruptExecutionAppend,
   createSubject,
-  createTestRepository,
   deferred,
   nextRuntimeTurn,
   registerRuntimeTaskTestCleanup,
@@ -34,134 +23,27 @@ const PROVIDER_LIFECYCLE_APPEND_CASES = [
 describe('authenticated Runtime Task start remediation', registerTaskStartTests);
 function registerTaskStartTests(): void {
   registerRuntimeTaskTestCleanup();
-  it('records adapter-discovered Claude provider-session identity through the authenticated Runtime seam', recordsClaudeProviderSession);
-  it('starts Claude through the production provider adapter', startsProductionClaudeProvider);
-  it('reattaches live and passes fork argv through the production Claude adapter', invokesProductionClaudeLifecycle);
-  it('persists false Claude capabilities discovered by the production adapter', discoversFalseClaudeCapabilities);
-  it('projects immutable Claude attempt and provider-session histories through Runtime restart', projectsClaudeExecutionHistories);
   it('forks a Claude session through the authenticated Runtime seam', forksClaudeSession);
   it('durably aborts fork when parent stop fails and remains live', abortsLiveParentFork);
   it('continues fork when parent stop fails after positive loss observation', continuesLostParentFork);
   it('retains superseding state when parent stop and observation are ambiguous', retainsAmbiguousParentFork);
   it('settles a late parent exit by attempt identity without disturbing the fork child', settlesLateParentExit);
-  it('reattaches an exact live provider session without launching or leaking private binding data', resumesMatchingClaudeSession);
+  it('reattaches the same live provider session after a Desktop-only reconnect', resumesMatchingClaudeSession);
+  it('keeps a fresh Runtime adapter outside durable provider-session ownership', rejectsFreshAdapterResume);
   it('restarts one native Claude process when the owned process is lost', resumesLostClaudeProcess);
   it('replays an unattached durable native resume with its planned identities', replaysUnattachedNativeResume);
   it('durably rejects an unknown provider-session observation without launching', rejectsUnknownResumeObservation);
-  it('keeps the legacy Claude resume operation as a sanitized server-side alias', verifiesLegacyClaudeResumeAlias);
   it('records an unsupported Claude resume rejection across restart', rejectsUnsupportedClaudeResume);
   it('rejects terminal and noncurrent Claude resumes through public codes', rejectsNoncurrentClaudeResumes);
   it(
     'replays an unattached durable Claude fork as a starting child without inventing a native identity',
     replaysUnattachedClaudeFork,
   );
-  it('replays pre-provider-neutral Claude fork events through the compatibility codec', replaysLegacyClaudeForkEvents);
   it.each(PROVIDER_LIFECYCLE_APPEND_CASES)(
     'repairs $name $mode append failure for same-key provider lifecycle retry and replay',
     verifiesProviderLifecycleAppendRecovery,
   );
 }
-async function startsProductionClaudeProvider(): Promise<void> {
-  const repository = createTestRepository();
-  const executable = new RecordingClaudeExecutable();
-  const pty = new RecordingClaudePty();
-  const subject = await createSubject((runtimeDirectory) => new ProviderExecutionAdapterRouter({
-    shell: new LocalGenericCliExecutionAdapter({ runtimeDirectory }),
-    claude: new ClaudeCodeExecutionAdapter({ runtimeDirectory, executable, pty }),
-  }));
-  const runtime = await subject.connect();
-  const task = await runtime.createTask({
-    objective: 'Implement the bounded provider task.',
-    project: 'Hariari',
-    repository: repository.path,
-    baseRef: 'HEAD',
-    provider: 'claude',
-    idempotencyKey: 'production-claude-create',
-  });
-  const started = await runtime.startTask({ taskId: task.id, idempotencyKey: 'production-claude-start' });
-
-  expect(started.providerSession).toMatchObject({
-    capabilities: { resume: true, fork: true },
-    lineage: 'new',
-  });
-  expect(JSON.stringify(started)).not.toMatch(/nativeSessionId|processId|ptyId/);
-  expect(executable.calls).toEqual([['--version'], ['--help']]);
-  expect(pty.starts).toEqual([{
-    file: 'claude',
-    args: [
-      '--print',
-      '--verbose',
-      '--output-format',
-      'stream-json',
-      '--session-id',
-      expect.stringMatching(/^[0-9a-f-]{36}$/),
-      task.objective,
-    ],
-  }]);
-  await runtime.disconnect();
-}
-async function invokesProductionClaudeLifecycle(): Promise<void> {
-  const repository = createTestRepository();
-  const executable = new RecordingClaudeExecutable();
-  const pty = new RecordingClaudePty();
-  const subject = await createProductionClaudeSubject(executable, pty);
-  const runtime = await subject.connect();
-  const task = await createClaudeTask(runtime, repository.path, 'production-lifecycle');
-  const parent = await runtime.startTask({ taskId: task.id, idempotencyKey: 'production-lifecycle-start' });
-  const resumed = await runtime.resumeProviderSession({
-    taskId: task.id, providerSessionId: parent.providerSession!.id,
-    idempotencyKey: 'production-lifecycle-resume',
-  });
-  const child = await runtime.forkProviderSession({
-    taskId: task.id, providerSessionId: resumed.providerSession!.id,
-    idempotencyKey: 'production-lifecycle-fork',
-  });
-  const nativeSessionId = pty.starts[0]?.args[5];
-  expect(pty.starts.map((start) => start.args)).toEqual([
-    [...STRUCTURED_CLAUDE_ARGS, '--session-id', nativeSessionId, task.objective],
-    [...STRUCTURED_CLAUDE_ARGS, '--resume', nativeSessionId, '--fork-session', task.objective],
-  ]);
-  expect(child.providerSession?.id).not.toBe(parent.providerSession?.id);
-  expect(executable.calls).toEqual([['--version'], ['--help']]);
-  await runtime.disconnect();
-}
-async function discoversFalseClaudeCapabilities(): Promise<void> {
-  const repository = createTestRepository();
-  const executable = new RecordingClaudeExecutable('  --session-id <uuid>\n');
-  const pty = new RecordingClaudePty();
-  const subject = await createProductionClaudeSubject(executable, pty);
-  const runtime = await subject.connect();
-  const task = await createClaudeTask(runtime, repository.path, 'false-capabilities');
-  const started = await runtime.startTask({ taskId: task.id, idempotencyKey: 'false-capabilities-start' });
-  expect(started.providerSession?.capabilities).toEqual({ resume: false, fork: false });
-  const request = {
-    taskId: task.id, providerSessionId: started.providerSession!.id, idempotencyKey: 'false-capabilities-fork',
-  };
-  await expect(runtime.forkProviderSession(request))
-    .rejects.toEqual(new RuntimePortError('unsupported-operation', false));
-  expect(pty.starts).toHaveLength(1);
-  await runtime.disconnect();
-  await subject.restart();
-  const restarted = await subject.connect();
-  await expect(restarted.forkProviderSession(request))
-    .rejects.toEqual(new RuntimePortError('unsupported-operation', false));
-  await expect(restarted.forkProviderSession({ ...request, providerSessionId: 'different-session' }))
-    .rejects.toEqual(new RuntimePortError('idempotency-conflict', false));
-  await restarted.disconnect();
-}
-
-const STRUCTURED_CLAUDE_ARGS = ['--print', '--verbose', '--output-format', 'stream-json'] as const;
-
-async function createProductionClaudeSubject(
-  executable: RecordingClaudeExecutable,
-  pty: RecordingClaudePty,
-): Promise<RuntimeSubject> {
-  return createSubject((runtimeDirectory) => new ProviderExecutionAdapterRouter({
-    shell: new LocalGenericCliExecutionAdapter({ runtimeDirectory }),
-    claude: new ClaudeCodeExecutionAdapter({ runtimeDirectory, executable, pty }),
-  }));
-}
-
 function createClaudeTask(runtime: RuntimeClientSession, repository: string, key: string) {
   return runtime.createTask({
     objective: 'Implement the bounded provider task.', project: 'Hariari', repository,
@@ -169,54 +51,6 @@ function createClaudeTask(runtime: RuntimeClientSession, repository: string, key
   });
 }
 
-class RecordingClaudeExecutable implements ClaudeExecutablePort {
-  readonly calls: string[][] = [];
-
-  constructor(private readonly help = '  --session-id <uuid>\n  -r, --resume [value]\n  --fork-session\n') {}
-
-  async run(args: readonly string[]): Promise<string> {
-    this.calls.push([...args]);
-    return args[0] === '--version'
-      ? '2.1.241 (Claude Code)'
-      : this.help;
-  }
-}
-
-class RecordingClaudePty {
-  readonly starts: Array<{ readonly file: string; readonly args: readonly string[] }> = [];
-
-  spawn(file: string, args: readonly string[]): RecordingClaudeProcess {
-    this.starts.push({ file, args: [...args] });
-    const sessionIndex = args.indexOf('--session-id');
-    const resumeIndex = args.indexOf('--resume');
-    const sessionId = args.includes('--fork-session')
-      ? randomUUID()
-      : sessionIndex >= 0 ? args[sessionIndex + 1] : args[resumeIndex + 1];
-    if (!sessionId) throw new Error('expected Runtime-owned native session identity');
-    return new RecordingClaudeProcess(sessionId);
-  }
-}
-
-class RecordingClaudeProcess {
-  readonly pid = 4242;
-  private exitListener: ((event: { readonly exitCode: number }) => void) | null = null;
-
-  constructor(private readonly sessionId: string) {}
-
-  onData(listener: (data: string) => void): { dispose(): void } {
-    queueMicrotask(() => listener(`${JSON.stringify({ type: 'system', subtype: 'init', session_id: this.sessionId })}\n`));
-    return { dispose: () => undefined };
-  }
-
-  onExit(listener: (event: { readonly exitCode: number }) => void): { dispose(): void } {
-    this.exitListener = listener;
-    return { dispose: () => undefined };
-  }
-
-  kill(): void {
-    queueMicrotask(() => this.exitListener?.({ exitCode: 143 }));
-  }
-}
 
 async function replaysUnattachedClaudeFork(): Promise<void> {
   const childGate = deferred();
@@ -269,36 +103,6 @@ async function waitForAdapterStarts(adapter: FakeClaudeCodeExecutionAdapter, tas
   }
 }
 
-async function replaysLegacyClaudeForkEvents(): Promise<void> {
-  const adapter = new FakeClaudeCodeExecutionAdapter();
-  const subject = await createSubject(() => adapter);
-  const runtime = await subject.connect();
-  const task = await createClaudeTask(runtime, 'fake-checkout', 'legacy-fork-events');
-  const parent = await runtime.startTask({ taskId: task.id, idempotencyKey: 'legacy-start' });
-  await runtime.disconnect();
-  const forkKey = 'legacy-fork-key';
-  await appendLegacyTaskEvent(subject.runtimeDirectory, {
-    type: 'ClaudeForkRequested', version: 1, taskId: task.id,
-    providerSessionId: parent.providerSession!.id, idempotencyKey: forkKey,
-    fingerprint: JSON.stringify([task.id, parent.providerSession!.id]),
-  });
-  await appendLegacyTaskEvent(subject.runtimeDirectory, {
-    type: 'AttemptForked', version: 1, taskId: task.id,
-    attempt: { id: 'legacy-child-attempt', number: 2, state: 'starting' },
-    parentAttemptId: parent.attempt!.id, parentSessionId: parent.providerSession!.id,
-    forkKey,
-  });
-  await subject.restart();
-  const restarted = await subject.connect();
-  const recovered = await restarted.startTask({ taskId: task.id, idempotencyKey: 'legacy-start' });
-  expect(recovered).toMatchObject({ attempt: { id: 'legacy-child-attempt', state: 'running' },
-    providerSession: { parentId: parent.providerSession!.id, lineage: 'fork' } });
-  expect(recovered.attempts[0]).toMatchObject({
-    id: parent.attempt!.id, state: 'superseded',
-  });
-  await restarted.disconnect();
-}
-
 async function verifiesProviderLifecycleAppendRecovery(
   transition: (typeof PROVIDER_LIFECYCLE_APPEND_CASES)[number],
 ): Promise<void> {
@@ -334,69 +138,6 @@ async function verifiesProviderLifecycleAppendRecovery(
   await restarted.disconnect();
 }
 
-async function verifiesLegacyClaudeResumeAlias(): Promise<void> {
-  const adapter = new FakeClaudeCodeExecutionAdapter();
-  const subject = await createSubject(() => adapter);
-  const runtime = await subject.connect();
-  const task = await runtime.createTask({ objective: 'Resume Claude.', project: 'Hariari', repository: 'fake-checkout', baseRef: 'main', provider: 'claude', idempotencyKey: 'resume-mismatch-create' });
-  const started = await runtime.startTask({ taskId: task.id, idempotencyKey: 'resume-mismatch-start' });
-  const scope = { repository: task.repository, worktreeId: started.context!.worktreeId,
-    branchName: started.context!.branchName };
-  const accepted = await subject.legacyClaudeResume({
-    taskId: task.id, providerSessionId: started.providerSession!.id, ...scope,
-  }, 'legacy-resume');
-  expect(accepted).toMatchObject({ ok: true, result: {
-    attempt: { id: started.attempt!.id }, providerSession: { id: started.providerSession!.id },
-  } });
-  expect(JSON.stringify(accepted)).not.toMatch(/nativeSessionId|processId|ptyId/);
-  const mismatches = [
-    { repository: 'other-checkout', worktreeId: started.context!.worktreeId, branchName: started.context!.branchName },
-    { repository: task.repository, worktreeId: 'other-worktree', branchName: started.context!.branchName },
-    { repository: task.repository, worktreeId: started.context!.worktreeId, branchName: 'other-branch' },
-  ];
-  for (const [index, mismatch] of mismatches.entries()) {
-    const rejected = await subject.legacyClaudeResume({
-      taskId: task.id, providerSessionId: started.providerSession!.id, ...mismatch,
-    }, `resume-mismatch-${index}`);
-    expect(rejected).toMatchObject({ ok: false, error: { code: 'not-found', retryable: false } });
-  }
-  await runtime.disconnect(); await subject.restart(); const restarted = await subject.connect();
-  const persistedMismatch = await subject.legacyClaudeResume({
-    taskId: task.id, providerSessionId: started.providerSession!.id, ...mismatches[0],
-  }, 'resume-mismatch-0');
-  expect(persistedMismatch).toMatchObject({ ok: false,
-    error: { code: 'not-found', retryable: false } });
-  const replayed = await subject.legacyClaudeResume({
-    taskId: task.id, providerSessionId: started.providerSession!.id, ...scope,
-  }, 'legacy-resume');
-  expect(replayed).toMatchObject({ ok: true, result: { attempt: { id: started.attempt!.id } } });
-  await verifiesLegacyClaudeForkAlias(
-    subject, adapter, restarted, task.id, started.providerSession!.id,
-  );
-}
-async function verifiesLegacyClaudeForkAlias(
-  subject: RuntimeSubject,
-  adapter: FakeClaudeCodeExecutionAdapter,
-  runtime: RuntimeClientSession,
-  taskId: string,
-  providerSessionId: string,
-): Promise<void> {
-  adapter.lose(taskId);
-  const forked = await subject.legacyClaudeFork({
-    taskId, providerSessionId,
-  }, 'legacy-fork');
-  expect(forked).toMatchObject({ ok: true, result: {
-    attempt: { number: 2, state: 'running' },
-    providerSession: { parentId: providerSessionId, lineage: 'fork' },
-  } });
-  expect(JSON.stringify(forked)).not.toMatch(/nativeSessionId|processId|ptyId/);
-  await runtime.disconnect();
-  await subject.restart();
-  const forkReplay = await subject.legacyClaudeFork({
-    taskId, providerSessionId,
-  }, 'legacy-fork');
-  expect(forkReplay.ok && forkReplay.result).toEqual(forked.ok && forked.result);
-}
 async function rejectsUnsupportedClaudeResume(): Promise<void> {
   const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter({ claudeCapabilities: { resume: false, fork: true } }));
   const runtime = await subject.connect();
@@ -448,10 +189,12 @@ function providerRequest(
 async function resumesMatchingClaudeSession(): Promise<void> {
   const adapter = new FakeClaudeCodeExecutionAdapter();
   const subject = await createSubject(() => adapter);
-  const runtime = await subject.connect();
-  const task = await runtime.createTask({ objective: 'Resume Claude.', project: 'Hariari', repository: 'fake-checkout', baseRef: 'main', provider: 'claude', idempotencyKey: 'resume-create' });
-  const started = await runtime.startTask({ taskId: task.id, idempotencyKey: 'resume-start' });
-  const resumed = await runtime.resumeProviderSession({
+  const clientA = await subject.connect();
+  const task = await clientA.createTask({ objective: 'Resume Claude.', project: 'Hariari', repository: 'fake-checkout', baseRef: 'main', provider: 'claude', idempotencyKey: 'resume-create' });
+  const started = await clientA.startTask({ taskId: task.id, idempotencyKey: 'resume-start' });
+  await clientA.disconnect();
+  const clientB = await subject.connect();
+  const resumed = await clientB.resumeProviderSession({
     taskId: task.id,
     providerSessionId: started.providerSession!.id,
     idempotencyKey: 'resume-match',
@@ -459,7 +202,35 @@ async function resumesMatchingClaudeSession(): Promise<void> {
   expect(resumed).toEqual(started);
   expect(adapter.startCount(task.id)).toBe(1);
   expect(JSON.stringify(resumed)).not.toMatch(/nativeSessionId|processId|ptyId/);
-  await runtime.disconnect();
+  await clientB.disconnect();
+}
+
+async function rejectsFreshAdapterResume(): Promise<void> {
+  const adapterA = new FakeClaudeCodeExecutionAdapter();
+  const adapterB = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapterA);
+  const clientA = await subject.connect();
+  const task = await createClaudeTask(clientA, 'fake-checkout', 'fresh-adapter');
+  const started = await clientA.startTask({ taskId: task.id, idempotencyKey: 'fresh-adapter-start' });
+  const request = { taskId: task.id, providerSessionId: started.providerSession!.id,
+    idempotencyKey: 'fresh-adapter-resume' };
+  await clientA.disconnect();
+  await subject.restartWith(adapterB);
+  const clientB = await subject.connect();
+
+  await expect(clientB.getTaskExecution(task.id)).resolves.toEqual(started);
+  await expect(clientB.resumeProviderSession(request))
+    .rejects.toEqual(new RuntimePortError('task-not-ready', false));
+  await expect(clientB.getTaskExecution(task.id)).resolves.toEqual(started);
+  expect(adapterB.startCount(task.id)).toBe(0);
+  await clientB.disconnect();
+  await subject.restart();
+  const replay = await subject.connect();
+  await expect(replay.resumeProviderSession(request))
+    .rejects.toEqual(new RuntimePortError('task-not-ready', false));
+  await expect(replay.getTaskExecution(task.id)).resolves.toEqual(started);
+  expect(adapterB.startCount(task.id)).toBe(0);
+  await replay.disconnect();
 }
 
 async function resumesLostClaudeProcess(): Promise<void> {
@@ -582,65 +353,6 @@ async function replaysUnattachedNativeResume(): Promise<void> {
     launchGate.resolve();
     await Promise.allSettled([pending]);
   }
-}
-
-async function recordsClaudeProviderSession(): Promise<void> {
-  const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter());
-  const runtime = await subject.connect();
-  const task = await runtime.createTask({
-    objective: 'Resume this Claude task only in its allocated context.',
-    project: 'Hariari',
-    repository: 'fake-checkout',
-    baseRef: 'main',
-    provider: 'claude',
-    idempotencyKey: 'claude-provider-session-create',
-  });
-
-  const started = await runtime.startTask({
-    taskId: task.id,
-    idempotencyKey: 'claude-provider-session-start',
-  });
-
-  expect(started.providerSession).toMatchObject({
-    id: expect.stringMatching(/^start-remediation-/),
-    provider: 'claude',
-    attemptId: started.attempt?.id,
-    executionContextId: started.context?.id,
-    capabilities: { resume: true, fork: true },
-    parentId: null,
-    lineage: 'new',
-  });
-  await runtime.disconnect();
-  await subject.restart();
-  const restarted = await subject.connect();
-  await expect(restarted.getTaskExecution(task.id)).resolves.toEqual(started);
-  await restarted.disconnect();
-}
-
-async function projectsClaudeExecutionHistories(): Promise<void> {
-  const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter());
-  const runtime = await subject.connect();
-  const task = await runtime.createTask({
-    objective: 'Retain this Claude execution history.',
-    project: 'Hariari',
-    repository: 'fake-checkout',
-    baseRef: 'main',
-    provider: 'claude',
-    idempotencyKey: 'history-create',
-  });
-
-  const started = await runtime.startTask({ taskId: task.id, idempotencyKey: 'history-start' });
-
-  expect(started.attempts).toEqual([started.attempt]);
-  expect(started.providerSessions).toEqual([started.providerSession]);
-  await runtime.disconnect();
-  await subject.restart();
-  const restarted = await subject.connect();
-  const replayed = await restarted.getTaskExecution(task.id);
-  expect(replayed).toEqual(started);
-  expect(replayed.attempts).toEqual([replayed.attempt]);
-  expect(replayed.providerSessions).toEqual([replayed.providerSession]);
-  await restarted.disconnect();
 }
 
 async function forksClaudeSession(): Promise<void> {

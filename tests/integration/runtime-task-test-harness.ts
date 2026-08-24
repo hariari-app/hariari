@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,19 +7,6 @@ import { NodeRuntimeClient } from '../../src/main/runtime/node-runtime-client';
 import type { RuntimeClientSession } from '../../src/main/runtime/runtime-ports';
 import type { GenericCliExecutionAdapter } from '../../src/runtime/generic-cli-execution-adapter';
 import type { RuntimeLocalEndpoint } from '../../src/runtime/local-transport';
-import {
-  CLAUDE_RESUME_OPERATION,
-  CLAUDE_FORK_OPERATION,
-  RUNTIME_HANDSHAKE_VERSION,
-  RUNTIME_OPERATION_VERSION,
-  createClientProof,
-  type RuntimeAuthenticateFrame,
-  type RuntimeResponseFrame,
-} from '../../src/runtime/protocol';
-import {
-  parseChallengeFrame,
-  parseResponseFrame,
-} from '../../src/runtime/protocol-validation';
 import { RuntimeServer } from '../../src/runtime/runtime-server';
 import { createDisposableGitRepository } from '../test-common/disposable-git-repository';
 import { ObservedRuntimeTransport } from './runtime-test-fakes';
@@ -38,10 +25,7 @@ export interface RuntimeSubject {
   readonly transport: ObservedRuntimeTransport;
   connect(): Promise<RuntimeClientSession>;
   restart(): Promise<void>;
-  legacyClaudeResume(payload: Record<string, unknown>, idempotencyKey: string):
-    Promise<RuntimeResponseFrame>;
-  legacyClaudeFork(payload: Record<string, unknown>, idempotencyKey: string):
-    Promise<RuntimeResponseFrame>;
+  restartWith(adapter: GenericCliExecutionAdapter): Promise<void>;
 }
 
 export function registerRuntimeTaskTestCleanup(): void {
@@ -63,16 +47,11 @@ export async function createSubject(
   const transport = new ObservedRuntimeTransport();
   let id = 0;
   const randomId = (): string => `start-remediation-${++id}-${randomUUID()}`;
-  const adapter = adapterFactory(runtimeDirectory);
+  let adapter = adapterFactory(runtimeDirectory);
   let server = serverFor(endpoint, token, transport, randomId, adapter);
   servers.push(server);
   await server.start();
-  const legacy = (operation: typeof CLAUDE_RESUME_OPERATION | typeof CLAUDE_FORK_OPERATION) =>
-    (payload: Record<string, unknown>, idempotencyKey: string) => legacyClaudeRequest(
-      endpoint, token, transport, randomId, operation, payload, idempotencyKey,
-    );
-  return runtimeSubject(runtimeDirectory, transport, connectSubject, restartSubject,
-    legacy(CLAUDE_RESUME_OPERATION), legacy(CLAUDE_FORK_OPERATION));
+  return runtimeSubject(runtimeDirectory, transport, connectSubject, restartSubject, restartWith);
 
   function connectSubject(): Promise<RuntimeClientSession> {
     return connect(endpoint, token, transport, randomId);
@@ -83,6 +62,11 @@ export async function createSubject(
     server = serverFor(endpoint, token, transport, randomId, adapter);
     servers.push(server);
     await server.start();
+  }
+
+  async function restartWith(nextAdapter: GenericCliExecutionAdapter): Promise<void> {
+    adapter = nextAdapter;
+    await restartSubject();
   }
 }
 
@@ -95,45 +79,9 @@ function runtimeSubject(
   transport: ObservedRuntimeTransport,
   connect: () => Promise<RuntimeClientSession>,
   restart: () => Promise<void>,
-  legacyClaudeResume: RuntimeSubject['legacyClaudeResume'],
-  legacyClaudeFork: RuntimeSubject['legacyClaudeFork'],
+  restartWith: (adapter: GenericCliExecutionAdapter) => Promise<void>,
 ): RuntimeSubject {
-  return { runtimeDirectory, transport, connect, restart,
-    legacyClaudeResume, legacyClaudeFork };
-}
-
-async function legacyClaudeRequest(
-  endpoint: RuntimeLocalEndpoint,
-  token: Uint8Array,
-  transport: ObservedRuntimeTransport,
-  randomId: () => string,
-  operation: typeof CLAUDE_RESUME_OPERATION | typeof CLAUDE_FORK_OPERATION,
-  payload: Record<string, unknown>,
-  idempotencyKey: string,
-): Promise<RuntimeResponseFrame> {
-  const connection = await transport.connect(endpoint, 500);
-  try {
-    const challenge = parseChallengeFrame(await connection.readFrame(500));
-    const authentication: Omit<RuntimeAuthenticateFrame, 'proof'> = {
-      kind: 'runtime.authenticate', handshakeVersion: RUNTIME_HANDSHAKE_VERSION,
-      challengeId: challenge.challengeId, requestId: randomId(), clientNonce: randomId(),
-      client: { name: 'hariari-desktop', version: '0.6.8' },
-      protocolRange: { min: 1, max: 1 },
-    };
-    await connection.writeFrame({ ...authentication,
-      proof: createClientProof(token, challenge, authentication) }, 500);
-    await connection.readFrame(500);
-    const requestId = randomId();
-    const correlationId = randomId();
-    await connection.writeFrame({
-      kind: 'runtime.request', protocolVersion: 1, requestId,
-      operation: { name: operation, version: RUNTIME_OPERATION_VERSION },
-      correlationId, causationId: null, idempotencyKey, payload,
-    }, 500);
-    return parseResponseFrame(await connection.readFrame(500));
-  } finally {
-    connection.close();
-  }
+  return { runtimeDirectory, transport, connect, restart, restartWith };
 }
 
 function serverFor(
@@ -216,25 +164,6 @@ export function corruptExecutionAppend(
       partial = true;
     });
   });
-}
-
-export async function appendLegacyTaskEvent(
-  runtimeDirectory: string,
-  event: Record<string, unknown>,
-): Promise<void> {
-  const payload = Buffer.from(JSON.stringify(event), 'utf8');
-  const header = Buffer.alloc(36);
-  header.writeUInt32BE(payload.length, 0);
-  createHash('sha256').update(payload).digest().copy(header, 4);
-  const handle = await fs.promises.open(
-    path.join(runtimeDirectory, 'tasks', 'events.log'), 'a', 0o600,
-  );
-  try {
-    await handle.writeFile(Buffer.concat([header, payload]));
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
 }
 
 function failingHandle(

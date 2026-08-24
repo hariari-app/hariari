@@ -17,8 +17,6 @@ import {
   TASK_LIST_OPERATION,
   TASK_OUTPUT_SUBSCRIBE_OPERATION,
   TASK_START_OPERATION,
-  CLAUDE_RESUME_OPERATION,
-  CLAUDE_FORK_OPERATION,
   PROVIDER_SESSION_FORK_OPERATION,
   PROVIDER_SESSION_RESUME_OPERATION,
   createAuthenticatedReplyEnvelope,
@@ -39,8 +37,6 @@ import {
   parseCreateTaskRequest,
   parseCancelTaskRequest,
   parseStartTaskRequest,
-  parseResumeClaudeSessionRequest,
-  parseForkClaudeSessionRequest,
   parseProviderSessionActionRequest,
   parseTaskExecutionId,
   parseShutdownRequest,
@@ -286,8 +282,6 @@ export class RuntimeServer {
         this.executions.start(parsed),
       );
     }
-    if (request.operation.name === CLAUDE_RESUME_OPERATION) return this.handleClaudeResume(request, protocolVersion);
-    if (request.operation.name === CLAUDE_FORK_OPERATION) return this.handleClaudeFork(request, protocolVersion);
     if (request.operation.name === PROVIDER_SESSION_RESUME_OPERATION) {
       return this.handleProviderSessionAction(request, protocolVersion, 'resume');
     }
@@ -303,47 +297,6 @@ export class RuntimeServer {
       return this.handleTaskExecutionLookup(request, protocolVersion);
     }
     return this.handleShutdown(request, protocolVersion);
-  }
-
-  private async handleClaudeResume(request: RuntimeRequestFrame, protocolVersion: number): Promise<RuntimeResponseFrame> {
-    try {
-      const parsed = parseResumeClaudeSessionRequest(request);
-      await this.assertLegacyClaudeScope(parsed);
-      const execution = await this.executions.resumeProvider(parsed);
-      return success(request, protocolVersion, execution as unknown as Record<string, unknown>);
-    } catch (error) {
-      return executionFailure(request, protocolVersion, error);
-    }
-  }
-  private async handleClaudeFork(request: RuntimeRequestFrame, protocolVersion: number): Promise<RuntimeResponseFrame> {
-    try {
-      const parsed = parseForkClaudeSessionRequest(request);
-      const execution = await this.executions.forkProvider(parsed);
-      return success(request, protocolVersion, execution as unknown as Record<string, unknown>);
-    } catch (error) {
-      return executionFailure(request, protocolVersion, error);
-    }
-  }
-
-  private async assertLegacyClaudeScope(
-    request: ReturnType<typeof parseResumeClaudeSessionRequest>,
-  ): Promise<void> {
-    const fingerprint = legacyResumeFingerprint(request);
-    let execution;
-    try {
-      execution = this.tasks.privateExecution(request.taskId);
-    } catch (error) {
-      if (!(error instanceof TaskStorageError) || error.code !== 'not-found') throw error;
-      return this.tasks.rejectProviderAlias(request, 'resume', fingerprint, 'not-found');
-    }
-    if (execution.task.repository !== request.repository ||
-      execution.context?.worktreeId !== request.worktreeId ||
-      execution.context.branchName !== request.branchName ||
-      execution.providerSession?.id !== request.providerSessionId) {
-      await this.tasks.rejectProviderAlias(
-        request, 'resume', fingerprint, 'not-found',
-      );
-    }
   }
 
   private async handleProviderSessionAction(
@@ -528,15 +481,6 @@ export class RuntimeServer {
       )
       .catch(() => undefined);
   }
-}
-
-function legacyResumeFingerprint(
-  request: ReturnType<typeof parseResumeClaudeSessionRequest>,
-): string {
-  return JSON.stringify([
-    'resume', request.taskId, request.providerSessionId,
-    request.repository, request.worktreeId, request.branchName,
-  ]);
 }
 
 async function ownedListener(

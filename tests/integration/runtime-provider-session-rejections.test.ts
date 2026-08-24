@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { RuntimePortError } from '../../src/main/runtime/runtime-ports';
 import { FakeClaudeCodeExecutionAdapter } from './runtime-test-fakes';
 import {
-  appendLegacyTaskEvent,
   createSubject,
   registerRuntimeTaskTestCleanup,
   type RuntimeSubject,
@@ -15,7 +14,6 @@ describe('authenticated provider-session semantic rejections', () => {
   it('durably rejects a terminal current fork', rejectsTerminalFork);
   it('durably rejects an unsupported fork', rejectsUnsupportedFork);
   it('durably rejects a second action while the parent is superseding', rejectsSupersedingFork);
-  it('maps a legacy Claude rejection into provider-neutral idempotent replay', replaysLegacyRejection);
 });
 
 async function rejectsUnknownFork(): Promise<void> {
@@ -81,21 +79,6 @@ async function rejectsSupersedingFork(): Promise<void> {
     .rejects.toEqual(new RuntimePortError('task-not-ready', false));
   await runtime.disconnect();
   await assertRestartedRejection(subject, request, 'task-not-ready');
-}
-
-async function replaysLegacyRejection(): Promise<void> {
-  const { subject, taskId, sessionId } = await startedSubject();
-  await appendLegacyTaskEvent(subject.runtimeDirectory, {
-    type: 'ClaudeResumeRejected', version: 1, taskId,
-    providerSessionId: sessionId, idempotencyKey: 'legacy-rejection',
-    fingerprint: 'legacy-scope-fingerprint', reason: 'unsupported',
-  });
-  await subject.restart();
-  const restarted = await subject.connect();
-  await expect(restarted.resumeProviderSession({ taskId, providerSessionId: sessionId,
-    idempotencyKey: 'legacy-rejection' }))
-    .rejects.toEqual(new RuntimePortError('unsupported-operation', false));
-  await restarted.disconnect();
 }
 
 async function startedSubject(adapter = new FakeClaudeCodeExecutionAdapter()): Promise<{
