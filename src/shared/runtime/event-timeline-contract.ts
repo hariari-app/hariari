@@ -138,6 +138,14 @@ export interface TaskCreationIdentity {
   readonly createdAt: string;
 }
 
+export interface EventTimelineOperationIdentity {
+  readonly taskId: string;
+  readonly runId: string;
+  readonly attemptId: string;
+  readonly idempotencyKey: string;
+  readonly correlationId: string;
+}
+
 export function allowlistProviderObservation(
   input: ProviderObservationInput,
 ): RawProviderObservationView {
@@ -321,6 +329,7 @@ export function assertEventTimelineHistory(
   status: EventTimelineStatus,
   raw: readonly RawProviderObservationView[],
   events: readonly NormalizedRuntimeEventView[],
+  operations?: readonly EventTimelineOperationIdentity[],
 ): void {
   if (
     events[0]?.kind !== 'task-created' ||
@@ -342,7 +351,28 @@ export function assertEventTimelineHistory(
     .filter((event) => event.kind === 'provider-session-observed')
     .map((event) => event.causationId));
   if (raw.some((observation) => !linkedRawIds.has(observation.id))) fail();
+  if (operations) validateOperationIdentities(taskId, status, events, operations);
   validateLifecycleStatus(status, events);
+}
+
+function validateOperationIdentities(
+  taskId: string,
+  status: EventTimelineStatus,
+  events: readonly NormalizedRuntimeEventView[],
+  operations: readonly EventTimelineOperationIdentity[],
+): void {
+  if (operations.length !== status.attempts.length ||
+    new Set(operations.map((operation) => operation.attemptId)).size !== operations.length) fail();
+  for (const operation of operations) {
+    if (operation.taskId !== taskId || operation.runId !== status.run?.id ||
+      !status.attempts.some((attempt) => attempt.id === operation.attemptId)) fail();
+    const phases = events.filter((event) => event.attemptId === operation.attemptId &&
+      (event.kind === 'provider-session-observed' || event.kind === 'attempt-started'));
+    if (phases.some((event) => event.taskId !== operation.taskId ||
+      event.runId !== operation.runId ||
+      event.idempotencyKey !== operation.idempotencyKey ||
+      event.correlationId !== operation.correlationId)) fail();
+  }
 }
 
 function validateLifecycleStatus(
@@ -433,7 +463,10 @@ function validateCausation(
           candidate.attemptId === event.attemptId &&
           candidate.providerSessionId === event.providerSessionId)
       : prior.find((candidate) => candidate.kind === 'task-created');
-    if (!cause || event.causationId !== cause.id) fail();
+    if (!cause || event.causationId !== cause.id ||
+      (event.providerSessionId !== null &&
+        (event.idempotencyKey !== cause.idempotencyKey ||
+          event.correlationId !== cause.correlationId))) fail();
     return;
   }
   const started = prior.find((candidate) => candidate.kind === 'attempt-started' &&

@@ -78,7 +78,13 @@ export class TaskEventTimeline {
     const normalizedEvents = [...(this.normalizedEvents.get(taskId) ?? [])];
     const rawObservations = [...(this.rawObservations.get(taskId) ?? [])];
     const consistentStatus = timelineStatus(status, normalizedEvents);
-    assertEventTimelineHistory(taskId, consistentStatus, rawObservations, normalizedEvents);
+    assertEventTimelineHistory(
+      taskId,
+      consistentStatus,
+      rawObservations,
+      normalizedEvents,
+      status.run ? this.dependencies.execution(taskId).attemptOperations : [],
+    );
     return {
       taskId,
       status: consistentStatus,
@@ -95,6 +101,7 @@ export class TaskEventTimeline {
         status,
         this.observations(status.task.id),
         this.events(status.task.id),
+        status.run ? this.dependencies.execution(status.task.id).attemptOperations : [],
       );
     }
   }
@@ -106,9 +113,7 @@ export class TaskEventTimeline {
   ): void {
     const identity = { taskId: task.id, idempotencyKey, correlationId, createdAt: task.createdAt };
     const existing = this.taskCreations.get(task.id);
-    if (existing && JSON.stringify(existing) !== JSON.stringify(identity)) {
-      throw new Error('conflicting Task create identity');
-    }
+    if (existing) throw new Error('duplicate Task create identity');
     this.taskCreations.set(task.id, identity);
   }
 
@@ -133,11 +138,9 @@ export class TaskEventTimeline {
 
   apply(event: TimelineEvent, execution?: TaskExecutionView): void {
     if (event.type === 'RawProviderObservationRecorded') {
-      this.assertRawExecution(event, execution);
       this.applyRaw(event);
     }
     else {
-      this.assertApplicableExecution(event.taskId, event.event, execution);
       this.applyNormalized(event, execution);
     }
   }
@@ -315,19 +318,9 @@ export class TaskEventTimeline {
     assertCanonicalProviderObservationIdentity(observation, record);
     const observations = this.observations(record.taskId);
     const existing = observations.find((candidate) => candidate.id === observation.id);
-    if (existing) return this.assertSame(existing, observation);
+    if (existing) throw new Error('duplicate observation identity');
     if (this.rawObservationById(observation.id)) throw new Error('duplicate observation identity');
     this.rawObservations.set(record.taskId, [...observations, observation]);
-  }
-
-  private assertRawExecution(
-    record: RawProviderObservationRecordedEvent,
-    execution: TaskExecutionView | undefined,
-  ): void {
-    if (!execution || execution.task.id !== record.taskId ||
-      !execution.providerSessions.some((session) => session.id === record.providerSessionId)) {
-      throw new Error('invalid observation provider-session identity');
-    }
   }
 
   private applyNormalized(
@@ -355,25 +348,11 @@ export class TaskEventTimeline {
       execution,
       this.observations(record.taskId),
       updated,
+      event.kind === 'task-created'
+        ? []
+        : this.dependencies.execution(record.taskId).attemptOperations,
     );
     this.normalizedEvents.set(record.taskId, updated);
-  }
-
-  private assertApplicableExecution(
-    taskId: string,
-    event: NormalizedRuntimeEventView,
-    execution: TaskExecutionView | undefined,
-  ): void {
-    if (event.taskId !== taskId) throw new Error('invalid event execution identity');
-    if (event.kind === 'task-created') return;
-    const attempt = execution?.attempts.find((candidate) => candidate.id === event.attemptId);
-    if (!execution || event.runId !== execution.run?.id || !attempt) {
-      throw new Error('invalid event execution identity');
-    }
-    if (event.providerSessionId && !execution.providerSessions.some((candidate) =>
-      candidate.id === event.providerSessionId && candidate.attemptId === attempt.id)) {
-      throw new Error('invalid event provider-session identity');
-    }
   }
 
   private assertSame(left: object, right: object): void {

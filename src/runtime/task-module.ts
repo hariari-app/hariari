@@ -714,20 +714,9 @@ export class TaskModule {
 
   private applyTaskCreated(event: TaskCreatedEvent): void {
     const existing = this.tasks.get(event.idempotencyKey);
-    if (
-      existing &&
-      (
-        JSON.stringify(existing) !== JSON.stringify(event.task) ||
-        this.fingerprints.get(event.idempotencyKey) !== event.fingerprint ||
-        this.taskCorrelations.get(event.idempotencyKey) !== event.correlationId
-      )
-    ) {
-      throw new TaskStorageError('internal');
-    }
     const matchingTask = this.taskIds.get(event.task.id);
     const ownershipKey = this.taskOwnershipKeys.get(event.task.id);
-    if (matchingTask && (ownershipKey !== event.idempotencyKey ||
-      JSON.stringify(matchingTask) !== JSON.stringify(event.task))) {
+    if (existing || matchingTask || ownershipKey) {
       throw new TaskStorageError('internal');
     }
     this.eventTimeline.registerTaskCreated(

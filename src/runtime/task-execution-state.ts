@@ -2,6 +2,7 @@ import type {
   TaskExecutionState,
   TaskExecutionView,
 } from '../shared/runtime/runtime-interface';
+import type { EventTimelineOperationIdentity } from '../shared/runtime/event-timeline-contract';
 import type {
   AttemptForkedEvent,
   AttemptResumedEvent,
@@ -22,6 +23,7 @@ export interface StoredExecution {
   readonly fingerprint: string;
   readonly currentOperationKey: string;
   readonly currentCorrelationId: string;
+  readonly attemptOperations: readonly EventTimelineOperationIdentity[];
   readonly run: StoredRun;
   readonly attempt: StoredAttempt | null;
   readonly attempts: readonly StoredAttempt[];
@@ -77,6 +79,7 @@ export function executionFromRun(event: RunCreatedEvent): StoredExecution {
     fingerprint: event.fingerprint,
     currentOperationKey: event.idempotencyKey,
     currentCorrelationId: event.correlationId,
+    attemptOperations: [],
     run: event.run,
     attempt: null,
     attempts: [],
@@ -119,6 +122,8 @@ export function resumeExecution(
     },
     currentOperationKey: event.actionKey,
     currentCorrelationId: event.correlationId,
+    attemptOperations: [...execution.attemptOperations,
+      attemptOperation(execution, event.attempt.id, event.actionKey, event.correlationId)],
   };
 }
 
@@ -255,6 +260,8 @@ export function forkExecution(
     supersession: null,
     currentOperationKey: event.forkKey,
     currentCorrelationId: event.correlationId,
+    attemptOperations: [...execution.attemptOperations,
+      attemptOperation(execution, event.attempt.id, event.forkKey, event.correlationId)],
     plannedAction: event.plannedContext
       ? {
           kind: 'fork',
@@ -265,4 +272,14 @@ export function forkExecution(
         }
       : null,
   };
+}
+
+export function attemptOperation(
+  execution: StoredExecution,
+  attemptId: string,
+  idempotencyKey: string,
+  correlationId: string,
+): EventTimelineOperationIdentity {
+  return { taskId: execution.taskId, runId: execution.run.id, attemptId,
+    idempotencyKey, correlationId };
 }

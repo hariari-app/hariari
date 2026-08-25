@@ -1,8 +1,11 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { RuntimeClientSession } from '../../src/main/runtime/runtime-ports';
 import { parseTaskTimelineView } from '../../src/runtime/protocol-validation';
+import { TaskEventTimeline } from '../../src/runtime/task-event-timeline';
+import { TaskModule } from '../../src/runtime/task-module';
 import { timelineEntry } from '../../src/shared/runtime/event-timeline-contract';
 import { FakeClaudeCodeExecutionAdapter } from './runtime-test-fakes';
 import {
@@ -18,6 +21,40 @@ describe('authenticated Runtime event timeline validation', registerValidationTe
 
 function registerValidationTests(): void {
   registerRuntimeTaskTestCleanup();
+  registerRoundSevenIdentityTests();
+  registerRoundSevenDuplicateTests();
+  registerExistingValidationTests();
+}
+
+function registerRoundSevenIdentityTests(): void {
+  it.each(['start', 'resume', 'fork'] as const)(
+    'rejects a coordinated %s observation rewrite at the public protocol seam',
+    rejectsCoordinatedObservationRewriteAtProtocolSeam,
+  );
+  it.each(['start', 'resume', 'fork'] as const)(
+    'fails replay on a coordinated %s observation rewrite',
+    rejectsCoordinatedObservationRewriteOnReplay,
+  );
+  it.each(['start', 'resume', 'fork'] as const)(
+    'binds the coordinated %s observation phases to the authoritative execution operation',
+    rejectsRewrittenObservationAndStartOnReplay,
+  );
+}
+
+function registerRoundSevenDuplicateTests(): void {
+  it('rejects an exact checksum-valid duplicate durable TaskCreated record',
+    rejectsExactDuplicateTaskCreatedOnReplay);
+  it('rejects an exact checksum-valid duplicate durable raw observation record',
+    rejectsExactDuplicateRawObservationOnReplay);
+  it('keeps Task command retries idempotent without appending duplicate durable records',
+    retainsCommandRetryIdempotency);
+  it('keeps in-memory TaskModule retries from producing duplicate records',
+    retainsInMemoryTaskModuleIdempotency);
+  it('rejects an exact duplicate raw observation in an in-memory TaskEventTimeline',
+    rejectsInMemoryTimelineRawDuplicate);
+}
+
+function registerExistingValidationTests(): void {
   it('fails closed on unsafe durable provider evidence', rejectsUnsafeProviderEvidence);
   it('fails closed on a future durable provider-evidence schema', rejectsFutureProviderEvidence);
   it('fails closed on a noncanonical raw observation identity', rejectsNoncanonicalRawIdentity);
@@ -111,6 +148,195 @@ async function rejectsForgedRawLinkAtProtocolSeam(): Promise<void> {
   }) as unknown as Record<string, unknown>)).toThrow();
   await runtime.disconnect();
 }
+
+async function rejectsCoordinatedObservationRewriteAtProtocolSeam(
+  operation: ProviderObservationOperation,
+): Promise<void> {
+  const { runtime, timeline } = await operationTimeline(operation, `protocol-${operation}`);
+  const forged = forgeLatestObservation(timeline, `forged-${operation}-operation`);
+  expect(() => parseTaskTimelineView(forged as unknown as Record<string, unknown>)).toThrow();
+  await runtime.disconnect();
+}
+
+async function rejectsCoordinatedObservationRewriteOnReplay(
+  operation: ProviderObservationOperation,
+): Promise<void> {
+  const { subject, runtime, timeline } = await operationTimeline(operation, `replay-${operation}`);
+  const forged = forgeLatestObservation(timeline, `forged-${operation}-operation`);
+  const rawId = timeline.rawObservations.at(-1)!.id;
+  const providerEventId = timeline.normalizedEvents.filter((event) =>
+    event.kind === 'provider-session-observed').at(-1)!.id;
+  const durable = readTaskEvents(subject.runtimeDirectory).map((record) => {
+    const observation = record.observation as { readonly id?: unknown } | undefined;
+    if (record.type === 'RawProviderObservationRecorded' && observation?.id === rawId) {
+      return { ...record, idempotencyKey: forged.rawObservations.at(-1)!.idempotencyKey,
+        observation: forged.rawObservations.at(-1) };
+    }
+    const event = record.event as { readonly id?: unknown } | undefined;
+    return record.type === 'NormalizedRuntimeEventRecorded' && event?.id === providerEventId
+      ? { ...record, event: forged.normalizedEvents.find((item) => item.id === providerEventId) }
+      : record;
+  });
+  await runtime.disconnect();
+  rewriteTaskEvents(subject.runtimeDirectory, durable);
+  await expect(subject.restart()).rejects.toBeInstanceOf(Error);
+}
+
+async function rejectsRewrittenObservationAndStartOnReplay(
+  operation: ProviderObservationOperation,
+): Promise<void> {
+  const { subject, runtime, timeline } = await operationTimeline(operation, `authority-${operation}`);
+  const key = `forged-${operation}-authority`;
+  const forged = forgeLatestObservation(timeline, key);
+  const attemptId = timeline.status.attempt!.id;
+  const durable = readTaskEvents(subject.runtimeDirectory).map((record) => {
+    const observation = record.observation as { readonly id?: unknown } | undefined;
+    if (record.type === 'RawProviderObservationRecorded' &&
+      observation?.id === timeline.rawObservations.at(-1)!.id) {
+      return { ...record, idempotencyKey: key, observation: forged.rawObservations.at(-1) };
+    }
+    const event = record.event as { readonly attemptId?: unknown; readonly kind?: unknown } | undefined;
+    if (record.type !== 'NormalizedRuntimeEventRecorded' || event?.attemptId !== attemptId) {
+      return record;
+    }
+    if (event.kind === 'provider-session-observed') {
+      return { ...record, event: forged.normalizedEvents.find((item) =>
+        item.attemptId === attemptId && item.kind === 'provider-session-observed') };
+    }
+    return event.kind === 'attempt-started'
+      ? { ...record, event: { ...event, idempotencyKey: key } }
+      : record;
+  });
+  await runtime.disconnect();
+  rewriteTaskEvents(subject.runtimeDirectory, durable);
+  await expect(subject.restart()).rejects.toBeInstanceOf(Error);
+}
+
+async function rejectsExactDuplicateTaskCreatedOnReplay(): Promise<void> {
+  const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter());
+  const runtime = await subject.connect();
+  await startTimelineTask(runtime, 'duplicate-durable-task-created');
+  const duplicate = readTaskEvents(subject.runtimeDirectory).find((event) =>
+    event.type === 'TaskCreated')!;
+  await runtime.disconnect();
+  appendTaskEventFrame(path.join(subject.runtimeDirectory, 'tasks', 'events.log'), duplicate);
+  await expect(subject.restart()).rejects.toBeInstanceOf(Error);
+}
+
+async function rejectsExactDuplicateRawObservationOnReplay(): Promise<void> {
+  const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter());
+  const runtime = await subject.connect();
+  await startTimelineTask(runtime, 'duplicate-durable-raw');
+  const duplicate = readTaskEvents(subject.runtimeDirectory).find((event) =>
+    event.type === 'RawProviderObservationRecorded')!;
+  await runtime.disconnect();
+  appendTaskEventFrame(path.join(subject.runtimeDirectory, 'tasks', 'events.log'), duplicate);
+  await expect(subject.restart()).rejects.toBeInstanceOf(Error);
+}
+
+async function retainsCommandRetryIdempotency(): Promise<void> {
+  const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter());
+  const runtime = await subject.connect();
+  const request = {
+    objective: 'Keep retries out of durable history.', project: 'Hariari',
+    repository: 'fake-local-checkout', baseRef: 'HEAD', provider: 'claude' as const,
+    idempotencyKey: 'retry-without-duplicate-create',
+  };
+  const task = await runtime.createTask(request);
+  const start = { taskId: task.id, idempotencyKey: 'retry-without-duplicate-start' };
+  const started = await runtime.startTask(start);
+  const before = readTaskEvents(subject.runtimeDirectory);
+  await expect(runtime.createTask(request)).resolves.toEqual(task);
+  await expect(runtime.startTask(start)).resolves.toEqual(started);
+  expect(readTaskEvents(subject.runtimeDirectory)).toEqual(before);
+  await runtime.disconnect();
+  await expect(subject.restart()).resolves.toBeUndefined();
+}
+
+async function retainsInMemoryTaskModuleIdempotency(): Promise<void> {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hariari-task-module-duplicate-'));
+  try {
+    const module = new TaskModule(root, () => Date.parse('2026-08-21T10:00:00.000Z'),
+      () => 'in-memory-task-id');
+    await module.start();
+    const request = {
+      objective: 'Keep an in-memory retry idempotent.', project: 'Hariari',
+      repository: 'fake-local-checkout', baseRef: 'HEAD', provider: 'claude' as const,
+      idempotencyKey: 'in-memory-create-key',
+    };
+    const task = await module.create(request, 'in-memory-create-correlation');
+    await expect(module.create(request, 'ignored-retry-correlation')).resolves.toEqual(task);
+    expect(readTaskEvents(root).filter((event) => event.type === 'TaskCreated')).toHaveLength(1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function rejectsInMemoryTimelineRawDuplicate(): Promise<void> {
+  const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter());
+  const runtime = await subject.connect();
+  const { task, timeline } = await startTimelineTask(runtime, 'in-memory-raw-duplicate');
+  const observation = timeline.rawObservations[0]!;
+  const record = {
+    type: 'RawProviderObservationRecorded' as const, version: 1 as const, taskId: task.id,
+    providerSessionId: observation.providerSessionId,
+    idempotencyKey: observation.idempotencyKey,
+    observation,
+  };
+  const projection = new TaskEventTimeline({
+    now: () => observation.observedAt,
+    append: async () => undefined,
+    execution: () => { throw new Error('not needed for raw replay'); },
+  });
+  projection.apply(record, timeline.status);
+  expect(() => projection.apply(record, timeline.status)).toThrow();
+  await runtime.disconnect();
+}
+
+async function operationTimeline(operation: ProviderObservationOperation, key: string) {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const { task, timeline: started } = await startTimelineTask(runtime, key);
+  if (operation === 'resume') {
+    adapter.lose(task.id);
+    await runtime.resumeProviderSession({ taskId: task.id,
+      providerSessionId: started.status.providerSession!.id,
+      idempotencyKey: `${key}-resume` });
+  }
+  if (operation === 'fork') {
+    await runtime.forkProviderSession({ taskId: task.id,
+      providerSessionId: started.status.providerSession!.id,
+      idempotencyKey: `${key}-fork` });
+  }
+  return { subject, runtime, timeline: await runtime.getTaskTimeline(task.id) };
+}
+
+function forgeLatestObservation(timeline: Awaited<ReturnType<RuntimeClientSession['getTaskTimeline']>>, key: string) {
+  const raw = timeline.rawObservations.at(-1)!;
+  const rawId = `provider-observation:${raw.taskId}:${raw.providerSessionId}:${key}`;
+  const observation = { ...raw, id: rawId, idempotencyKey: key };
+  const providerEvent = timeline.normalizedEvents.filter((event) =>
+    event.kind === 'provider-session-observed').at(-1)!;
+  return {
+    ...timeline,
+    rawObservations: timeline.rawObservations.map((item) => item.id === raw.id ? observation : item),
+    normalizedEvents: timeline.normalizedEvents.map((event) => event.id === providerEvent.id
+      ? { ...event, idempotencyKey: key, causationId: rawId }
+      : event),
+  };
+}
+
+function rewriteTaskEvents(
+  runtimeDirectory: string,
+  events: readonly Record<string, unknown>[],
+): void {
+  const eventPath = path.join(runtimeDirectory, 'tasks', 'events.log');
+  fs.truncateSync(eventPath, 0);
+  for (const event of events) appendTaskEventFrame(eventPath, event);
+}
+
+type ProviderObservationOperation = 'start' | 'resume' | 'fork';
 
 async function rejectsForeignProviderSessionEvidence(): Promise<void> {
   const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter());

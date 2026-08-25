@@ -9,6 +9,7 @@ import type {
 } from './task-events';
 import {
   abortProviderActionExecution,
+  attemptOperation,
   cancelExecution,
   executionFromRun,
   forkExecution,
@@ -168,6 +169,9 @@ export class TaskExecutionProjection {
       ...execution,
       attempt: event.attempt,
       attempts: [...execution.attempts, event.attempt],
+      attemptOperations: [...execution.attemptOperations,
+        attemptOperation(execution, event.attempt.id, execution.currentOperationKey,
+          execution.currentCorrelationId)],
     });
   }
 
