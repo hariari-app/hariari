@@ -291,6 +291,11 @@ export function parseTaskRequest(value: unknown): CreateTaskRequest {
 }
 
 export function parseTaskView(value: Record<string, unknown>) {
+  exactKeys(value, ['id', 'objective', 'project', 'repository', 'baseRef', 'provider', 'createdAt']);
+  return parseTaskFields(value);
+}
+
+function parseTaskFields(value: Record<string, unknown>) {
   const provider = boundedString(value.provider, MAX_TASK_FIELD_LENGTH);
   if (!TASK_PROVIDER_SET.has(provider)) invalid();
   return {
@@ -305,13 +310,22 @@ export function parseTaskView(value: Record<string, unknown>) {
 }
 
 export function parseTaskList(value: Record<string, unknown>) {
+  exactKeys(value, ['tasks']);
   if (!Array.isArray(value.tasks)) invalid();
   return value.tasks.map((task) => parseTaskView(object(task)));
 }
 
 export function parseTaskExecutionView(value: Record<string, unknown>): TaskExecutionView {
+  exactKeys(value, [
+    'task', 'run', 'attempt', 'attempts', 'context', 'executionContexts',
+    'providerSession', 'providerSessions',
+  ]);
   const taskValue = object(value.task);
-  const task = parseTaskView(taskValue);
+  exactKeys(taskValue, [
+    'id', 'objective', 'project', 'repository', 'baseRef', 'provider', 'createdAt',
+    'executionState',
+  ]);
+  const task = parseTaskFields(taskValue);
   const executionState = executionStateValue(taskValue.executionState);
   const run = value.run === null ? null : parseRun(object(value.run));
   const attempt = value.attempt === null ? null : parseAttempt(object(value.attempt));
@@ -442,10 +456,12 @@ function operation(value: unknown): RuntimeOperationFrame {
 }
 
 function parseRun(value: Record<string, unknown>): { readonly id: string; readonly number: number } {
+  exactKeys(value, ['id', 'number']);
   return { id: identifier(value.id), number: positiveInteger(value.number) };
 }
 
 function parseAttempt(value: Record<string, unknown>): NonNullable<TaskExecutionView['attempt']> {
+  exactKeys(value, ['id', 'number', 'state', 'exitCode']);
   const state = executionStateValue(value.state);
   const exitCode = value.exitCode === undefined ? undefined : integer(value.exitCode);
   return {
@@ -457,6 +473,7 @@ function parseAttempt(value: Record<string, unknown>): NonNullable<TaskExecution
 }
 
 function parseContext(value: Record<string, unknown>): NonNullable<TaskExecutionView['context']> {
+  exactKeys(value, ['id', 'worktreeId', 'branchName', 'baseCommit']);
   return {
     id: identifier(value.id),
     worktreeId: identifier(value.worktreeId),
@@ -466,7 +483,11 @@ function parseContext(value: Record<string, unknown>): NonNullable<TaskExecution
 }
 
 function parseProviderSession(value: Record<string, unknown>): NonNullable<TaskExecutionView['providerSession']> {
+  exactKeys(value, [
+    'id', 'provider', 'attemptId', 'executionContextId', 'capabilities', 'parentId', 'lineage',
+  ]);
   const capabilities = object(value.capabilities);
+  exactKeys(capabilities, ['resume', 'fork']);
   const provider = boundedString(value.provider, MAX_TASK_FIELD_LENGTH);
   if (!TASK_PROVIDER_SET.has(provider) || typeof capabilities.resume !== 'boolean' || typeof capabilities.fork !== 'boolean') invalid();
   const lineage = value.lineage === undefined
@@ -521,6 +542,10 @@ function object(value: unknown): Record<string, unknown> {
 function array(value: unknown): readonly unknown[] {
   if (!Array.isArray(value)) invalid();
   return value;
+}
+
+function exactKeys(value: Record<string, unknown>, allowed: readonly string[]): void {
+  if (Object.keys(value).some((key) => !allowed.includes(key))) invalid();
 }
 
 function boundedString(value: unknown, maximum: number): string {

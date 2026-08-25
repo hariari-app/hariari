@@ -250,6 +250,7 @@ export class TaskModule {
     context: StoredContext,
     providerSession: StoredProviderSession | null,
     providerObservation: unknown | null = null,
+    launchOutcome: 'succeeded' | 'failed' = 'succeeded',
   ): Promise<TaskExecutionView> {
     return this.enqueue(async () => {
       this.throwIfPoisoned();
@@ -265,7 +266,7 @@ export class TaskModule {
           type: 'ContextAllocated',
           version: 1,
           taskId,
-          context, providerSession,
+          context, providerSession, launchOutcome,
           ...(providerSession ? { observedAt: new Date(this.now()).toISOString() } : {}),
         });
       }
@@ -617,7 +618,6 @@ export class TaskModule {
     const task = this.taskById(taskId);
     return this.executionProjection.privateView(task);
   }
-
   reconciliation(request: ReconcileTaskRequest): TaskRecoveryView | null {
     return this.recoveryJournal.reconciliation(request);
   }

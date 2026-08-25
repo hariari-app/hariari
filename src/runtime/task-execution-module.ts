@@ -343,7 +343,7 @@ export class TaskExecutionModule {
     if (!execution.run || !execution.attempt) throw new TaskExecutionError('internal');
     const plannedContext = providerRepair
       ? plannedContextFor(
-          execution, providerRepair.plannedContext,
+          execution, this.retryProviderContext(execution, providerRepair.plannedContext),
           (data) => this.publishOutput(request.taskId, execution.attempt!.id, data),
           (exitCode) => void this.settle(request.taskId, execution.attempt!.id, exitCode),
         )
@@ -362,6 +362,19 @@ export class TaskExecutionModule {
       lineage: providerRepair?.kind ?? 'new',
     });
   }
+
+  private retryProviderContext(
+    execution: TaskExecutionView,
+    planned: import('./task-events').StoredContext,
+  ): import('./task-events').StoredContext {
+    if (!execution.executionContexts.some((context) => context.id === planned.id)) return planned;
+    return {
+      ...planned,
+      id: this.randomId(),
+      processId: this.randomId(),
+      ptyId: this.randomId(),
+    };
+  }
   private async startNativeResumeReserved(
     taskId: string,
     reservation: import('./task-execution-state').NativeResumeReservation,
@@ -379,7 +392,6 @@ export class TaskExecutionModule {
       plannedContext,
     }, { parentId: reservation.parentSession.id, repair: true, lineage: 'native-resume' });
   }
-
   private async startProviderForkReserved(
     taskId: string,
     reservation: import('./task-execution-state').ProviderForkReservation,
@@ -396,7 +408,6 @@ export class TaskExecutionModule {
       plannedContext,
     }, { parentId: reservation.parentSession.id, repair: true, lineage: 'fork' });
   }
-
   private newPlannedContext(
     taskId: string,
     execution: TaskExecutionView,
@@ -415,7 +426,6 @@ export class TaskExecutionModule {
       onExit: (exitCode) => void this.settle(taskId, execution.attempt!.id, exitCode),
     };
   }
-
   private async launchPlannedAttempt(
     taskId: string,
     execution: TaskExecutionView,
@@ -447,7 +457,6 @@ export class TaskExecutionModule {
       return this.failStart(taskId, active, error);
     }
   }
-
   private async failStart(
     taskId: string,
     active: GenericCliExecution | null,
@@ -474,7 +483,6 @@ export class TaskExecutionModule {
     if (error instanceof GenericCliExecutionError) throw new TaskExecutionError(error.code);
     throw new TaskExecutionError('internal');
   }
-
   private async markStartedWithRepair(
     taskId: string,
     attemptId: string,
@@ -489,7 +497,6 @@ export class TaskExecutionModule {
       return this.tasks.execution(taskId);
     }
   }
-
   private async attachContext(
     taskId: string,
     execution: TaskExecutionView,
@@ -538,8 +545,8 @@ export class TaskExecutionModule {
   ): Promise<void> {
     await this.persistWithOneShotRepair(
       taskId,
-      (view) => view.context !== null,
-      () => this.tasks.allocateContext(taskId, context, null),
+      (view) => view.executionContexts.some((candidate) => candidate.id === context.id),
+      () => this.tasks.allocateContext(taskId, context, null, null, 'failed'),
     );
   }
 

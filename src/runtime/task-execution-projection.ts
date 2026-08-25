@@ -60,6 +60,8 @@ export interface PrivateTaskExecutionView extends Omit<
 export class TaskExecutionProjection {
   private readonly executions = new Map<string, StoredExecution>();
   private readonly executionKeys = new Map<string, StoredExecution>();
+  private readonly runOwners = new Map<string, string>();
+  private readonly attemptOwners = new Map<string, string>();
   private readonly contextOwners = new Map<string, string>();
   private readonly providerSessionOwners = new Map<string, string>();
 
@@ -83,9 +85,7 @@ export class TaskExecutionProjection {
         this.applyAttemptSuperseded(event);
         return;
       case 'AttemptResumed': {
-        const execution = this.require(event.taskId);
-        this.replace(event.taskId, resumeExecution(execution, event));
-        return;
+        return this.applyAttemptResumed(event);
       }
       case 'ProviderSessionActionAborted': {
         const execution = this.require(event.taskId);
@@ -105,9 +105,7 @@ export class TaskExecutionProjection {
         return;
       }
       case 'AttemptForked': {
-        const execution = this.require(event.taskId);
-        this.replace(event.taskId, forkExecution(execution, event));
-        return;
+        return this.applyAttemptForked(event);
       }
       case 'ProviderSessionActionDecided':
         this.applyProviderActionDecided(event);
@@ -154,19 +152,21 @@ export class TaskExecutionProjection {
   private applyRunCreated(
     event: Extract<ExecutionProjectionEvent, { type: 'RunCreated' }>,
   ): void {
-    if (!this.dependencies.taskExists(event.taskId) || this.executions.has(event.taskId)) {
+    if (!this.dependencies.taskExists(event.taskId) || this.executions.has(event.taskId) ||
+      this.runOwners.has(event.run.id) || this.executionKeys.has(event.idempotencyKey)) {
       throw new TaskStorageError('internal');
     }
     const execution = executionFromRun(event);
     this.executions.set(event.taskId, execution);
     this.executionKeys.set(event.idempotencyKey, execution);
+    this.runOwners.set(event.run.id, event.taskId);
   }
 
   private applyAttemptCreated(
     event: Extract<ExecutionProjectionEvent, { type: 'AttemptCreated' }>,
   ): void {
     const execution = this.require(event.taskId);
-    if (execution.attempt) {
+    if (execution.attempt || this.attemptOwners.has(event.attempt.id)) {
       throw new TaskStorageError('internal');
     }
     this.replace(event.taskId, {
@@ -177,12 +177,39 @@ export class TaskExecutionProjection {
         attemptOperation(execution, event.attempt.id, execution.currentOperationKey,
           execution.currentCorrelationId)],
     });
+    this.attemptOwners.set(event.attempt.id, event.taskId);
+  }
+
+  private applyAttemptResumed(
+    event: Extract<ExecutionProjectionEvent, { type: 'AttemptResumed' }>,
+  ): void {
+    this.applyChildAttempt(event.taskId, event.attempt.id,
+      (execution) => resumeExecution(execution, event));
+  }
+
+  private applyAttemptForked(
+    event: Extract<ExecutionProjectionEvent, { type: 'AttemptForked' }>,
+  ): void {
+    this.applyChildAttempt(event.taskId, event.attempt.id,
+      (execution) => forkExecution(execution, event));
+  }
+
+  private applyChildAttempt(
+    taskId: string,
+    attemptId: string,
+    transition: (execution: StoredExecution) => StoredExecution,
+  ): void {
+    if (this.attemptOwners.has(attemptId)) throw new TaskStorageError('internal');
+    const replacement = transition(this.require(taskId));
+    this.replace(taskId, replacement);
+    this.attemptOwners.set(attemptId, taskId);
   }
 
   private applyContextAllocated(
     event: Extract<ExecutionProjectionEvent, { type: 'ContextAllocated' }>,
   ): void {
     const execution = this.require(event.taskId);
+    const successful = event.launchOutcome !== 'failed';
     if (
       !execution.attempt ||
       execution.context ||
@@ -193,6 +220,7 @@ export class TaskExecutionProjection {
     const session = event.providerSession;
     if (
       this.contextOwners.has(event.context.id) ||
+      (!successful && (session !== null || event.observedAt !== undefined)) ||
       session &&
       (
         this.providerSessionOwners.has(session.id) ||
@@ -205,17 +233,18 @@ export class TaskExecutionProjection {
     }
     this.replace(event.taskId, {
       ...execution,
-      context: event.context,
+      context: successful ? event.context : execution.context,
+      failedContext: successful ? null : event.context,
       executionContexts: [...execution.executionContexts, event.context],
-      providerSession: session,
-      providerObservationAt: event.observedAt ?? null,
-      providerSessions: session
+      providerSession: successful ? session : execution.providerSession,
+      providerObservationAt: successful ? event.observedAt ?? null : execution.providerObservationAt,
+      providerSessions: successful && session
         ? [...execution.providerSessions, session]
         : execution.providerSessions,
-      plannedAction: null,
+      plannedAction: successful ? null : execution.plannedAction,
     });
     this.contextOwners.set(event.context.id, event.taskId);
-    if (session) this.providerSessionOwners.set(session.id, event.context.id);
+    if (successful && session) this.providerSessionOwners.set(session.id, event.context.id);
   }
 
   private applyAttemptStarted(

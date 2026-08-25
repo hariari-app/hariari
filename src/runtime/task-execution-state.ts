@@ -35,6 +35,7 @@ export interface StoredExecution {
   readonly attempt: StoredAttempt | null;
   readonly attempts: readonly StoredAttempt[];
   readonly context: StoredContext | null;
+  readonly failedContext: StoredContext | null;
   readonly executionContexts: readonly StoredContext[];
   readonly providerSession: StoredProviderSession | null;
   readonly providerSessions: readonly StoredProviderSession[];
@@ -93,6 +94,7 @@ export function executionFromRun(event: RunCreatedEvent): StoredExecution {
     attempt: null,
     attempts: [],
     context: null,
+    failedContext: null,
     executionContexts: [],
     providerSession: null,
     providerSessions: [],
@@ -122,6 +124,7 @@ export function resumeExecution(
     attempt: event.attempt,
     attempts: [...execution.attempts, event.attempt],
     context: null,
+    failedContext: null,
     providerSession: null,
     providerObservationAt: null,
     acceptedProviderAction: null,
@@ -226,6 +229,8 @@ export function terminalExecution(
     ...execution,
     attempt,
     attempts: execution.attempts.map((stored) => stored.id === attempt.id ? attempt : stored),
+    context: execution.context ?? execution.failedContext,
+    failedContext: null,
   };
 }
 
@@ -270,6 +275,7 @@ export function forkExecution(
       event.attempt,
     ],
     context: null,
+    failedContext: null,
     providerSession: null,
     providerObservationAt: null,
     acceptedProviderAction: null,

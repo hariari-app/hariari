@@ -35,6 +35,7 @@ interface AttemptHistory {
   readonly id: string;
   readonly operation: OperationIdentity;
   context: ContextAllocatedEvent | null;
+  readonly failedContexts: ContextAllocatedEvent[];
   observation: RawProviderObservationRecordedEvent | null;
   started: AttemptStartedEvent | null;
   cancellation: CancellationRequestedEvent | null;
@@ -93,6 +94,10 @@ export class TaskEventHistory {
     const analysis = this.analyze(taskId);
     const descriptors = normalizedDescriptors(analysis);
     assertNormalizedPrefix(analysis.normalized, descriptors);
+    const ambiguous = analysis.attempts.find(hasAmbiguousLegacyContext);
+    if (ambiguous) throw new TaskEventHistoryError(
+      `ambiguous legacy context-only prefix for attempt ${ambiguous.id}`,
+    );
     const missingObservation = analysis.attempts.find((attempt) =>
       attempt.context?.providerSession && !attempt.observation);
     if (missingObservation) {
@@ -127,7 +132,7 @@ export class TaskEventHistory {
     const analysis = this.analyze(taskId);
     const incomplete = analysis.attempts.find((attempt) =>
       (attempt.context?.providerSession && !attempt.observation) ||
-      needsCoreStartRepair(attempt));
+      needsCoreStartRepair(attempt) || hasAmbiguousLegacyContext(attempt));
     if (incomplete) throw new TaskEventHistoryError(
       `incomplete attempt ${incomplete.id}: context=${Boolean(incomplete.context)} ` +
       `observation=${Boolean(incomplete.observation)} started=${Boolean(incomplete.started)}`,
@@ -209,6 +214,11 @@ function acceptProviderChild(
 function acceptContext(scan: HistoryScan, event: ContextAllocatedEvent, taskId: string): void {
   const current = requiredAttempt(scan.current);
   const session = event.providerSession;
+  if (event.launchOutcome === 'failed') {
+    if (session || event.observedAt !== undefined) throw new TaskEventHistoryError();
+    current.failedContexts.push(event);
+    return;
+  }
   if (current.context || (session && (session.taskId !== taskId ||
     session.attemptId !== current.id || session.executionContextId !== event.context.id ||
     scan.sessions.has(session.id)))) throw new TaskEventHistoryError();
@@ -235,6 +245,7 @@ function addAttempt(
     id,
     operation,
     context: null,
+    failedContexts: [],
     observation: null,
     started: null,
     cancellation: null,
@@ -288,7 +299,13 @@ function attemptDescriptors(attempt: AttemptHistory): readonly NormalizedDescrip
 }
 
 function needsCoreStartRepair(attempt: AttemptHistory): boolean {
-  return Boolean(attempt.context && !attempt.started && !attempt.cancellation && !attempt.terminal);
+  return Boolean(attempt.context?.launchOutcome === 'succeeded' && !attempt.started &&
+    !attempt.cancellation && !attempt.terminal);
+}
+
+function hasAmbiguousLegacyContext(attempt: AttemptHistory): boolean {
+  return Boolean(attempt.context && attempt.context.launchOutcome === undefined &&
+    !attempt.started && !attempt.cancellation && !attempt.terminal);
 }
 
 function setTerminal(attempt: AttemptHistory, event: TerminalEvent): void {

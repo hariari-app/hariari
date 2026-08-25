@@ -91,6 +91,8 @@ export interface ContextAllocatedEvent {
   readonly taskId: string;
   readonly context: StoredContext;
   readonly providerSession: StoredProviderSession | null;
+  /** Missing only on legacy records whose context-only prefix is intentionally ambiguous. */
+  readonly launchOutcome?: 'succeeded' | 'failed';
   /** Missing only on legacy records written before provider observation time was durable. */
   readonly observedAt?: string;
 }
@@ -216,6 +218,9 @@ export function parseTaskEvent(payload: Buffer): TaskEvent {
 }
 
 function parseTaskCreated(value: Record<string, unknown>): TaskCreatedEvent {
+  exactKeys(value, [
+    'type', 'version', 'task', 'idempotencyKey', 'correlationId', 'fingerprint',
+  ]);
   const idempotencyKey = string(value.idempotencyKey);
   return {
     type: 'TaskCreated', version: 1, task: parseTask(object(value.task)),
@@ -228,11 +233,12 @@ function parseTaskCreated(value: Record<string, unknown>): TaskCreatedEvent {
 function parseExecutionEvent(value: Record<string, unknown>, type: string): TaskEvent {
   const taskId = string(value.taskId);
   if (type === 'RunCreated') return parseRunCreated(value, taskId);
-  if (type === 'AttemptCreated') return { type, version: 1, taskId, attempt: parseAttempt(object(value.attempt)) };
+  if (type === 'AttemptCreated') return parseAttemptCreated(value, taskId);
   if (type === 'AttemptForked') return parseAttemptForked(value, taskId);
   if (type === 'AttemptResumed') return parseAttemptResumed(value, taskId);
   if (type === 'ProviderSessionActionDecided') return parseProviderActionDecided(value, taskId);
   if (type === 'ProviderSessionActionAborted') {
+    exactKeys(value, ['type', 'version', 'taskId', 'idempotencyKey', 'reason']);
     if (value.reason !== 'parent-still-live') throw new Error('invalid event');
     return { type, version: 1, taskId,
       idempotencyKey: string(value.idempotencyKey), reason: value.reason };
@@ -255,6 +261,15 @@ function parseExecutionEvent(value: Record<string, unknown>, type: string): Task
   }
   if (type === 'CancellationRequested') return parseCancellation(value, taskId);
   throw new Error('invalid event');
+}
+
+function parseAttemptCreated(
+  value: Record<string, unknown>,
+  taskId: string,
+): AttemptCreatedEvent {
+  exactKeys(value, ['type', 'version', 'taskId', 'attempt']);
+  return { type: 'AttemptCreated', version: 1, taskId,
+    attempt: parseAttempt(object(value.attempt)) };
 }
 
 function parseRawProviderObservationRecorded(
@@ -291,6 +306,9 @@ function parseTaskRecoveryDecided(
   value: Record<string, unknown>,
   taskId: string,
 ): TaskRecoveryDecidedEvent {
+  exactKeys(value, [
+    'type', 'version', 'taskId', 'idempotencyKey', 'fingerprint', 'result',
+  ]);
   const result = parseRecoveryDecisionView(value.result);
   if (result.taskId !== taskId) throw new Error('invalid recovery decision');
   return { type: 'TaskRecoveryDecided', version: 1, taskId,
@@ -302,6 +320,9 @@ function parseTaskReconciled(
   value: Record<string, unknown>,
   taskId: string,
 ): TaskReconciledEvent {
+  exactKeys(value, [
+    'type', 'version', 'taskId', 'idempotencyKey', 'fingerprint', 'recovery',
+  ]);
   const recovery = parseRecoveryView(value.recovery);
   if (recovery.taskId !== taskId) throw new Error('invalid recovery');
   return { type: 'TaskReconciled', version: 1, taskId,
@@ -313,6 +334,10 @@ function parseProviderActionDecided(
   value: Record<string, unknown>,
   taskId: string,
 ): ProviderSessionActionDecidedEvent {
+  exactKeys(value, [
+    'type', 'version', 'taskId', 'action', 'providerSessionId', 'idempotencyKey',
+    'correlationId', 'fingerprint', 'outcome', 'decision', 'reason',
+  ]);
   const outcome = value.outcome;
   if (outcome !== 'accepted' && outcome !== 'rejected') throw new Error('invalid event');
   const decision = optionalDecision(value.decision);
@@ -352,6 +377,10 @@ function parseAttemptResumed(
   value: Record<string, unknown>,
   taskId: string,
 ): AttemptResumedEvent {
+  exactKeys(value, [
+    'type', 'version', 'taskId', 'attempt', 'sourceAttemptId', 'sourceSessionId',
+    'actionKey', 'correlationId', 'plannedContext',
+  ]);
   return { type: 'AttemptResumed', version: 1, taskId,
     attempt: parseAttempt(object(value.attempt)), sourceAttemptId: string(value.sourceAttemptId),
     sourceSessionId: string(value.sourceSessionId), actionKey: string(value.actionKey),
@@ -363,6 +392,9 @@ function parseSupersessionRequested(
   value: Record<string, unknown>,
   taskId: string,
 ): AttemptSupersessionRequestedEvent {
+  exactKeys(value, [
+    'type', 'version', 'taskId', 'actionKey', 'parentAttemptId', 'parentSessionId', 'reason',
+  ]);
   return { type: 'AttemptSupersessionRequested', version: 1, taskId,
     actionKey: string(value.actionKey), parentAttemptId: string(value.parentAttemptId),
     parentSessionId: string(value.parentSessionId), reason: supersessionReason(value.reason) };
@@ -372,6 +404,7 @@ function parseAttemptSuperseded(
   value: Record<string, unknown>,
   taskId: string,
 ): AttemptSupersededEvent {
+  exactKeys(value, ['type', 'version', 'taskId', 'actionKey', 'attemptId', 'reason']);
   return { type: 'AttemptSuperseded', version: 1, taskId,
     actionKey: string(value.actionKey), attemptId: string(value.attemptId),
     reason: supersessionReason(value.reason) };
@@ -383,6 +416,9 @@ function supersessionReason(value: unknown): SupersessionReason {
 }
 
 function parseRunCreated(value: Record<string, unknown>, taskId: string): RunCreatedEvent {
+  exactKeys(value, [
+    'type', 'version', 'taskId', 'idempotencyKey', 'correlationId', 'fingerprint', 'run',
+  ]);
   const idempotencyKey = string(value.idempotencyKey);
   return { type: 'RunCreated', version: 1, taskId,
     idempotencyKey,
@@ -392,6 +428,10 @@ function parseRunCreated(value: Record<string, unknown>, taskId: string): RunCre
 }
 
 function parseAttemptForked(value: Record<string, unknown>, taskId: string): AttemptForkedEvent {
+  exactKeys(value, [
+    'type', 'version', 'taskId', 'attempt', 'parentAttemptId', 'parentSessionId',
+    'forkKey', 'correlationId', 'plannedContext',
+  ]);
   const plannedContext = value.plannedContext === undefined
     ? undefined
     : parseContext(object(value.plannedContext));
@@ -403,13 +443,25 @@ function parseAttemptForked(value: Record<string, unknown>, taskId: string): Att
 }
 
 function parseContextAllocated(value: Record<string, unknown>, taskId: string): ContextAllocatedEvent {
+  exactKeys(value, [
+    'type', 'version', 'taskId', 'context', 'providerSession', 'launchOutcome', 'observedAt',
+  ]);
   const providerSession = value.providerSession === undefined || value.providerSession === null
     ? null : parseProviderSession(object(value.providerSession));
   return { type: 'ContextAllocated', version: 1, taskId,
     context: parseContext(object(value.context)), providerSession,
+    ...parseOptionalLaunchOutcome(value.launchOutcome),
     ...(value.observedAt === undefined ? {} : {
       observedAt: parseCanonicalUtcTimestamp(value.observedAt),
     }) };
+}
+
+function parseOptionalLaunchOutcome(
+  value: unknown,
+): { readonly launchOutcome?: 'succeeded' | 'failed' } {
+  if (value === undefined) return {};
+  if (value !== 'succeeded' && value !== 'failed') throw new Error('invalid event');
+  return { launchOutcome: value };
 }
 
 function parseCancellation(value: Record<string, unknown>, taskId: string): CancellationRequestedEvent {
@@ -435,6 +487,9 @@ function correlation(value: unknown, legacyIdempotencyKey: string): string {
 }
 
 function parseTask(value: Record<string, unknown>): TaskView {
+  exactKeys(value, [
+    'id', 'objective', 'project', 'repository', 'baseRef', 'provider', 'createdAt',
+  ]);
   return { id: string(value.id), objective: string(value.objective), project: string(value.project),
     repository: string(value.repository), baseRef: string(value.baseRef),
     provider: string(value.provider) as TaskView['provider'],
@@ -442,10 +497,12 @@ function parseTask(value: Record<string, unknown>): TaskView {
 }
 
 function parseRun(value: Record<string, unknown>): StoredRun {
+  exactKeys(value, ['id', 'number']);
   return { id: string(value.id), number: positiveInteger(value.number) };
 }
 
 function parseAttempt(value: Record<string, unknown>): StoredAttempt {
+  exactKeys(value, ['id', 'number', 'state', 'exitCode']);
   const state = string(value.state) as TaskExecutionState;
   if (!['starting', 'running', 'completed', 'failed', 'cancelling', 'cancelled', 'superseding', 'superseded'].includes(state)) throw new Error('invalid attempt');
   const exitCode = value.exitCode === undefined ? undefined : integer(value.exitCode);
@@ -454,13 +511,19 @@ function parseAttempt(value: Record<string, unknown>): StoredAttempt {
 }
 
 function parseContext(value: Record<string, unknown>): StoredContext {
+  exactKeys(value, ['id', 'worktreeId', 'branchName', 'baseCommit', 'processId', 'ptyId']);
   return { id: string(value.id), worktreeId: string(value.worktreeId),
     branchName: string(value.branchName), baseCommit: string(value.baseCommit),
     processId: string(value.processId), ptyId: string(value.ptyId) };
 }
 
 function parseProviderSession(value: Record<string, unknown>): StoredProviderSession {
+  exactKeys(value, [
+    'id', 'provider', 'nativeSessionId', 'taskId', 'attemptId', 'executionContextId',
+    'capabilities', 'parentId', 'lineage',
+  ]);
   const capabilities = object(value.capabilities);
+  exactKeys(capabilities, ['resume', 'fork']);
   if (value.provider !== 'claude' || typeof capabilities.resume !== 'boolean' || typeof capabilities.fork !== 'boolean') throw new Error('invalid provider session');
   const parentId = value.parentId;
   if (parentId !== null && typeof parentId !== 'string') throw new Error('invalid provider session');
