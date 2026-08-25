@@ -1,4 +1,5 @@
 import {
+  TASK_PROVIDERS,
   type ProviderSessionView,
   type TaskExecutionState,
   type TaskRecoveryView,
@@ -25,6 +26,8 @@ import {
   parseRecoveryDecisionView,
   parseRecoveryView,
 } from './recovery-view-parser';
+
+const TASK_PROVIDER_SET = new Set<string>(TASK_PROVIDERS);
 
 export interface StoredRun {
   readonly id: string;
@@ -344,9 +347,14 @@ function parseProviderActionDecided(
   const reason = optionalActionRejection(value.reason);
   if ((outcome === 'accepted') !== (decision !== null) ||
     (outcome === 'rejected') !== (reason !== null)) throw new Error('invalid event');
+  const action = providerAction(value.action);
+  if (outcome === 'accepted' && !(
+    (action === 'resume' && (decision === 'exact-reattach' || decision === 'native-resume')) ||
+    (action === 'fork' && decision === 'fork')
+  )) throw new Error('invalid event');
   const idempotencyKey = string(value.idempotencyKey);
   return { type: 'ProviderSessionActionDecided', version: 1, taskId,
-    action: providerAction(value.action), providerSessionId: string(value.providerSessionId),
+    action, providerSessionId: string(value.providerSessionId),
     idempotencyKey,
     correlationId: correlation(value.correlationId, idempotencyKey),
     fingerprint: string(value.fingerprint),
@@ -446,7 +454,8 @@ function parseContextAllocated(value: Record<string, unknown>, taskId: string): 
   exactKeys(value, [
     'type', 'version', 'taskId', 'context', 'providerSession', 'launchOutcome', 'observedAt',
   ]);
-  const providerSession = value.providerSession === undefined || value.providerSession === null
+  if (!Object.hasOwn(value, 'providerSession')) throw new Error('invalid event');
+  const providerSession = value.providerSession === null
     ? null : parseProviderSession(object(value.providerSession));
   return { type: 'ContextAllocated', version: 1, taskId,
     context: parseContext(object(value.context)), providerSession,
@@ -490,9 +499,11 @@ function parseTask(value: Record<string, unknown>): TaskView {
   exactKeys(value, [
     'id', 'objective', 'project', 'repository', 'baseRef', 'provider', 'createdAt',
   ]);
+  const provider = string(value.provider);
+  if (!TASK_PROVIDER_SET.has(provider)) throw new Error('invalid event');
   return { id: string(value.id), objective: string(value.objective), project: string(value.project),
     repository: string(value.repository), baseRef: string(value.baseRef),
-    provider: string(value.provider) as TaskView['provider'],
+    provider: provider as TaskView['provider'],
     createdAt: parseCanonicalUtcTimestamp(value.createdAt) };
 }
 

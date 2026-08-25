@@ -54,7 +54,50 @@ describe('durable Task event version-1 contract', () => {
     expect(() => [created, runCreated, { ...allocated, providerSession: legacySession },
       forked, started].map(parse)).not.toThrow();
   });
+
+  registerStrictParserTests();
 });
+
+function registerStrictParserTests(): void {
+  it('rejects every undocumented required-field omission', () => {
+    for (const event of durableEventCatalog()) {
+      for (const key of Object.keys(event)) {
+        if (legacyOptionalFields(event.type).includes(key)) continue;
+        expect(() => parse(without(event, key)), `${event.type}.${key}`).toThrow();
+      }
+    }
+  });
+
+  it('rejects Task providers outside the canonical provider domain', () => {
+    const created = durableEventCatalog()[0]!;
+    expect(() => parse({ ...created, task: { ...task, provider: 'attacker-provider' } }))
+      .toThrow();
+  });
+
+  it('rejects unsupported versions for every durable variant', () => {
+    for (const event of durableEventCatalog()) {
+      expect(() => parse({ ...event, version: 2 }), event.type).toThrow();
+    }
+  });
+
+  it.each(invalidDomainForgeries())('rejects constrained domain forgery: $name', ({ event }) => {
+    expect(() => parse(event)).toThrow();
+  });
+}
+
+function legacyOptionalFields(type: TaskEvent['type']): readonly string[] {
+  const fields: string[] = [];
+  if (type === 'TaskCreated' || type === 'RunCreated' || type === 'AttemptForked' ||
+    type === 'AttemptResumed' || type === 'ProviderSessionActionDecided' ||
+    type === 'CancellationRequested') {
+    fields.push('correlationId');
+  }
+  if (type === 'AttemptForked') fields.push('plannedContext');
+  if (type === 'ContextAllocated') fields.push('launchOutcome', 'observedAt');
+  if (type === 'AttemptStarted' || type === 'AttemptCompleted' || type === 'AttemptFailed' ||
+    type === 'CancellationRequested' || type === 'AttemptCancelled') fields.push('occurredAt');
+  return fields;
+}
 
 function durableEventCatalog(): readonly TaskEvent[] {
   const raw = providerObservation();
@@ -148,6 +191,39 @@ function nestedEventForgeries() {
       ...reconciled.recovery,
       resources: [{ ...reconciled.recovery.resources[0]!, futureAuthority: true }],
     } } },
+  ];
+}
+
+function invalidDomainForgeries() {
+  const events = durableEventCatalog();
+  const byType = (type: TaskEvent['type']) => events.find((event) => event.type === type)!;
+  const created = byType('TaskCreated') as Extract<TaskEvent, { type: 'TaskCreated' }>;
+  const attempted = byType('AttemptCreated') as Extract<TaskEvent, { type: 'AttemptCreated' }>;
+  const allocated = byType('ContextAllocated') as Extract<TaskEvent, { type: 'ContextAllocated' }>;
+  const decided = byType('ProviderSessionActionDecided') as Extract<
+    TaskEvent, { type: 'ProviderSessionActionDecided' }
+  >;
+  const supersession = byType('AttemptSupersessionRequested');
+  return [
+    { name: 'Task provider', event: { ...created, task: { ...created.task, provider: 'other' } } },
+    { name: 'Attempt state', event: { ...attempted,
+      attempt: { ...attempted.attempt, state: 'unknown' } } },
+    { name: 'launch outcome', event: { ...allocated, launchOutcome: 'unknown' } },
+    { name: 'provider session provider', event: { ...allocated,
+      providerSession: { ...allocated.providerSession!, provider: 'other' } } },
+    { name: 'provider capability', event: { ...allocated,
+      providerSession: { ...allocated.providerSession!, capabilities: { resume: 'yes', fork: true } } } },
+    { name: 'provider parent', event: { ...allocated,
+      providerSession: { ...allocated.providerSession!, parentId: 42 } } },
+    { name: 'provider lineage', event: { ...allocated,
+      providerSession: { ...allocated.providerSession!, lineage: 'other' } } },
+    { name: 'provider action', event: { ...decided, action: 'other' } },
+    { name: 'provider action decision pair', event: { ...decided,
+      action: 'fork', decision: 'exact-reattach' } },
+    { name: 'provider action outcome', event: { ...decided, outcome: 'other' } },
+    { name: 'provider action reason', event: { ...decided,
+      outcome: 'rejected', decision: null, reason: 'other' } },
+    { name: 'supersession reason', event: { ...supersession, reason: 'other' } },
   ];
 }
 

@@ -152,6 +152,11 @@ export class ProviderSessionLifecycle {
 
   replayAbort(event: ProviderSessionActionAbortedEvent): void {
     if (this.aborted.has(event.idempotencyKey)) return;
+    const decision = this.decisions.get(event.idempotencyKey);
+    if (!decision || decision.taskId !== event.taskId || decision.outcome !== 'accepted' ||
+      decision.action !== 'fork' || decision.decision !== 'fork') {
+      throw new ProviderSessionLifecycleError('internal');
+    }
     this.aborted.add(event.idempotencyKey);
   }
 

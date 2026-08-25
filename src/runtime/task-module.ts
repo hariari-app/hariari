@@ -74,7 +74,6 @@ export class TaskModule {
   private readonly providerLifecycle: ProviderSessionLifecycle;
   private readonly recoveryJournal: TaskRecoveryJournal;
   private mutation: Promise<void> = Promise.resolve();
-
   constructor(
     runtimeDirectory: string,
     private readonly now: () => number,
@@ -257,6 +256,14 @@ export class TaskModule {
       const task = this.taskById(taskId);
       await this.historyRepair.repair(task.id);
       const current = this.executionProjection.require(task.id);
+      const observedAt = providerSession
+        ? current.providerObservationAt ?? new Date(this.now()).toISOString()
+        : undefined;
+      if (providerSession) {
+        this.eventTimeline.validateProviderObservation(
+          current, providerSession, providerObservation, observedAt!,
+        );
+      }
       if (current.context) {
         if (current.context.id !== context.id || current.providerSession?.id !== providerSession?.id) {
           throw new TaskStorageError('internal');
@@ -267,13 +274,10 @@ export class TaskModule {
           version: 1,
           taskId,
           context, providerSession, launchOutcome,
-          ...(providerSession ? { observedAt: new Date(this.now()).toISOString() } : {}),
+          ...(observedAt ? { observedAt } : {}),
         });
       }
       if (providerSession) {
-        if (providerObservation === null) {
-          throw new TaskStorageError('internal');
-        }
         await this.eventTimeline.recordProviderObservation(
           this.executionProjection.require(taskId),
           providerSession,
@@ -643,7 +647,6 @@ export class TaskModule {
   ): Promise<TaskRecoveryDecisionView> {
     return this.recoveryJournal.recordDecision(request, result);
   }
-
   private transition(
     taskId: string,
     event: Exclude<
@@ -658,7 +661,6 @@ export class TaskModule {
       return this.executionProjection.view(task);
     });
   }
-
   private finish(
     taskId: string,
     requested: Extract<TaskExecutionState, 'completed' | 'failed' | 'cancelled'>,
@@ -680,7 +682,6 @@ export class TaskModule {
       return this.executionProjection.view(task);
     });
   }
-
   private async appendVisible(event: TaskEvent): Promise<void> {
     try {
       await this.store.appendVisible(
@@ -695,7 +696,6 @@ export class TaskModule {
       throw new TaskStorageError('internal');
     }
   }
-
   private apply(event: TaskEvent): void {
     this.historyRepair.accept(event, 'taskId' in event
       ? this.executionProjection.optional(event.taskId)?.attempt?.id ?? null
@@ -715,10 +715,12 @@ export class TaskModule {
         return;
       }
       case 'ProviderSessionActionDecided':
+        this.executionProjection.validateProviderActionDecision(event);
         this.providerLifecycle.replay(event);
         this.executionProjection.apply(event);
         return;
       case 'ProviderSessionActionAborted':
+        this.executionProjection.validateProviderActionAbort(event);
         this.providerLifecycle.replayAbort(event);
         this.executionProjection.apply(event);
         return;
@@ -749,7 +751,6 @@ export class TaskModule {
     this.fingerprints.set(event.idempotencyKey, event.fingerprint);
     this.taskCorrelations.set(event.idempotencyKey, event.correlationId);
   }
-
   private taskById(taskId: string): TaskView {
     const task = this.taskIds.get(taskId);
     if (!task) {
@@ -757,7 +758,6 @@ export class TaskModule {
     }
     return task;
   }
-
   private lifecycleView(taskId: string): PrivateTaskExecutionView | null {
     const task = this.taskIds.get(taskId);
     if (!task) {

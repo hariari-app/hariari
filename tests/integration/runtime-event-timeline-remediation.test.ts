@@ -356,7 +356,8 @@ function rejectsSameTaskChildAttemptIdentityReuse(): void {
     occurredAt: '2026-08-25T10:00:00.000Z' });
   projection.apply({ type: 'ProviderSessionActionDecided', version: 1, taskId: 'task-a',
     action: 'fork', providerSessionId: ownedSession.id, idempotencyKey: 'fork-key',
-    correlationId: 'fork-correlation', fingerprint: 'fork-fingerprint',
+    correlationId: 'fork-correlation',
+    fingerprint: JSON.stringify(['fork', 'task-a', ownedSession.id]),
     outcome: 'accepted', decision: 'fork', reason: null });
   projection.apply({ type: 'AttemptSupersessionRequested', version: 1, taskId: 'task-a',
     actionKey: 'fork-key', parentAttemptId: 'attempt-a', parentSessionId: ownedSession.id,

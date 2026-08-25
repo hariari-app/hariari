@@ -19,7 +19,10 @@ import {
 } from './task-execution-state';
 import { isTerminalExecutionState } from './task-execution-rules';
 import { TaskStorageError } from './task-storage-error';
-import { acceptedProviderActionIdentity } from './provider-action-identity';
+import {
+  acceptedProviderActionIdentity,
+  assertAcceptedProviderActionAuthority,
+} from './provider-action-identity';
 
 export type ExecutionProjectionEvent = Extract<
   TaskEvent,
@@ -89,7 +92,7 @@ export class TaskExecutionProjection {
       }
       case 'ProviderSessionActionAborted': {
         const execution = this.require(event.taskId);
-        this.replace(event.taskId, abortProviderActionExecution(execution));
+        this.replace(event.taskId, abortProviderActionExecution(execution, event));
         return;
       }
       case 'CancellationRequested': {
@@ -127,6 +130,30 @@ export class TaskExecutionProjection {
 
   byKey(idempotencyKey: string): StoredExecution | undefined {
     return this.executionKeys.get(idempotencyKey);
+  }
+
+  validateProviderActionDecision(
+    event: Extract<ExecutionProjectionEvent, { type: 'ProviderSessionActionDecided' }>,
+  ): void {
+    if (this.executionKeys.has(event.idempotencyKey)) throw new TaskStorageError('internal');
+    if (event.outcome !== 'accepted') return;
+    const execution = this.require(event.taskId);
+    const sources = execution.providerSessions.filter((candidate) =>
+      candidate.id === event.providerSessionId);
+    const source = sources.length === 1 ? sources[0]! : null;
+    if (!source || execution.providerSession?.id !== source.id ||
+      execution.attempt?.id !== source.attemptId || execution.attempt.state !== 'running' ||
+      execution.context?.id !== source.executionContextId ||
+      this.providerSessionOwners.get(source.id) !== source.executionContextId) {
+      throw new TaskStorageError('internal');
+    }
+    assertAcceptedProviderActionAuthority(event, source);
+  }
+
+  validateProviderActionAbort(
+    event: Extract<ExecutionProjectionEvent, { type: 'ProviderSessionActionAborted' }>,
+  ): void {
+    abortProviderActionExecution(this.require(event.taskId), event);
   }
 
   view(task: TaskView): TaskExecutionView {

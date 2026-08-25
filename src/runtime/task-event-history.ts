@@ -11,6 +11,7 @@ import type {
   CancellationRequestedEvent,
   ContextAllocatedEvent,
   RawProviderObservationRecordedEvent,
+  AttemptSupersessionRequestedEvent,
   StoredProviderSession,
   TaskCreatedEvent,
   TaskEvent,
@@ -40,6 +41,7 @@ interface AttemptHistory {
   started: AttemptStartedEvent | null;
   cancellation: CancellationRequestedEvent | null;
   terminal: TerminalEvent | null;
+  supersession: AttemptSupersessionRequestedEvent | null;
 }
 
 type TerminalEvent = AttemptCompletedEvent | AttemptFailedEvent | AttemptCancelledEvent;
@@ -162,6 +164,10 @@ function acceptHistoryEvent(scan: HistoryScan, event: TaskEvent, taskId: string)
     scan.current = addAttempt(event.attempt.id, scan.operation, scan.attempts, scan.attemptsById);
   } else if (event.type === 'ProviderSessionActionDecided') {
     acceptProviderDecision(scan, event);
+  } else if (event.type === 'AttemptSupersessionRequested') {
+    acceptSupersession(scan, event);
+  } else if (event.type === 'ProviderSessionActionAborted') {
+    acceptProviderAbort(scan, event);
   } else if (event.type === 'AttemptResumed' || event.type === 'AttemptForked') {
     acceptProviderChild(scan, event);
   } else if (event.type === 'ContextAllocated') {
@@ -189,6 +195,8 @@ function acceptProviderDecision(
   event: Extract<TaskEvent, { type: 'ProviderSessionActionDecided' }>,
 ): void {
   const owner = scan.sessions.get(event.providerSessionId);
+  if (event.outcome === 'accepted' &&
+    (owner !== scan.current || !owner.started || owner.terminal)) throw new TaskEventHistoryError();
   const runId = event.outcome === 'accepted' && event.decision !== 'exact-reattach'
     ? requiredRun(scan.operation) : '';
   const accepted = acceptedProviderActionIdentity(
@@ -197,6 +205,36 @@ function acceptProviderDecision(
   if (!accepted) return;
   if (scan.acceptedActions.has(accepted.actionKey)) throw new TaskEventHistoryError();
   scan.acceptedActions.set(accepted.actionKey, accepted);
+}
+
+function acceptSupersession(
+  scan: HistoryScan,
+  event: AttemptSupersessionRequestedEvent,
+): void {
+  const current = requiredAttempt(scan.current);
+  const accepted = scan.acceptedActions.get(event.actionKey);
+  if (!accepted || current.supersession || accepted.taskId !== event.taskId ||
+    accepted.sourceAttemptId !== event.parentAttemptId ||
+    accepted.sourceSessionId !== event.parentSessionId || accepted.kind !== event.reason) {
+    throw new TaskEventHistoryError();
+  }
+  current.supersession = event;
+}
+
+function acceptProviderAbort(
+  scan: HistoryScan,
+  event: Extract<TaskEvent, { type: 'ProviderSessionActionAborted' }>,
+): void {
+  const current = requiredAttempt(scan.current);
+  const accepted = scan.acceptedActions.get(event.idempotencyKey);
+  const supersession = current.supersession;
+  if (!accepted || accepted.kind !== 'fork' || !supersession ||
+    accepted.taskId !== event.taskId || supersession.taskId !== event.taskId ||
+    supersession.actionKey !== event.idempotencyKey ||
+    supersession.parentAttemptId !== accepted.sourceAttemptId ||
+    supersession.parentSessionId !== accepted.sourceSessionId) throw new TaskEventHistoryError();
+  scan.acceptedActions.delete(event.idempotencyKey);
+  current.supersession = null;
 }
 
 function acceptProviderChild(
@@ -250,6 +288,7 @@ function addAttempt(
     started: null,
     cancellation: null,
     terminal: null,
+    supersession: null,
   };
   attempts.push(attempt);
   attemptsById.set(id, attempt);

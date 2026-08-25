@@ -16,17 +16,34 @@ export interface AcceptedProviderActionIdentity {
   readonly sourceSessionId: string;
 }
 
+export function assertAcceptedProviderActionAuthority(
+  event: ProviderSessionActionDecidedEvent,
+  source: StoredProviderSession | null,
+): void {
+  if (event.outcome !== 'accepted') return;
+  const validPair = (event.action === 'resume' &&
+      (event.decision === 'exact-reattach' || event.decision === 'native-resume')) ||
+    (event.action === 'fork' && event.decision === 'fork');
+  const fingerprint = JSON.stringify([event.action, event.taskId, event.providerSessionId]);
+  const capable = source && (event.action === 'resume'
+    ? source.capabilities.resume : source.capabilities.fork);
+  if (!validPair || event.fingerprint !== fingerprint || !source ||
+    !capable || source.id !== event.providerSessionId || source.taskId !== event.taskId) {
+    throw new Error('invalid accepted provider action authority');
+  }
+}
+
 /** Derives child-operation authority only from an accepted durable provider decision. */
 export function acceptedProviderActionIdentity(
   event: ProviderSessionActionDecidedEvent,
   source: StoredProviderSession | null,
   runId: string,
 ): AcceptedProviderActionIdentity | null {
+  assertAcceptedProviderActionAuthority(event, source);
   if (event.outcome !== 'accepted' || event.decision === 'exact-reattach') return null;
-  const validPair = (event.action === 'resume' && event.decision === 'native-resume') ||
-    (event.action === 'fork' && event.decision === 'fork');
-  if (!validPair || !source || source.id !== event.providerSessionId ||
-    source.taskId !== event.taskId) throw new Error('invalid accepted provider action identity');
+  if (!source || (event.decision !== 'native-resume' && event.decision !== 'fork')) {
+    throw new Error('invalid accepted provider action identity');
+  }
   return {
     taskId: event.taskId, runId, kind: event.decision,
     actionKey: event.idempotencyKey, correlationId: event.correlationId,

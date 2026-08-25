@@ -22,34 +22,29 @@ import { TaskModule } from './task-module';
 import type { ProviderSessionOperationRequest } from './provider-session-lifecycle';
 import type { PlannedProviderRepair } from './task-execution-state';
 import type { PrivateTaskExecutionView } from './task-execution-projection';
+import { ProviderObservationValidationError } from './task-event-timeline';
 import { TaskOutputLog } from './task-output-log';
 import { RecoveryReconciler } from './recovery-reconciler';
-
 const MAX_OUTPUT_CHARS = 4 * 1024;
-
 interface InFlightOperation {
   readonly idempotencyKey: string;
   readonly fingerprint: string;
   readonly promise: Promise<TaskExecutionView>;
 }
-
 type TerminalTransition =
   | { readonly kind: 'start-failure' }
   | { readonly kind: 'process-exit'; readonly exitCode: number };
-
 interface PlannedAttachment {
   readonly parentId: string | null;
   readonly repair: boolean;
   readonly lineage: 'new' | 'native-resume' | 'fork';
 }
-
 export class TaskExecutionError extends Error {
   constructor(readonly code: 'worktree-unavailable' | 'process-start-failed' | 'task-not-ready' | 'internal') {
     super(`Task execution failed: ${code}`);
     this.name = 'TaskExecutionError';
   }
 }
-
 /** Runtime-owned execution module: adapter lifecycle, transient output, and durable transitions. */
 export class TaskExecutionModule {
   private readonly operations = new Map<string, InFlightOperation>();
@@ -454,6 +449,12 @@ export class TaskExecutionModule {
       active.activateOutput();
       return started;
     } catch (error) {
+      if (error instanceof ProviderObservationValidationError) {
+        if (active) await active.stop().catch(() => undefined);
+        this.releaseLostActive(taskId);
+        this.resolveExitWait(taskId);
+        throw new TaskExecutionError('internal');
+      }
       return this.failStart(taskId, active, error);
     }
   }
@@ -765,7 +766,6 @@ function recoveryBinding(
     runtimeWorktrees,
   };
 }
-
 function sanitizeOutput(value: string): string {
   return [...value.slice(0, MAX_OUTPUT_CHARS * 2)]
     .filter((character) => {
@@ -775,8 +775,6 @@ function sanitizeOutput(value: string): string {
     .join('')
     .slice(0, MAX_OUTPUT_CHARS);
 }
-
-
 class ExitWait {
   private resolvePromise: () => void = () => undefined;
   private rejectPromise: (error: unknown) => void = () => undefined;

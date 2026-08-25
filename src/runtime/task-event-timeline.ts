@@ -63,6 +63,13 @@ interface RecordLifecycleEvent {
   readonly append: (event: NormalizedRuntimeEventRecordedEvent) => Promise<void>;
 }
 
+export class ProviderObservationValidationError extends Error {
+  constructor() {
+    super('invalid provider observation authority');
+    this.name = 'ProviderObservationValidationError';
+  }
+}
+
 /** Owns canonical append validation and the disposable Task timeline projection. */
 export class TaskEventTimeline {
   private readonly rawObservations = new Map<string, RawProviderObservationView[]>();
@@ -244,6 +251,33 @@ export class TaskEventTimeline {
       correlationId: execution.currentCorrelationId,
       observedAt: execution.providerObservationAt ?? this.dependencies.now(),
       evidence, append: this.dependencies.append });
+  }
+
+  validateProviderObservation(
+    execution: StoredExecution,
+    providerSession: StoredProviderSession,
+    evidence: unknown,
+    observedAt: string,
+  ): void {
+    const attempt = execution.attempt;
+    try {
+      if (!attempt) throw new Error('missing provider observation attempt');
+      const observation = allowlistProviderObservation({
+        taskId: execution.taskId, providerSessionId: providerSession.id,
+        idempotencyKey: execution.currentOperationKey, observedAt, evidence,
+      });
+      normalizedEvent({
+        taskId: execution.taskId, runId: execution.run.id, attemptId: attempt.id,
+        providerSessionId: providerSession.id, kind: 'provider-session-observed',
+        idempotencyKey: execution.currentOperationKey,
+        correlationId: execution.currentCorrelationId,
+        sequence: this.events(execution.taskId).length + 1,
+        occurrenceAt: observation.observedAt, observedAt: observation.observedAt,
+        causationId: observation.id, redaction: observation.redaction,
+      });
+    } catch {
+      throw new ProviderObservationValidationError();
+    }
   }
 
   private async appendProviderObservation(input: ProviderObservationAppend): Promise<void> {

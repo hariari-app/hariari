@@ -17,6 +17,7 @@ import type {
   StoredRun,
   TaskEvent,
 } from './task-events';
+import type { ProviderSessionActionAbortedEvent } from './provider-session-lifecycle';
 import { isTerminalExecutionState } from './task-execution-rules';
 import { TaskStorageError } from './task-storage-error';
 import {
@@ -169,11 +170,20 @@ export function cancelExecution(
   };
 }
 
-export function abortProviderActionExecution(execution: StoredExecution): StoredExecution {
+export function abortProviderActionExecution(
+  execution: StoredExecution,
+  event: ProviderSessionActionAbortedEvent,
+): StoredExecution {
   if (
     !execution.attempt ||
     execution.attempt.state !== 'superseding' ||
-    !execution.supersession
+    !execution.supersession ||
+    !execution.acceptedProviderAction ||
+    execution.taskId !== event.taskId ||
+    execution.supersession.actionKey !== event.idempotencyKey ||
+    execution.acceptedProviderAction.actionKey !== event.idempotencyKey ||
+    execution.supersession.parentAttemptId !== execution.acceptedProviderAction.sourceAttemptId ||
+    execution.supersession.parentSessionId !== execution.acceptedProviderAction.sourceSessionId
   ) {
     throw new TaskStorageError('internal');
   }
