@@ -13,7 +13,7 @@ import {
 } from './runtime-test-fakes';
 import {
   FAILED_APPEND_MODES,
-  corruptExecutionAppend,
+  corruptExpectedExecutionAppend,
   createSubject,
   createTestRepository,
   deferred,
@@ -23,7 +23,9 @@ import {
 } from './runtime-task-test-harness';
 
 const FAILED_ALLOCATION_APPEND_CASES = ['ContextAllocated', 'AttemptFailed'].flatMap(
-  (name, index) => FAILED_APPEND_MODES.map((mode) => ({ name, mode, writeCall: index + 3 })),
+  (name, index) => FAILED_APPEND_MODES.map((mode) => ({
+    operation: 'task.start', name, eventType: name, mode, writeCall: index + 3,
+  })),
 );
 const NATIVE_RESUME_APPEND_CASES = [
   'ProviderSessionActionDecided', 'AttemptSupersessionRequested',
@@ -31,6 +33,8 @@ const NATIVE_RESUME_APPEND_CASES = [
 ].flatMap((name, index) =>
   FAILED_APPEND_MODES.map((mode) => ({
     name,
+    operation: 'provider.resume',
+    eventType: name,
     mode,
     writeCall: index + 1 + (name === 'AttemptStarted' ? 2 : 0),
   })));
@@ -42,7 +46,7 @@ function registerTaskStartDurabilityTests(): void {
   it('coalesces concurrent same-key starts from independent sessions', coalescesConcurrentStarts);
   it.each(FAILED_ALLOCATION_APPEND_CASES)(
     'preserves an allocated Git context across $name $mode append repair',
-    async ({ writeCall, mode }) => preservesFailedContext(writeCall, mode),
+    preservesFailedContext,
   );
   it.each(NATIVE_RESUME_APPEND_CASES)(
     'repairs native resume $name $mode append failure across retry and restart',
@@ -64,8 +68,9 @@ async function repairsNativeResumeAppend(
   adapter.lose(task.id);
   const request = { taskId: task.id, providerSessionId: parent.providerSession!.id,
     idempotencyKey: `resume-${fault.name}-${fault.mode}` };
-  corruptExecutionAppend(path.join(subject.runtimeDirectory, 'tasks', 'events.log'),
-    fault.writeCall, fault.mode);
+  const appendFault = corruptExpectedExecutionAppend(
+    path.join(subject.runtimeDirectory, 'tasks', 'events.log'), fault, fault.mode,
+  );
   let resumed: TaskExecutionView;
   if (fault.name === 'ContextAllocated') resumed = await runtime.resumeProviderSession(request);
   else {
@@ -76,6 +81,7 @@ async function repairsNativeResumeAppend(
   const state = fault.name === 'AttemptStarted' ? 'failed' : 'running';
   expect(resumed).toMatchObject({ attempt: { number: 2, state },
     providerSession: { parentId: parent.providerSession!.id, lineage: 'native-resume' } });
+  appendFault.assertObserved();
   await runtime.disconnect(); await subject.restart(); const restarted = await subject.connect();
   await expect(restarted.resumeProviderSession(request)).resolves.toEqual(resumed);
   await restarted.disconnect();
@@ -131,8 +137,7 @@ function assertSingleExecution(execution: TaskExecutionView): void {
 }
 
 async function preservesFailedContext(
-  failedWrite: number,
-  mode: (typeof FAILED_APPEND_MODES)[number],
+  fault: (typeof FAILED_ALLOCATION_APPEND_CASES)[number],
 ): Promise<void> {
   const subject = await createSubject(
     (runtimeDirectory) => new LocalGenericCliExecutionAdapter({
@@ -143,16 +148,17 @@ async function preservesFailedContext(
   const repository = createTestRepository();
   const runtime = await subject.connect();
   const task = await runtime.createTask(shellTask('failed-allocation-create', repository.path));
-  corruptExecutionAppend(
+  const appendFault = corruptExpectedExecutionAppend(
     path.join(subject.runtimeDirectory, 'tasks', 'events.log'),
-    failedWrite,
-    mode,
+    fault,
+    fault.mode,
   );
 
   await expect(
     runtime.startTask({ taskId: task.id, idempotencyKey: 'failed-allocation-start' }),
   ).rejects.toEqual(new RuntimePortError('process-start-failed', true));
   const failed = await runtime.getTaskExecution(task.id);
+  appendFault.assertObserved();
   assertFailedView(failed, task.id, repository.baseCommit, subject.runtimeDirectory);
   assertGitResources(subject.runtimeDirectory, failed);
   await runtime.disconnect();

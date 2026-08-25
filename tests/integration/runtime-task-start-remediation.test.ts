@@ -7,7 +7,7 @@ import {
 } from './runtime-test-fakes';
 import {
   FAILED_APPEND_MODES,
-  corruptExecutionAppend,
+  corruptExpectedExecutionAppend,
   createSubject,
   deferred,
   nextRuntimeTurn,
@@ -19,7 +19,14 @@ const PROVIDER_LIFECYCLE_APPEND_CASES = [
   { name: 'AttemptSuperseded', writeCall: 3 },
   { name: 'AttemptForked', writeCall: 4 },
   { name: 'ContextAllocated', writeCall: 5 },
-].flatMap((transition) => FAILED_APPEND_MODES.map((mode) => ({ ...transition, mode })));
+].flatMap((transition) => FAILED_APPEND_MODES.map((mode) => ({
+  ...transition,
+  operation: transition.name === 'ProviderSessionActionDecided'
+    ? 'provider.resume rejection'
+    : 'provider.fork',
+  eventType: transition.name,
+  mode,
+})));
 describe('authenticated Runtime Task start remediation', registerTaskStartTests);
 function registerTaskStartTests(): void {
   registerRuntimeTaskTestCleanup();
@@ -114,7 +121,9 @@ async function verifiesProviderLifecycleAppendRecovery(
   const resume = { taskId: task.id, providerSessionId: 'unknown-session',
     idempotencyKey: `claude-${transition.name}-${transition.mode}` };
   const fork = { taskId: task.id, providerSessionId: parent.providerSession!.id, idempotencyKey: resume.idempotencyKey };
-  corruptExecutionAppend(path.join(subject.runtimeDirectory, 'tasks', 'events.log'), transition.writeCall, transition.mode);
+  const appendFault = corruptExpectedExecutionAppend(
+    path.join(subject.runtimeDirectory, 'tasks', 'events.log'), transition, transition.mode,
+  );
   if (transition.name === 'ProviderSessionActionDecided') {
     await expect(runtime.resumeProviderSession(resume)).rejects.toEqual(new RuntimePortError('internal', true));
     await expect(runtime.resumeProviderSession(resume)).rejects.toEqual(new RuntimePortError('not-found', false));
@@ -127,6 +136,7 @@ async function verifiesProviderLifecycleAppendRecovery(
     await expect(runtime.forkProviderSession(fork)).rejects.toEqual(new RuntimePortError('internal', true));
     await expect(runtime.forkProviderSession(fork)).resolves.toMatchObject({ attempt: { number: 2, state: 'running' } });
   }
+  appendFault.assertObserved();
   await runtime.disconnect();
   await subject.restart();
   const restarted = await subject.connect();

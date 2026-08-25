@@ -23,20 +23,34 @@ import { RuntimeServer } from '../../src/runtime/runtime-server';
 import { ProtectedRuntimeTokenStore } from '../../src/runtime/token-store';
 import type { GenericCliExecutionAdapter } from '../../src/runtime/generic-cli-execution-adapter';
 import { FakeGenericCliExecutionAdapter } from './runtime-test-fakes';
+import { corruptExpectedExecutionAppend } from './runtime-task-test-harness';
 import { createDisposableGitRepository } from '../test-common/disposable-git-repository';
 
 const directories: string[] = [];
 const servers: RuntimeServer[] = [];
-const EXECUTION_APPEND_TRANSITIONS = [
-  { name: 'RunCreated', writeCall: 1, terminalState: 'completed' },
-  { name: 'AttemptCreated', writeCall: 2, terminalState: 'completed' },
-  { name: 'ContextAllocated', writeCall: 3, terminalState: 'failed' },
-  { name: 'AttemptStarted', writeCall: 4, terminalState: 'failed' },
-  { name: 'AttemptCompleted', writeCall: 5, terminalState: 'completed' },
+const EXECUTION_APPEND_BOUNDARIES = [
+  startBoundary('RunCreated', 1, 'RunCreated', 'completed', true, 0),
+  startBoundary('AttemptCreated', 2, 'AttemptCreated', 'completed', true, 0),
+  startBoundary('ContextAllocated', 3, 'ContextAllocated', 'failed', true),
+  startBoundary('AttemptStarted', 4, 'AttemptStarted', 'failed', true),
+  startBoundary(
+    'NormalizedAttemptStarted', 5, 'NormalizedRuntimeEventRecorded', 'completed', false, 0,
+    'attempt-started',
+  ),
+  startBoundary('AttemptCompleted', 6, 'AttemptCompleted', 'completed', false, 0),
+  startBoundary(
+    'NormalizedAttemptCompleted', 7, 'NormalizedRuntimeEventRecorded', 'completed', false, 0,
+    'attempt-completed',
+  ),
+  startBoundary('AttemptFailed', 6, 'AttemptFailed', 'failed', false, 1),
+  startBoundary(
+    'NormalizedAttemptFailed', 7, 'NormalizedRuntimeEventRecorded', 'failed', false, 1,
+    'attempt-failed',
+  ),
 ] as const;
 const EXECUTION_APPEND_FAILURE_MODES = ['zero-first', 'partial-then-zero', 'partial-then-error'] as const;
 
-type ExecutionAppendTransition = (typeof EXECUTION_APPEND_TRANSITIONS)[number];
+type ExecutionAppendTransition = (typeof EXECUTION_APPEND_BOUNDARIES)[number];
 type ExecutionAppendFailureMode = (typeof EXECUTION_APPEND_FAILURE_MODES)[number];
 
 describe('real local Runtime Interface vertical', () => {
@@ -78,7 +92,7 @@ describe('real local Runtime Interface vertical', () => {
 
 function registerExecutionAppendFailureTests(): void {
   for (const mode of EXECUTION_APPEND_FAILURE_MODES) {
-    it.each(EXECUTION_APPEND_TRANSITIONS)(
+    it.each(EXECUTION_APPEND_BOUNDARIES)(
       `repairs $name ${mode} append failure through the public execution seam`,
       async (transition) => verifiesExecutionAppendRecovery(transition, mode),
     );
@@ -91,21 +105,22 @@ async function verifiesExecutionAppendRecovery(
 ): Promise<void> {
   const subject = await createFaultedExecutionSubject(transition, mode);
   const request = { taskId: subject.task.id, idempotencyKey: 'faulted-execution-start' };
-  if (transition.name === 'AttemptCompleted') {
+  if (transition.startRejects) {
+    await expect(subject.runtime.startTask(request)).rejects.toEqual(new RuntimePortError('internal', true));
+    const retried = await subject.runtime.startTask(request);
+    if (transition.exitCode !== null) subject.adapter.exit(subject.task.id, transition.exitCode);
+    else expect(retried).toMatchObject({ task: { executionState: 'failed' } });
+  } else {
     await expect(subject.runtime.startTask(request)).resolves.toMatchObject({
       task: { executionState: 'running' },
     });
-    subject.adapter.exit(subject.task.id);
-  } else {
-    await expect(subject.runtime.startTask(request)).rejects.toEqual(new RuntimePortError('internal', true));
-    const retried = await subject.runtime.startTask(request);
-    if (transition.terminalState === 'completed') subject.adapter.exit(subject.task.id);
-    else expect(retried).toMatchObject({ task: { executionState: 'failed' } });
+    subject.adapter.exit(subject.task.id, transition.exitCode ?? 0);
   }
   await waitForTerminalExecution(subject.runtime, subject.task.id, transition.terminalState);
   await expect(subject.runtime.startTask(request)).resolves.toMatchObject({
     task: { executionState: transition.terminalState },
   });
+  subject.fault.assertObserved();
   await assertExecutionReplay(subject.fixture, subject.runtime, subject.task.id, transition.terminalState);
 }
 
@@ -114,6 +129,7 @@ async function createFaultedExecutionSubject(
   mode: ExecutionAppendFailureMode,
 ): Promise<{
   readonly adapter: FakeGenericCliExecutionAdapter;
+  readonly fault: ReturnType<typeof corruptExpectedExecutionAppend>;
   readonly fixture: RealRuntimeFixture;
   readonly runtime: RuntimeInterface;
   readonly task: { readonly id: string };
@@ -130,12 +146,17 @@ async function createFaultedExecutionSubject(
     provider: 'shell',
     idempotencyKey: 'faulted-execution-create',
   });
-  corruptExecutionAppend(
+  const fault = corruptExpectedExecutionAppend(
     path.join(fixture.runtimeDirectory, 'tasks', 'events.log'),
-    transition.writeCall,
+    {
+      operation: 'task.start',
+      writeCall: transition.writeCall,
+      eventType: transition.eventType,
+      normalizedKind: transition.normalizedKind,
+    },
     mode,
   );
-  return { adapter, fixture, runtime, task };
+  return { adapter, fault, fixture, runtime, task };
 }
 
 async function waitForTerminalExecution(
@@ -145,7 +166,13 @@ async function waitForTerminalExecution(
 ): Promise<void> {
   await waitForCondition(async () => {
     const execution = await runtime.getTaskExecution(taskId);
-    return execution.attempt?.state === state ? execution : null;
+    if (execution.attempt?.state !== state) {
+      return null;
+    }
+    const timeline = await runtime.getTaskTimeline(taskId);
+    return timeline.normalizedEvents.some((event) => event.kind === `attempt-${state}`)
+      ? execution
+      : null;
   });
 }
 
@@ -155,15 +182,34 @@ async function assertExecutionReplay(
   taskId: string,
   state: 'completed' | 'failed',
 ): Promise<void> {
+  const tasks = await runtime.listTasks();
+  const execution = await runtime.getTaskExecution(taskId);
+  const timeline = await runtime.getTaskTimeline(taskId);
   await runtime.disconnect();
   await servers[0]?.stop();
+  fs.rmSync(path.join(fixture.runtimeDirectory, 'tasks', 'projection.json'));
   const restarted = fixture.createInterface();
   await expect(restarted.connectOrStart()).resolves.toMatchObject({ state: 'connected' });
-  await expect(restarted.getTaskExecution(taskId)).resolves.toMatchObject({
-    task: { executionState: state },
-    attempt: { state },
-  });
+  await expect(restarted.listTasks()).resolves.toEqual(tasks);
+  await expect(restarted.getTaskExecution(taskId)).resolves.toEqual(execution);
+  await expect(restarted.getTaskTimeline(taskId)).resolves.toEqual(timeline);
+  expect(timeline.normalizedEvents.filter((event) => event.kind === `attempt-${state}`))
+    .toHaveLength(1);
   await restarted.disconnect();
+}
+
+function startBoundary(
+  name: string,
+  writeCall: number,
+  eventType: string,
+  terminalState: 'completed' | 'failed',
+  startRejects: boolean,
+  exitCode: number | null = null,
+  normalizedKind?: string,
+) {
+  return {
+    name, writeCall, eventType, terminalState, startRejects, exitCode, normalizedKind,
+  } as const;
 }
 
 async function failsLogicalProviderStart(): Promise<void> {
@@ -243,38 +289,6 @@ function corruptSecondExecutionAppend(eventPath: string): void {
           writes += 1;
           if (writes === 2) return target.write(data.subarray(0, 1));
           if (writes === 3) return { bytesWritten: 0, buffer: data };
-          return target.write(data);
-        };
-      },
-    });
-  });
-}
-
-function corruptExecutionAppend(
-  eventPath: string,
-  writeCall: number,
-  mode: ExecutionAppendFailureMode,
-): void {
-  const open = fs.promises.open.bind(fs.promises);
-  let writes = 0;
-  let partial = false;
-  vi.spyOn(fs.promises, 'open').mockImplementation(async (file, flags, permissions) => {
-    const handle = await open(file, flags, permissions);
-    if (file !== eventPath || flags !== 'a') return handle;
-    return new Proxy(handle, {
-      get(target, property, receiver) {
-        if (property !== 'write') return Reflect.get(target, property, receiver);
-        return async (data: Buffer) => {
-          writes += 1;
-          if (writes === writeCall && mode === 'zero-first') return { bytesWritten: 0, buffer: data };
-          if (writes === writeCall) {
-            partial = true;
-            return target.write(data.subarray(0, 1));
-          }
-          if (partial && writes === writeCall + 1) {
-            if (mode === 'partial-then-error') throw new Error('injected append error');
-            return { bytesWritten: 0, buffer: data };
-          }
           return target.write(data);
         };
       },

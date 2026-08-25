@@ -19,6 +19,18 @@ export const FAILED_APPEND_MODES = [
   'partial-then-zero',
   'partial-then-error',
 ] as const;
+export const APPEND_DURABILITY_MODES = ['complete', ...FAILED_APPEND_MODES] as const;
+
+export interface ExpectedAppendBoundary {
+  readonly operation: string;
+  readonly writeCall: number;
+  readonly eventType: string;
+  readonly normalizedKind?: string;
+}
+
+export interface ExpectedAppendFault {
+  assertObserved(): void;
+}
 
 export interface RuntimeSubject {
   readonly runtimeDirectory: string;
@@ -183,10 +195,73 @@ export function shellTask(idempotencyKey: string, repository: string) {
   };
 }
 
+export function readTaskEvents(runtimeDirectory: string): readonly Record<string, unknown>[] {
+  const bytes = fs.readFileSync(path.join(runtimeDirectory, 'tasks', 'events.log'));
+  const events: Record<string, unknown>[] = [];
+  let offset = 0;
+  while (offset < bytes.length) {
+    const length = bytes.readUInt32BE(offset);
+    const payloadOffset = offset + 36;
+    const payload = bytes.subarray(payloadOffset, payloadOffset + length).toString('utf8');
+    events.push(JSON.parse(payload) as Record<string, unknown>);
+    offset = payloadOffset + length;
+  }
+  return events;
+}
+
 export function corruptExecutionAppend(
   eventPath: string,
   failedWrite: number,
   mode: (typeof FAILED_APPEND_MODES)[number],
+): void {
+  installAppendFault(eventPath, failedWrite, mode);
+}
+
+export function corruptExpectedExecutionAppend(
+  eventPath: string,
+  boundary: ExpectedAppendBoundary,
+  mode: (typeof FAILED_APPEND_MODES)[number],
+): ExpectedAppendFault {
+  return exerciseExpectedExecutionAppend(eventPath, boundary, mode);
+}
+
+export function exerciseExpectedExecutionAppend(
+  eventPath: string,
+  boundary: ExpectedAppendBoundary,
+  mode: (typeof APPEND_DURABILITY_MODES)[number],
+): ExpectedAppendFault {
+  let observed = false;
+  let mismatch: unknown = null;
+  installAppendFault(
+    eventPath,
+    boundary.writeCall,
+    mode === 'complete' ? null : mode,
+    (data) => {
+      observed = true;
+      try {
+        assertExpectedAppend(data, boundary);
+      } catch (error) {
+        mismatch = error;
+      }
+    },
+  );
+  return {
+    assertObserved(): void {
+      if (!observed) {
+        throw new Error(`${boundary.operation} boundary was not reached`);
+      }
+      if (mismatch) {
+        throw mismatch;
+      }
+    },
+  };
+}
+
+function installAppendFault(
+  eventPath: string,
+  failedWrite: number,
+  mode: (typeof FAILED_APPEND_MODES)[number] | null,
+  beforeFailure: (data: Buffer) => void = () => undefined,
 ): void {
   const open = fs.promises.open.bind(fs.promises);
   let writes = 0;
@@ -194,29 +269,44 @@ export function corruptExecutionAppend(
   vi.spyOn(fs.promises, 'open').mockImplementation(async (file, flags, permissions) => {
     const handle = await open(file, flags, permissions);
     if (file !== eventPath || flags !== 'a') return handle;
-    return failingHandle(handle, failedWrite, mode, () => ++writes, () => partial, () => {
-      partial = true;
-    });
+    return failingHandle(
+      handle,
+      failedWrite,
+      mode,
+      () => ++writes,
+      () => partial,
+      () => {
+        partial = true;
+      },
+      beforeFailure,
+    );
   });
 }
 
 function failingHandle(
   handle: fs.promises.FileHandle,
   failedWrite: number,
-  mode: (typeof FAILED_APPEND_MODES)[number],
+  mode: (typeof FAILED_APPEND_MODES)[number] | null,
   nextWrite: () => number,
   isPartial: () => boolean,
   markPartial: () => void,
+  beforeFailure: (data: Buffer) => void,
 ): fs.promises.FileHandle {
   return new Proxy(handle, {
     get(target, property, receiver) {
       if (property !== 'write') return Reflect.get(target, property, receiver);
       return async (data: Buffer) => {
         const write = nextWrite();
+        if (write === failedWrite && mode === null) {
+          beforeFailure(data);
+          return target.write(data);
+        }
         if (write === failedWrite && mode === 'zero-first') {
+          beforeFailure(data);
           return { bytesWritten: 0, buffer: data };
         }
         if (write === failedWrite) {
+          beforeFailure(data);
           markPartial();
           return target.write(data.subarray(0, 1));
         }
@@ -228,6 +318,26 @@ function failingHandle(
       };
     },
   });
+}
+
+function assertExpectedAppend(data: Buffer, boundary: ExpectedAppendBoundary): void {
+  const payloadLength = data.readUInt32BE(0);
+  const payload = JSON.parse(data.subarray(36, 36 + payloadLength).toString('utf8')) as {
+    readonly type?: unknown;
+    readonly event?: { readonly kind?: unknown };
+  };
+  if (payload.type !== boundary.eventType) {
+    throw new Error(
+      `${boundary.operation} write ${boundary.writeCall} expected ${boundary.eventType}, ` +
+      `observed ${String(payload.type)}`,
+    );
+  }
+  if (boundary.normalizedKind && payload.event?.kind !== boundary.normalizedKind) {
+    throw new Error(
+      `${boundary.operation} write ${boundary.writeCall} expected ${boundary.normalizedKind}, ` +
+      `observed ${String(payload.event?.kind)}`,
+    );
+  }
 }
 
 export function nextRuntimeTurn(): Promise<void> {
