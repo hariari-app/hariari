@@ -1,5 +1,7 @@
 import {
   allowlistProviderObservation,
+  assertCanonicalNormalizedEventIdentity,
+  assertCanonicalProviderObservationIdentity,
   normalizedEvent,
   parseNormalizedRuntimeEvent,
   parseRawProviderObservation,
@@ -97,7 +99,7 @@ export class TaskEventTimeline {
   apply(event: TimelineEvent, execution?: StoredExecution): void {
     if (event.type === 'RawProviderObservationRecorded') this.applyRaw(event);
     else {
-      this.assertApplicableExecution(event.event, execution);
+      this.assertApplicableExecution(event.taskId, event.event, execution);
       this.applyNormalized(event);
     }
   }
@@ -194,7 +196,8 @@ export class TaskEventTimeline {
     if (existingObservation) this.assertSame(existingObservation, observation);
     else await input.append({
       type: 'RawProviderObservationRecorded', version: 1,
-      taskId: input.taskId, observation,
+      taskId: input.taskId, providerSessionId: input.providerSessionId,
+      idempotencyKey: input.idempotencyKey, observation,
     });
 
     const event = normalizedEvent({
@@ -267,7 +270,7 @@ export class TaskEventTimeline {
 
   private applyRaw(record: RawProviderObservationRecordedEvent): void {
     const observation = parseRawProviderObservation(record.observation);
-    if (observation.taskId !== record.taskId) throw new Error('invalid event timeline');
+    assertCanonicalProviderObservationIdentity(observation, record);
     const observations = this.observations(record.taskId);
     const existing = observations.find((candidate) => candidate.id === observation.id);
     if (existing) return this.assertSame(existing, observation);
@@ -277,6 +280,7 @@ export class TaskEventTimeline {
 
   private applyNormalized(record: NormalizedRuntimeEventRecordedEvent): void {
     const event = parseNormalizedRuntimeEvent(record.event);
+    assertCanonicalNormalizedEventIdentity(event, record.taskId);
     const events = this.events(record.taskId);
     if (event.taskId !== record.taskId || event.sequence !== events.length + 1) {
       throw new Error('invalid normalized event identity');
@@ -289,9 +293,11 @@ export class TaskEventTimeline {
   }
 
   private assertApplicableExecution(
+    taskId: string,
     event: NormalizedRuntimeEventView,
     execution: StoredExecution | undefined,
   ): void {
+    if (event.taskId !== taskId) throw new Error('invalid event execution identity');
     if (event.kind === 'task-created') return;
     const attempt = execution?.attempts.find((candidate) => candidate.id === event.attemptId);
     if (!execution || event.runId !== execution.run.id || !attempt) {

@@ -13,7 +13,7 @@ import {
 } from './runtime-test-fakes';
 import {
   FAILED_APPEND_MODES,
-  corruptExpectedExecutionAppend,
+  observeExpectedExecutionAppend,
   createSubject,
   createTestRepository,
   deferred,
@@ -68,7 +68,7 @@ async function repairsNativeResumeAppend(
   adapter.lose(task.id);
   const request = { taskId: task.id, providerSessionId: parent.providerSession!.id,
     idempotencyKey: `resume-${fault.name}-${fault.mode}` };
-  const appendFault = corruptExpectedExecutionAppend(
+  const appendFault = observeExpectedExecutionAppend(
     path.join(subject.runtimeDirectory, 'tasks', 'events.log'), fault, fault.mode,
   );
   let resumed: TaskExecutionView;
@@ -148,7 +148,7 @@ async function preservesFailedContext(
   const repository = createTestRepository();
   const runtime = await subject.connect();
   const task = await runtime.createTask(shellTask('failed-allocation-create', repository.path));
-  const appendFault = corruptExpectedExecutionAppend(
+  const appendFault = observeExpectedExecutionAppend(
     path.join(subject.runtimeDirectory, 'tasks', 'events.log'),
     fault,
     fault.mode,

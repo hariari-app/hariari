@@ -1,10 +1,17 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, vi } from 'vitest';
+import { afterEach, expect, vi } from 'vitest';
 import { NodeRuntimeClient } from '../../src/main/runtime/node-runtime-client';
 import type { RuntimeClientSession } from '../../src/main/runtime/runtime-ports';
+import type {
+  CreateTaskRequest,
+  TaskExecutionState,
+  TaskExecutionView,
+  TaskTimelineView,
+  TaskView,
+} from '../../src/shared/runtime/runtime-interface';
 import type { GenericCliExecutionAdapter } from '../../src/runtime/generic-cli-execution-adapter';
 import type { RuntimeLocalEndpoint } from '../../src/runtime/local-transport';
 import { RuntimeServer } from '../../src/runtime/runtime-server';
@@ -28,7 +35,7 @@ export interface ExpectedAppendBoundary {
   readonly normalizedKind?: string;
 }
 
-export interface ExpectedAppendFault {
+export interface ExpectedAppendObservation {
   assertObserved(): void;
 }
 
@@ -197,6 +204,10 @@ export function shellTask(idempotencyKey: string, repository: string) {
 
 export function readTaskEvents(runtimeDirectory: string): readonly Record<string, unknown>[] {
   const bytes = fs.readFileSync(path.join(runtimeDirectory, 'tasks', 'events.log'));
+  return decodeTaskEventFrames(bytes);
+}
+
+export function decodeTaskEventFrames(bytes: Buffer): readonly Record<string, unknown>[] {
   const events: Record<string, unknown>[] = [];
   let offset = 0;
   while (offset < bytes.length) {
@@ -209,30 +220,76 @@ export function readTaskEvents(runtimeDirectory: string): readonly Record<string
   return events;
 }
 
+export function appendTaskEventFrame(eventPath: string, payload: Record<string, unknown>): void {
+  const body = Buffer.from(JSON.stringify(payload), 'utf8');
+  const frame = Buffer.alloc(36 + body.length);
+  frame.writeUInt32BE(body.length, 0);
+  createHash('sha256').update(body).digest().copy(frame, 4);
+  body.copy(frame, 36);
+  fs.appendFileSync(eventPath, frame);
+}
+
+export async function createStartedTask(
+  runtime: RuntimeClientSession,
+  request: CreateTaskRequest,
+  startKey: string,
+): Promise<{ readonly task: TaskView; readonly execution: TaskExecutionView }> {
+  const task = await runtime.createTask(request);
+  const execution = await runtime.startTask({ taskId: task.id, idempotencyKey: startKey });
+  return { task, execution };
+}
+
+export async function waitForTaskState(
+  runtime: Pick<RuntimeClientSession, 'getTaskExecution' | 'getTaskTimeline'>,
+  taskId: string,
+  expected: Extract<TaskExecutionState, 'completed' | 'failed' | 'cancelled'>,
+): Promise<TaskExecutionView> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const execution = await runtime.getTaskExecution(taskId);
+    const timeline = await runtime.getTaskTimeline(taskId);
+    if (execution.task.executionState === expected &&
+      timeline.normalizedEvents.some((event) => event.kind === `attempt-${expected}`)) {
+      return execution;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Task did not reach ${expected}`);
+}
+
+export async function assertAuthenticatedTaskReplay(
+  subject: RuntimeSubject,
+  runtime: RuntimeClientSession,
+  task: TaskView,
+  status: TaskExecutionView,
+  timeline: TaskTimelineView,
+): Promise<void> {
+  const tasks = await runtime.listTasks();
+  await runtime.disconnect();
+  fs.rmSync(path.join(subject.runtimeDirectory, 'tasks', 'projection.json'));
+  await subject.restart();
+  const restarted = await subject.connect();
+  await expect(restarted.listTasks()).resolves.toEqual(tasks);
+  await expect(restarted.getTaskExecution(task.id)).resolves.toEqual(status);
+  await expect(restarted.getTaskTimeline(task.id)).resolves.toEqual(timeline);
+  await restarted.disconnect();
+}
+
 export function corruptExecutionAppend(
   eventPath: string,
-  failedWrite: number,
+  targetWrite: number,
   mode: (typeof FAILED_APPEND_MODES)[number],
 ): void {
-  installAppendFault(eventPath, failedWrite, mode);
+  installAppendBoundary(eventPath, targetWrite, mode);
 }
 
-export function corruptExpectedExecutionAppend(
-  eventPath: string,
-  boundary: ExpectedAppendBoundary,
-  mode: (typeof FAILED_APPEND_MODES)[number],
-): ExpectedAppendFault {
-  return exerciseExpectedExecutionAppend(eventPath, boundary, mode);
-}
-
-export function exerciseExpectedExecutionAppend(
+export function observeExpectedExecutionAppend(
   eventPath: string,
   boundary: ExpectedAppendBoundary,
   mode: (typeof APPEND_DURABILITY_MODES)[number],
-): ExpectedAppendFault {
+): ExpectedAppendObservation {
   let observed = false;
   let mismatch: unknown = null;
-  installAppendFault(
+  installAppendBoundary(
     eventPath,
     boundary.writeCall,
     mode === 'complete' ? null : mode,
@@ -257,11 +314,11 @@ export function exerciseExpectedExecutionAppend(
   };
 }
 
-function installAppendFault(
+function installAppendBoundary(
   eventPath: string,
-  failedWrite: number,
+  targetWrite: number,
   mode: (typeof FAILED_APPEND_MODES)[number] | null,
-  beforeFailure: (data: Buffer) => void = () => undefined,
+  observeTarget: (data: Buffer) => void = () => undefined,
 ): void {
   const open = fs.promises.open.bind(fs.promises);
   let writes = 0;
@@ -269,48 +326,48 @@ function installAppendFault(
   vi.spyOn(fs.promises, 'open').mockImplementation(async (file, flags, permissions) => {
     const handle = await open(file, flags, permissions);
     if (file !== eventPath || flags !== 'a') return handle;
-    return failingHandle(
+    return instrumentedAppendHandle(
       handle,
-      failedWrite,
+      targetWrite,
       mode,
       () => ++writes,
       () => partial,
       () => {
         partial = true;
       },
-      beforeFailure,
+      observeTarget,
     );
   });
 }
 
-function failingHandle(
+function instrumentedAppendHandle(
   handle: fs.promises.FileHandle,
-  failedWrite: number,
+  targetWrite: number,
   mode: (typeof FAILED_APPEND_MODES)[number] | null,
   nextWrite: () => number,
   isPartial: () => boolean,
   markPartial: () => void,
-  beforeFailure: (data: Buffer) => void,
+  observeTarget: (data: Buffer) => void,
 ): fs.promises.FileHandle {
   return new Proxy(handle, {
     get(target, property, receiver) {
       if (property !== 'write') return Reflect.get(target, property, receiver);
       return async (data: Buffer) => {
         const write = nextWrite();
-        if (write === failedWrite && mode === null) {
-          beforeFailure(data);
+        if (write === targetWrite && mode === null) {
+          observeTarget(data);
           return target.write(data);
         }
-        if (write === failedWrite && mode === 'zero-first') {
-          beforeFailure(data);
+        if (write === targetWrite && mode === 'zero-first') {
+          observeTarget(data);
           return { bytesWritten: 0, buffer: data };
         }
-        if (write === failedWrite) {
-          beforeFailure(data);
+        if (write === targetWrite) {
+          observeTarget(data);
           markPartial();
           return target.write(data.subarray(0, 1));
         }
-        if (isPartial() && write === failedWrite + 1) {
+        if (isPartial() && write === targetWrite + 1) {
           if (mode === 'partial-then-error') throw new Error('injected append error');
           return { bytesWritten: 0, buffer: data };
         }

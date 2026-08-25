@@ -111,6 +111,12 @@ export interface ProviderObservationInput {
   readonly evidence: unknown;
 }
 
+export interface ProviderObservationIdentity {
+  readonly taskId: string;
+  readonly providerSessionId: string;
+  readonly idempotencyKey: string;
+}
+
 export function allowlistProviderObservation(
   input: ProviderObservationInput,
 ): RawProviderObservationView {
@@ -217,6 +223,20 @@ export function parseNormalizedRuntimeEvent(value: unknown): NormalizedRuntimeEv
   return event;
 }
 
+export function assertCanonicalProviderObservationIdentity(
+  observation: RawProviderObservationView,
+  identity: ProviderObservationIdentity,
+): void {
+  if (observation.taskId !== identity.taskId || observation.id !== observationId(identity)) fail();
+}
+
+export function assertCanonicalNormalizedEventIdentity(
+  event: NormalizedRuntimeEventView,
+  taskId: string,
+): void {
+  if (event.taskId !== taskId || event.id !== normalizedEventId(event)) fail();
+}
+
 export function parseTaskTimeline<TStatus extends EventTimelineStatus>(
   value: unknown,
   parseStatus: (value: unknown) => TStatus,
@@ -249,6 +269,7 @@ function validateTimeline(
     fail();
   }
   for (const [index, event] of events.entries()) {
+    assertCanonicalNormalizedEventIdentity(event, taskId);
     if (event.taskId !== taskId || event.sequence !== index + 1 ||
       JSON.stringify(entries[index]) !== JSON.stringify(timelineEntry(event))) fail();
     validateStatusIdentities(status, event);
@@ -345,7 +366,7 @@ function indexOfField(value: unknown): number {
   return index;
 }
 
-function observationId(input: ProviderObservationInput): string {
+function observationId(input: ProviderObservationIdentity): string {
   return `provider-observation:${input.taskId}:${input.providerSessionId}:${input.idempotencyKey}`;
 }
 

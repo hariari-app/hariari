@@ -23,7 +23,7 @@ import { RuntimeServer } from '../../src/runtime/runtime-server';
 import { ProtectedRuntimeTokenStore } from '../../src/runtime/token-store';
 import type { GenericCliExecutionAdapter } from '../../src/runtime/generic-cli-execution-adapter';
 import { FakeGenericCliExecutionAdapter } from './runtime-test-fakes';
-import { corruptExpectedExecutionAppend } from './runtime-task-test-harness';
+import { observeExpectedExecutionAppend } from './runtime-task-test-harness';
 import { createDisposableGitRepository } from '../test-common/disposable-git-repository';
 
 const directories: string[] = [];
@@ -129,7 +129,7 @@ async function createFaultedExecutionSubject(
   mode: ExecutionAppendFailureMode,
 ): Promise<{
   readonly adapter: FakeGenericCliExecutionAdapter;
-  readonly fault: ReturnType<typeof corruptExpectedExecutionAppend>;
+  readonly fault: ReturnType<typeof observeExpectedExecutionAppend>;
   readonly fixture: RealRuntimeFixture;
   readonly runtime: RuntimeInterface;
   readonly task: { readonly id: string };
@@ -146,7 +146,7 @@ async function createFaultedExecutionSubject(
     provider: 'shell',
     idempotencyKey: 'faulted-execution-create',
   });
-  const fault = corruptExpectedExecutionAppend(
+  const fault = observeExpectedExecutionAppend(
     path.join(fixture.runtimeDirectory, 'tasks', 'events.log'),
     {
       operation: 'task.start',

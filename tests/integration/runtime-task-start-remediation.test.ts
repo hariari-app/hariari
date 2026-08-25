@@ -7,7 +7,7 @@ import {
 } from './runtime-test-fakes';
 import {
   FAILED_APPEND_MODES,
-  corruptExpectedExecutionAppend,
+  observeExpectedExecutionAppend,
   createSubject,
   deferred,
   nextRuntimeTurn,
@@ -121,7 +121,7 @@ async function verifiesProviderLifecycleAppendRecovery(
   const resume = { taskId: task.id, providerSessionId: 'unknown-session',
     idempotencyKey: `claude-${transition.name}-${transition.mode}` };
   const fork = { taskId: task.id, providerSessionId: parent.providerSession!.id, idempotencyKey: resume.idempotencyKey };
-  const appendFault = corruptExpectedExecutionAppend(
+  const appendFault = observeExpectedExecutionAppend(
     path.join(subject.runtimeDirectory, 'tasks', 'events.log'), transition, transition.mode,
   );
   if (transition.name === 'ProviderSessionActionDecided') {

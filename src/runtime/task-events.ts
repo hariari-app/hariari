@@ -8,6 +8,8 @@ import {
   type RawProviderObservationView,
 } from '../shared/runtime/runtime-interface';
 import {
+  assertCanonicalNormalizedEventIdentity,
+  assertCanonicalProviderObservationIdentity,
   parseNormalizedRuntimeEvent,
   parseRawProviderObservation,
 } from '../shared/runtime/event-timeline-contract';
@@ -94,6 +96,8 @@ export interface RawProviderObservationRecordedEvent {
   readonly type: 'RawProviderObservationRecorded';
   readonly version: 1;
   readonly taskId: string;
+  readonly providerSessionId: string;
+  readonly idempotencyKey: string;
   readonly observation: RawProviderObservationView;
 }
 
@@ -242,10 +246,20 @@ function parseRawProviderObservationRecorded(
   value: Record<string, unknown>,
   taskId: string,
 ): RawProviderObservationRecordedEvent {
-  exactKeys(value, ['type', 'version', 'taskId', 'observation']);
+  exactKeys(value, [
+    'type', 'version', 'taskId', 'providerSessionId', 'idempotencyKey', 'observation',
+  ]);
+  const providerSessionId = string(value.providerSessionId);
+  const idempotencyKey = string(value.idempotencyKey);
   const observation = parseRawProviderObservation(value.observation);
-  if (observation.taskId !== taskId) throw new Error('invalid event');
-  return { type: 'RawProviderObservationRecorded', version: 1, taskId, observation };
+  assertCanonicalProviderObservationIdentity(
+    observation,
+    { taskId, providerSessionId, idempotencyKey },
+  );
+  return {
+    type: 'RawProviderObservationRecorded', version: 1, taskId,
+    providerSessionId, idempotencyKey, observation,
+  };
 }
 
 function parseNormalizedRuntimeEventRecorded(
@@ -254,7 +268,7 @@ function parseNormalizedRuntimeEventRecorded(
 ): NormalizedRuntimeEventRecordedEvent {
   exactKeys(value, ['type', 'version', 'taskId', 'event']);
   const event = parseNormalizedRuntimeEvent(value.event);
-  if (event.taskId !== taskId) throw new Error('invalid event');
+  assertCanonicalNormalizedEventIdentity(event, taskId);
   return { type: 'NormalizedRuntimeEventRecorded', version: 1, taskId, event };
 }
 
