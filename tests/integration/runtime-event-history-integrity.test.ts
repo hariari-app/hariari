@@ -13,10 +13,11 @@ import {
   deferred,
   readTaskEvents,
   registerRuntimeTaskTestCleanup,
+  rewriteTaskEvents,
   waitForTaskState,
 } from './runtime-task-test-harness';
 
-describe('authenticated Runtime event timeline round-eight remediation', () => {
+describe('authenticated Runtime event history integrity', () => {
   registerRuntimeTaskTestCleanup();
 
   it(
@@ -351,13 +352,4 @@ async function settleValidHistory(
   } else {
     adapter.exitAttempt(attemptId, state === 'completed' ? 0 : 1);
   }
-}
-
-function rewriteTaskEvents(
-  runtimeDirectory: string,
-  events: readonly Record<string, unknown>[],
-): void {
-  const eventPath = path.join(runtimeDirectory, 'tasks', 'events.log');
-  fs.truncateSync(eventPath, 0);
-  for (const event of events) appendTaskEventFrame(eventPath, event);
 }

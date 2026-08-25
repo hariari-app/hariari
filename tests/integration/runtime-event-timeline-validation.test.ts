@@ -14,6 +14,7 @@ import {
   createSubject,
   readTaskEvents,
   registerRuntimeTaskTestCleanup,
+  rewriteTaskEvents,
   waitForTaskState,
 } from './runtime-task-test-harness';
 
@@ -325,15 +326,6 @@ function forgeLatestObservation(timeline: Awaited<ReturnType<RuntimeClientSessio
       ? { ...event, idempotencyKey: key, causationId: rawId }
       : event),
   };
-}
-
-function rewriteTaskEvents(
-  runtimeDirectory: string,
-  events: readonly Record<string, unknown>[],
-): void {
-  const eventPath = path.join(runtimeDirectory, 'tasks', 'events.log');
-  fs.truncateSync(eventPath, 0);
-  for (const event of events) appendTaskEventFrame(eventPath, event);
 }
 
 type ProviderObservationOperation = 'start' | 'resume' | 'fork';

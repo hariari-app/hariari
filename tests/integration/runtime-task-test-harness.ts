@@ -225,12 +225,26 @@ export function decodeTaskEventFrames(bytes: Buffer): readonly Record<string, un
 }
 
 export function appendTaskEventFrame(eventPath: string, payload: Record<string, unknown>): void {
+  fs.appendFileSync(eventPath, encodeTaskEventFrame(payload));
+}
+
+export function rewriteTaskEvents(
+  runtimeDirectory: string,
+  events: readonly Record<string, unknown>[],
+): void {
+  fs.writeFileSync(
+    path.join(runtimeDirectory, 'tasks', 'events.log'),
+    Buffer.concat(events.map(encodeTaskEventFrame)),
+  );
+}
+
+function encodeTaskEventFrame(payload: Record<string, unknown>): Buffer {
   const body = Buffer.from(JSON.stringify(payload), 'utf8');
   const frame = Buffer.alloc(36 + body.length);
   frame.writeUInt32BE(body.length, 0);
   createHash('sha256').update(body).digest().copy(frame, 4);
   body.copy(frame, 36);
-  fs.appendFileSync(eventPath, frame);
+  return frame;
 }
 
 export async function createStartedTask(

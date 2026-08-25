@@ -31,6 +31,10 @@ export class ProviderExecutionAdapterRouter implements ExecutionAdapter {
     return this.adapterFor(binding.task.provider).observeRecovery(binding);
   }
 
+  stop(binding: PrivateExecutionBinding): Promise<void> {
+    return this.adapterFor(binding.task.provider).stop(binding);
+  }
+
   launch(plan: ExecutionLaunchPlan): Promise<ActiveExecution> {
     return this.adapterFor(plan.plannedContext.task.provider).launch(plan);
   }

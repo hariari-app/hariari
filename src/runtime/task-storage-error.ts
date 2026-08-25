@@ -2,6 +2,7 @@ export type TaskFailureCode =
   | 'idempotency-conflict'
   | 'not-found'
   | 'task-not-ready'
+  | 'event-history-invalid'
   | 'unsupported-operation'
   | 'internal';
 

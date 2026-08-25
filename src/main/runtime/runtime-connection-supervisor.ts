@@ -30,6 +30,7 @@ const PORT_ERROR_STATES: Record<
   'idempotency-conflict': ['idempotency-conflict', false],
   'not-found': ['not-found', false],
   'task-not-ready': ['task-not-ready', false],
+  'event-history-invalid': ['event-history-invalid', false],
   'worktree-unavailable': ['worktree-unavailable', true],
   'process-start-failed': ['process-start-failed', true],
   'runtime-stopping': ['runtime-stopping', true],

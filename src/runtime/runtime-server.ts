@@ -406,24 +406,30 @@ export class RuntimeServer {
     }
   }
 
-  private handleTaskExecutionLookup(
+  private async handleTaskExecutionLookup(
     request: RuntimeRequestFrame,
     protocolVersion: number,
-  ): RuntimeResponseFrame {
+  ): Promise<RuntimeResponseFrame> {
     try {
       const taskId = parseTaskExecutionId(request, TASK_EXECUTION_OPERATION);
-      return success(request, protocolVersion, this.executions.get(taskId) as unknown as Record<string, unknown>);
+      await this.tasks.repairForPublication(taskId);
+      return success(
+        request,
+        protocolVersion,
+        await this.executions.get(taskId) as unknown as Record<string, unknown>,
+      );
     } catch (error) {
       return executionFailure(request, protocolVersion, error);
     }
   }
 
-  private handleTaskTimelineLookup(
+  private async handleTaskTimelineLookup(
     request: RuntimeRequestFrame,
     protocolVersion: number,
-  ): RuntimeResponseFrame {
+  ): Promise<RuntimeResponseFrame> {
     try {
       const taskId = parseTaskExecutionId(request, TASK_TIMELINE_OPERATION);
+      await this.tasks.repairForPublication(taskId);
       return success(
         request,
         protocolVersion,

@@ -32,7 +32,7 @@ import {
   type ProviderSessionOperationRequest,
 } from './provider-session-lifecycle';
 import { TaskEventStore, TaskEventStoreError } from './task-event-store';
-import { TaskEventHistory } from './task-event-history';
+import { TaskEventHistoryRepair } from './task-event-history-repair';
 import { type AttemptLifecycleKind, TaskEventTimeline } from './task-event-timeline';
 import { TaskStorageError } from './task-storage-error';
 import type {
@@ -64,7 +64,7 @@ type ResumeParent = NonNullable<ReturnType<typeof resumeParentExecution>>;
 export class TaskModule {
   readonly runtimeDirectory: string;
   private readonly store: TaskEventStore;
-  private readonly eventHistory = new TaskEventHistory();
+  private readonly historyRepair: TaskEventHistoryRepair;
   private readonly tasks = new Map<string, TaskView>();
   private readonly taskIds = new Map<string, TaskView>();
   private readonly taskOwnershipKeys = new Map<string, string>();
@@ -91,6 +91,10 @@ export class TaskModule {
       append: (event) => this.appendVisible(event),
       execution: (taskId) => this.executionProjection.require(taskId),
     });
+    this.historyRepair = new TaskEventHistoryRepair({
+      now: () => new Date(this.now()).toISOString(),
+      append: (event) => this.appendVisible(event),
+    });
     this.providerLifecycle = new ProviderSessionLifecycle({
       view: (taskId) => this.lifecycleView(taskId),
       append: (event) => this.appendVisible(event),
@@ -109,7 +113,7 @@ export class TaskModule {
   async start(): Promise<void> {
     try {
       await this.store.start((event) => this.apply(event), () => this.list());
-      await this.eventTimeline.repairMissingTaskCreations(this.list());
+      for (const task of this.list()) await this.historyRepair.repair(task.id);
       this.eventTimeline.assertReplayComplete(
         this.list().map((task) => this.executionProjection.view(task)),
       );
@@ -117,16 +121,17 @@ export class TaskModule {
       if (error instanceof TaskStorageError) {
         throw error;
       }
-      throw new TaskStorageError('internal');
+      throw new TaskStorageError(error instanceof TaskEventStoreError
+        ? 'internal' : 'event-history-invalid');
     }
   }
-
   create(request: CreateTaskRequest, correlationId: string): Promise<TaskView> {
     return this.enqueue(async () => {
       this.throwIfPoisoned();
       const fingerprint = canonicalTaskFingerprint(request);
       const existing = this.tasks.get(request.idempotencyKey);
       if (existing) {
+        await this.historyRepair.repair(existing.id);
         if (this.fingerprints.get(request.idempotencyKey) === fingerprint) {
           await this.eventTimeline.recordTaskCreated(
             existing,
@@ -158,15 +163,12 @@ export class TaskModule {
       return task;
     });
   }
-
   list(): readonly TaskView[] {
     return [...this.tasks.values()];
   }
-
   recoveryWorktrees(): readonly { readonly taskId: string; readonly worktreeId: string }[] {
     return this.executionProjection.recoveryWorktrees();
   }
-
   reserveExecution(
     request: StartTaskRequest,
     correlationId: string,
@@ -174,6 +176,7 @@ export class TaskModule {
     return this.enqueue(async () => {
       this.throwIfPoisoned();
       const task = this.taskById(request.taskId);
+      await this.historyRepair.repair(task.id);
       const fingerprint = canonicalExecutionFingerprint(request.taskId);
       const keyed = this.executionProjection.byKey(request.idempotencyKey);
       if (keyed) {
@@ -182,7 +185,6 @@ export class TaskModule {
       return this.reserveNewExecution(task, request, correlationId, fingerprint);
     });
   }
-
   private async reserveExistingExecution(
     task: TaskView,
     execution: StoredExecution,
@@ -215,7 +217,6 @@ export class TaskModule {
       created: false,
     };
   }
-
   private async reserveNewExecution(
     task: TaskView,
     request: StartTaskRequest,
@@ -261,6 +262,7 @@ export class TaskModule {
     return this.enqueue(async () => {
       this.throwIfPoisoned();
       const task = this.taskById(taskId);
+      await this.historyRepair.repair(task.id);
       const current = this.executionProjection.require(task.id);
       if (current.context) {
         if (current.context.id !== context.id || current.providerSession?.id !== providerSession?.id) {
@@ -293,6 +295,7 @@ export class TaskModule {
     return this.enqueue(async () => {
       this.throwIfPoisoned();
       const task = this.taskById(request.taskId);
+      await this.historyRepair.repair(task.id);
       const execution = this.executionProjection.require(task.id);
       const parent = resumeParentExecution(execution, request.providerSessionId);
       if (!parent) {
@@ -324,7 +327,6 @@ export class TaskModule {
       };
     });
   }
-
   private async supersedeResumeParent(
     taskId: string,
     parent: ResumeParent,
@@ -360,8 +362,11 @@ export class TaskModule {
     request: ProviderSessionOperationRequest,
     action: ProviderSessionAction,
   ): Promise<PreparedProviderAction> {
-    return this.enqueue(() =>
-      this.runProvider(() => this.providerLifecycle.prepare(request, action)));
+    return this.enqueue(async () => {
+      const task = this.taskById(request.taskId);
+      await this.historyRepair.repair(task.id);
+      return this.runProvider(() => this.providerLifecycle.prepare(request, action));
+    });
   }
 
   acceptProviderAction(
@@ -465,6 +470,7 @@ export class TaskModule {
   ): Promise<ProviderActionRepair | null> {
     return this.enqueue(async () => {
       const task = this.taskById(request.taskId);
+      await this.historyRepair.repair(task.id);
       const execution = this.executionProjection.require(task.id);
       const planned = execution.plannedAction;
       if (
@@ -539,6 +545,7 @@ export class TaskModule {
     return this.enqueue(async () => {
       this.throwIfPoisoned();
       const task = this.taskById(request.taskId);
+      await this.historyRepair.repair(task.id);
       const execution = this.executionProjection.optional(task.id);
       if (!execution?.attempt) {
         throw new TaskStorageError('task-not-ready');
@@ -587,6 +594,10 @@ export class TaskModule {
     return this.executionProjection.view(task);
   }
 
+  repairForPublication(taskId: string): Promise<void> {
+    this.taskById(taskId);
+    return this.enqueue(() => this.historyRepair.repair(taskId));
+  }
   timeline(taskId: string): TaskTimelineView {
     this.taskById(taskId);
     return this.eventTimeline.view(taskId, this.execution(taskId));
@@ -599,7 +610,6 @@ export class TaskModule {
   ): boolean {
     return this.eventTimeline.hasMatchingProviderObservation(taskId, attemptId, providerSessionId);
   }
-
   hasAttemptLifecycleEvent(
     taskId: string,
     attemptId: string,
@@ -688,7 +698,7 @@ export class TaskModule {
   }
 
   private apply(event: TaskEvent): void {
-    this.eventHistory.accept(event, 'taskId' in event
+    this.historyRepair.accept(event, 'taskId' in event
       ? this.executionProjection.optional(event.taskId)?.attempt?.id ?? null
       : null);
     switch (event.type) {

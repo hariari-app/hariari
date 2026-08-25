@@ -163,6 +163,14 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
     );
   }
 
+  async stop(binding: PrivateExecutionBinding): Promise<void> {
+    const execution = this.executions.get(binding.task.id);
+    if (!execution || execution.context.id !== binding.context.id) {
+      throw new Error('missing execution binding');
+    }
+    await execution.stop();
+  }
+
   setRecoveryResources(resources: readonly ExecutionResourceObservation[]): void {
     this.recoveryResources = resources;
   }
@@ -242,6 +250,31 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
 
   startsFor(taskId: string): readonly GenericCliStartRequest[] {
     return this.requests.filter((request) => request.task.id === taskId);
+  }
+
+  restore(
+    request: GenericCliStartRequest,
+    state: 'live' | 'lost' = 'live',
+    effects: { readonly starts?: number; readonly stops?: number } = {},
+  ): void {
+    const recoveredRequest = { ...request, onOutput: () => undefined, onExit: () => undefined };
+    const execution = new FakeGenericCliExecution(
+      recoveredRequest,
+      this.options.autoExitOnStop ?? true,
+      () => {
+        this.stopCounts.set(request.task.id, this.stopCount(request.task.id) + 1);
+        this.signalFor(this.stops, request.task.id).resolve();
+      },
+      this.options.claudeCapabilities ?? { resume: true, fork: true },
+      this.options.stopError,
+      this.options.stopReturnsBeforeExit ?? false,
+      this.options.providerObservation,
+    );
+    if (state === 'lost') execution.lose();
+    this.executions.set(request.task.id, execution);
+    this.executionsByAttempt.set(request.attempt.id, execution);
+    this.startCounts.set(request.task.id, effects.starts ?? 0);
+    this.stopCounts.set(request.task.id, effects.stops ?? 0);
   }
 
   hasRunning(taskId: string): boolean {

@@ -557,6 +557,7 @@ const OPERATION_FAILURE_CODES = new Set([
   'idempotency-conflict',
   'not-found',
   'task-not-ready',
+  'event-history-invalid',
   'worktree-unavailable',
   'process-start-failed',
   'runtime-stopping',

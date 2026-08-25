@@ -1,0 +1,577 @@
+import path from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { RuntimePortError, type RuntimeClientSession } from '../../src/main/runtime/runtime-ports';
+import type { TaskExecutionView, TaskTimelineView, TaskView } from '../../src/shared/runtime/runtime-interface';
+import { TaskStorageError } from '../../src/runtime/task-storage-error';
+import {
+  FakeClaudeCodeExecutionAdapter,
+  FakeGenericCliExecutionAdapter,
+} from './runtime-test-fakes';
+import {
+  APPEND_DURABILITY_MODES,
+  createSubject,
+  observeExpectedExecutionAppend,
+  readTaskEvents,
+  registerRuntimeTaskTestCleanup,
+  rewriteTaskEvents,
+  type RuntimeSubject,
+  waitForTaskState,
+} from './runtime-task-test-harness';
+
+describe('authenticated Runtime event history recovery', () => {
+  registerRuntimeTaskTestCleanup();
+
+  it.each(createRecoveryCases())(
+    'repairs task.create $name after $mode durability before retry and repeated restart',
+    verifiesCreateRecovery,
+  );
+
+  it.each(startRecoveryCases())(
+    'repairs $provider task.start $name after $mode durability before retry and repeated restart',
+    verifiesStartRecovery,
+  );
+
+  it.each(providerRecoveryCases())(
+    'repairs provider.$action $name after $mode durability before retry and repeated restart',
+    verifiesProviderActionRecovery,
+  );
+
+  it.each(terminalRecoveryCases())(
+    'repairs task.$state $name after $mode durability before retry and repeated restart',
+    verifiesTerminalRecovery,
+  );
+
+  it('repairs a context-only Claude start before retry and across repeated restart',
+    verifiesContextOnlyRecovery);
+  it('repairs a raw-only Claude observation before publication', verifiesRawOnlyRecovery);
+  it('repairs a core terminal state before publication without status masking',
+    verifiesTerminalPublicationRepair);
+  it('fails closed with a stable error for an unrecoverable normalized gap',
+    verifiesUnrecoverableGap);
+});
+
+async function verifiesContextOnlyRecovery(): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connectWithCorrelations([
+    'create-correlation', 'start-correlation', 'retry-correlation',
+  ]);
+  const request = taskRequest('context-recovery-create');
+  const task = await runtime.createTask(request);
+  const start = { taskId: task.id, idempotencyKey: 'context-recovery-start' };
+  const uninterrupted = await runtime.startTask(start);
+  const prefix = prefixThrough(subject.runtimeDirectory, 'ContextAllocated');
+  await runtime.disconnect();
+  await subject.stop();
+  rewriteTaskEvents(subject.runtimeDirectory, prefix);
+  await subject.restart();
+  await subject.restart();
+  const restarted = await subject.connect();
+  await expect(restarted.startTask(start)).resolves.toEqual(uninterrupted);
+  await expect(restarted.getTaskTimeline(task.id)).resolves.toMatchObject({
+    status: uninterrupted,
+    normalizedEvents: [
+      { kind: 'task-created' },
+      { kind: 'provider-session-observed' },
+      { kind: 'attempt-started' },
+    ],
+  });
+  expect(adapter.startCount(task.id)).toBe(1);
+}
+
+async function verifiesRawOnlyRecovery(): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const task = await runtime.createTask(taskRequest('raw-recovery-create'));
+  const start = { taskId: task.id, idempotencyKey: 'raw-recovery-start' };
+  const uninterrupted = await runtime.startTask(start);
+  const prefix = prefixThrough(subject.runtimeDirectory, 'RawProviderObservationRecorded');
+  await runtime.disconnect();
+  await subject.stop();
+  rewriteTaskEvents(subject.runtimeDirectory, prefix);
+  await subject.restart();
+  const restarted = await subject.connect();
+  await expect(restarted.startTask(start)).resolves.toEqual(uninterrupted);
+  await expect(restarted.getTaskTimeline(task.id)).resolves.toMatchObject({
+    status: uninterrupted,
+    normalizedEvents: [
+      { kind: 'task-created' },
+      { kind: 'provider-session-observed' },
+      { kind: 'attempt-started' },
+    ],
+  });
+  expect(adapter.startCount(task.id)).toBe(1);
+}
+
+async function verifiesTerminalPublicationRepair(): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const task = await runtime.createTask(taskRequest('terminal-recovery-create'));
+  await runtime.startTask({ taskId: task.id, idempotencyKey: 'terminal-recovery-start' });
+  adapter.exit(task.id, 0);
+  const uninterrupted = await waitForTaskState(runtime, task.id, 'completed');
+  const prefix = prefixThrough(subject.runtimeDirectory, 'AttemptCompleted');
+  await runtime.disconnect();
+  await subject.stop();
+  rewriteTaskEvents(subject.runtimeDirectory, prefix);
+  await subject.restart();
+  const firstRestart = await subject.connect();
+  await expect(firstRestart.getTaskExecution(task.id)).resolves.toEqual(uninterrupted);
+  await firstRestart.disconnect();
+  await subject.restart();
+  const restarted = await subject.connect();
+  await expect(restarted.getTaskExecution(task.id)).resolves.toEqual(uninterrupted);
+  const timeline = await restarted.getTaskTimeline(task.id);
+  expect(timeline.status).toEqual(uninterrupted);
+  expect(timeline.normalizedEvents.at(-1)).toMatchObject({ kind: 'attempt-completed' });
+}
+
+async function verifiesUnrecoverableGap(): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const task = await runtime.createTask(taskRequest('poisoned-gap-create'));
+  await runtime.startTask({ taskId: task.id, idempotencyKey: 'poisoned-gap-start' });
+  const invalid = readTaskEvents(subject.runtimeDirectory).filter((event) =>
+    event.type !== 'RawProviderObservationRecorded');
+  await runtime.disconnect();
+  await subject.stop();
+  rewriteTaskEvents(subject.runtimeDirectory, invalid);
+  await expect(subject.restart()).rejects.toEqual(
+    new TaskStorageError('event-history-invalid'),
+  );
+}
+
+async function verifiesCreateRecovery(testCase: CreateRecoveryCase): Promise<void> {
+  const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter());
+  const correlation = `create-${testCase.name}-${testCase.mode}-correlation`;
+  const runtime = await subject.connectWithCorrelations([correlation]);
+  const request = taskRequest(`create-${testCase.name}-${testCase.mode}`);
+  const observed = exerciseFault(subject, 'task.create', testCase);
+  let first: TaskView | null = null;
+  if (testCase.mode === 'complete') first = await runtime.createTask(request);
+  else await expect(runtime.createTask(request)).rejects
+    .toEqual(new RuntimePortError('internal', true));
+  observed.assertObserved();
+  const durableTask = readTaskEvents(subject.runtimeDirectory)
+    .find((event) => event.type === 'TaskCreated')?.task as TaskView | undefined;
+  await runtime.disconnect();
+  await subject.restart();
+  await subject.restart();
+  const restarted = await subject.connectWithCorrelations([correlation]);
+  const task = await restarted.createTask(request);
+  if (first) expect(task).toEqual(first);
+  if (durableTask) expect(task.id).toBe(durableTask.id);
+  const timeline = await restarted.getTaskTimeline(task.id);
+  expect(timeline.normalizedEvents.map(eventIdentity)).toEqual([
+    ['task-created', correlation, request.idempotencyKey],
+  ]);
+  await subject.restart();
+  const replay = await subject.connect();
+  await expect(replay.getTaskTimeline(task.id)).resolves.toEqual(timeline);
+}
+
+async function verifiesStartRecovery(testCase: StartRecoveryCase): Promise<void> {
+  const original = testCase.provider === 'claude'
+    ? new FakeClaudeCodeExecutionAdapter()
+    : new FakeGenericCliExecutionAdapter();
+  const subject = await createSubject(() => original);
+  const correlation = `start-${testCase.provider}-${testCase.name}-${testCase.mode}-correlation`;
+  const runtime = await subject.connectWithCorrelations([
+    `${correlation}-create`, correlation,
+  ]);
+  const task = await runtime.createTask({
+    ...taskRequest(`start-${testCase.provider}-${testCase.name}-${testCase.mode}-create`),
+    provider: testCase.provider,
+  });
+  const request = {
+    taskId: task.id,
+    idempotencyKey: `start-${testCase.provider}-${testCase.name}-${testCase.mode}`,
+  };
+  const observed = exerciseFault(subject, `task.start.${testCase.provider}`, testCase);
+  const failedStart = testCase.mode !== 'complete' &&
+    (testCase.boundary.type === 'ContextAllocated' ||
+      testCase.boundary.type === 'AttemptStarted');
+  const reservationRejects = testCase.mode !== 'complete' &&
+    boundaryWriteCall(testCase.boundary, `task.start.${testCase.provider}`) < 3;
+  let first: TaskExecutionView | null = null;
+  if (failedStart || reservationRejects) {
+    await expect(runtime.startTask(request)).rejects
+      .toEqual(new RuntimePortError('internal', true));
+  } else first = await runtime.startTask(request);
+  observed.assertObserved();
+  await runtime.disconnect();
+  await subject.restart();
+  await subject.restart();
+  const restarted = await subject.connectWithCorrelations([correlation]);
+  const result = await restarted.startTask(request);
+  if (first) expect(result).toEqual(first);
+  await assertStartRecovery(subject, original, task, result, failedStart, testCase, restarted);
+}
+
+async function assertStartRecovery(
+  subject: RuntimeSubject,
+  adapter: FakeGenericCliExecutionAdapter,
+  task: TaskView,
+  result: TaskExecutionView,
+  failedStart: boolean,
+  testCase: StartRecoveryCase,
+  runtime: RuntimeClientSession,
+): Promise<void> {
+  expect(result).toMatchObject({
+    task: { id: task.id, executionState: failedStart ? 'failed' : 'running' },
+    run: { number: 1 },
+    attempt: { number: 1, state: failedStart ? 'failed' : 'running' },
+  });
+  const timeline = await runtime.getTaskTimeline(task.id);
+  const hasProviderObservation = testCase.provider === 'claude' &&
+    !(failedStart && testCase.boundary.type === 'ContextAllocated');
+  const expectedKinds = [
+    'task-created',
+    ...(hasProviderObservation ? ['provider-session-observed'] : []),
+    'attempt-started',
+    ...(failedStart ? ['attempt-failed'] : []),
+  ];
+  expect(kinds(timeline)).toEqual(expectedKinds);
+  expect(adapter.startCount(task.id)).toBe(1);
+  expect(adapter.stopCount(task.id)).toBe(failedStart ? 1 : 0);
+  await subject.restart();
+  const replay = await subject.connect();
+  await expect(replay.getTaskTimeline(task.id)).resolves.toEqual(timeline);
+}
+
+async function verifiesProviderActionRecovery(testCase: ProviderRecoveryCase): Promise<void> {
+  const original = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => original);
+  const correlation = `${testCase.action}-${testCase.name}-${testCase.mode}-correlation`;
+  const runtime = await subject.connectWithCorrelations([
+    `${correlation}-create`, `${correlation}-start`, correlation,
+  ]);
+  const task = await runtime.createTask(taskRequest(
+    `${testCase.action}-${testCase.name}-${testCase.mode}-create`,
+  ));
+  const parent = await runtime.startTask({
+    taskId: task.id,
+    idempotencyKey: `${testCase.action}-${testCase.name}-${testCase.mode}-start`,
+  });
+  if (testCase.action === 'resume') original.lose(task.id);
+  const request = {
+    taskId: task.id,
+    providerSessionId: parent.providerSession!.id,
+    idempotencyKey: `${testCase.action}-${testCase.name}-${testCase.mode}`,
+  };
+  const operation = `provider.${testCase.action}`;
+  const observed = exerciseFault(subject, operation, testCase);
+  const failedCoreStart = testCase.mode !== 'complete' &&
+    testCase.boundary.type === 'AttemptStarted';
+  const firstRejects = testCase.mode !== 'complete' &&
+    (failedCoreStart || boundaryWriteCall(testCase.boundary, operation) <= 4) &&
+    !(testCase.action === 'fork' && testCase.boundary.type === 'AttemptSuperseded');
+  let first: TaskExecutionView | null = null;
+  if (firstRejects) {
+    await expect(callProviderAction(runtime, testCase.action, request)).rejects
+      .toEqual(new RuntimePortError('internal', true));
+  } else first = await callProviderAction(runtime, testCase.action, request);
+  observed.assertObserved();
+  const recovered = restoredProviderAdapter(original, task.id, testCase.action, failedCoreStart);
+  await runtime.disconnect();
+  await subject.restartWith(recovered);
+  await subject.restart();
+  const restarted = await subject.connectWithCorrelations([correlation]);
+  const result = await callProviderAction(restarted, testCase.action, request);
+  if (first) expect(result).toEqual(first);
+  await assertProviderRecovery(
+    subject, recovered, restarted, task, parent, result, testCase, failedCoreStart,
+  );
+}
+
+function restoredProviderAdapter(
+  original: FakeClaudeCodeExecutionAdapter,
+  taskId: string,
+  action: 'resume' | 'fork',
+  failedCoreStart: boolean,
+): FakeClaudeCodeExecutionAdapter {
+  const starts = original.startsFor(taskId);
+  const recovered = new FakeClaudeCodeExecutionAdapter();
+  const state = starts.length > 1 ? (failedCoreStart ? 'lost' : 'live')
+    : (action === 'resume' ? 'lost' : 'live');
+  recovered.restore(starts.at(-1)!, state, {
+    starts: starts.length,
+    stops: original.stopCount(taskId),
+  });
+  return recovered;
+}
+
+async function assertProviderRecovery(
+  subject: RuntimeSubject,
+  adapter: FakeClaudeCodeExecutionAdapter,
+  runtime: RuntimeClientSession,
+  task: TaskView,
+  parent: TaskExecutionView,
+  result: TaskExecutionView,
+  testCase: ProviderRecoveryCase,
+  failedCoreStart: boolean,
+): Promise<void> {
+  expect(result).toMatchObject({
+    task: { id: task.id, executionState: failedCoreStart ? 'failed' : 'running' },
+    run: parent.run,
+    attempt: { number: 2, state: failedCoreStart ? 'failed' : 'running' },
+    providerSession: { parentId: parent.providerSession!.id,
+      lineage: testCase.action === 'resume' ? 'native-resume' : 'fork' },
+  });
+  const timeline = await runtime.getTaskTimeline(task.id);
+  expect(timeline.rawObservations).toHaveLength(2);
+  expect(adapter.startCount(task.id)).toBe(2);
+  expect(adapter.stopCount(task.id)).toBe(
+    testCase.action === 'fork' ? (failedCoreStart ? 2 : 1) : (failedCoreStart ? 1 : 0),
+  );
+  await subject.restart();
+  const replay = await subject.connect();
+  await expect(replay.getTaskTimeline(task.id)).resolves.toEqual(timeline);
+}
+
+async function verifiesTerminalRecovery(testCase: TerminalRecoveryCase): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const key = `terminal-${testCase.state}-${testCase.name}-${testCase.mode}`;
+  const correlation = `${key}-correlation`;
+  let runtime = await subject.connectWithCorrelations([
+    `${correlation}-create`, `${correlation}-start`, correlation,
+  ]);
+  const task = await runtime.createTask(taskRequest(`${key}-create`));
+  const start = { taskId: task.id, idempotencyKey: `${key}-start` };
+  await runtime.startTask(start);
+  const historicalStart = adapter.startsFor(task.id)[0]!;
+  const observed = exerciseFault(subject, `task.${testCase.state}`, testCase);
+  if (testCase.state === 'cancelled') {
+    runtime = await recoverCancellation(
+      subject, runtime, adapter, historicalStart, task, key, correlation, testCase, observed,
+    );
+  } else {
+    adapter.exit(task.id, testCase.state === 'completed' ? 0 : 1);
+  }
+  const status = await waitForTaskState(runtime, task.id, testCase.state);
+  observed.assertObserved();
+  const timeline = await runtime.getTaskTimeline(task.id);
+  await runtime.disconnect();
+  await subject.restart();
+  await subject.restart();
+  const restarted = await subject.connect();
+  if (testCase.state === 'cancelled') {
+    await restarted.cancelTask({ taskId: task.id, idempotencyKey: `${key}-cancel` });
+  } else {
+    await restarted.startTask(start);
+  }
+  await expect(restarted.getTaskExecution(task.id)).resolves.toEqual(status);
+  await expect(restarted.getTaskTimeline(task.id)).resolves.toEqual(timeline);
+  expect(adapter.startCount(task.id)).toBe(1);
+  if (testCase.state !== 'cancelled') expect(adapter.stopCount(task.id)).toBe(0);
+}
+
+async function recoverCancellation(
+  subject: RuntimeSubject,
+  runtime: RuntimeClientSession,
+  adapter: FakeClaudeCodeExecutionAdapter,
+  historicalStart: ReturnType<FakeClaudeCodeExecutionAdapter['startsFor']>[number],
+  task: TaskView,
+  key: string,
+  correlation: string,
+  testCase: TerminalRecoveryCase,
+  observed: ReturnType<typeof exerciseFault>,
+): Promise<RuntimeClientSession> {
+  const cancel = { taskId: task.id, idempotencyKey: `${key}-cancel` };
+  const firstRejects = testCase.mode !== 'complete' &&
+    (testCase.boundary.type === 'CancellationRequested' ||
+      testCase.boundary.normalizedKind === 'cancellation-requested');
+  if (firstRejects) await expect(runtime.cancelTask(cancel)).rejects
+    .toEqual(new RuntimePortError('internal', true));
+  else await runtime.cancelTask(cancel);
+  observed.assertObserved();
+  const recovered = new FakeClaudeCodeExecutionAdapter();
+  recovered.restore(historicalStart, adapter.hasRunning(task.id) ? 'live' : 'lost', {
+    starts: 1,
+    stops: adapter.stopCount(task.id),
+  });
+  await runtime.disconnect();
+  await subject.restartWith(recovered);
+  await subject.restart();
+  const restarted = await subject.connectWithCorrelations([correlation]);
+  await restarted.cancelTask(cancel);
+  expect(recovered.startCount(task.id)).toBe(1);
+  expect(recovered.stopCount(task.id)).toBe(1);
+  return restarted;
+}
+
+function callProviderAction(
+  runtime: RuntimeClientSession,
+  action: 'resume' | 'fork',
+  request: { readonly taskId: string; readonly providerSessionId: string;
+    readonly idempotencyKey: string },
+) {
+  return action === 'resume'
+    ? runtime.resumeProviderSession(request)
+    : runtime.forkProviderSession(request);
+}
+
+function prefixThrough(runtimeDirectory: string, eventType: string) {
+  const events = readTaskEvents(runtimeDirectory);
+  const index = events.findIndex((event) => event.type === eventType);
+  if (index < 0) throw new Error(`missing ${eventType}`);
+  return events.slice(0, index + 1);
+}
+
+interface EventBoundary {
+  readonly name: string;
+  readonly type: string;
+  readonly normalizedKind?: string;
+}
+
+function kinds(timeline: TaskTimelineView) {
+  return timeline.normalizedEvents.map((event) => event.kind);
+}
+
+function eventIdentity(event: TaskTimelineView['normalizedEvents'][number]) {
+  return [event.kind, event.correlationId, event.idempotencyKey];
+}
+
+function exerciseFault(
+  subject: RuntimeSubject,
+  operation: string,
+  testCase: { readonly boundary: EventBoundary;
+    readonly mode: (typeof APPEND_DURABILITY_MODES)[number] },
+) {
+  return observeExpectedExecutionAppend(
+    path.join(subject.runtimeDirectory, 'tasks', 'events.log'),
+    {
+      operation,
+      writeCall: boundaryWriteCall(testCase.boundary, operation),
+      eventType: testCase.boundary.type,
+      normalizedKind: testCase.boundary.normalizedKind,
+    },
+    testCase.mode,
+  );
+}
+
+function boundaryWriteCall(boundary: EventBoundary, operation: string): number {
+  const boundaries = operation === 'task.create'
+    ? CREATE_BOUNDARIES
+    : operation === 'task.start.shell'
+      ? SHELL_START_BOUNDARIES
+      : operation === 'task.start.claude'
+        ? CLAUDE_START_BOUNDARIES
+        : operation === 'provider.resume' || operation === 'provider.fork'
+          ? PROVIDER_BOUNDARIES
+          : TERMINAL_BOUNDARIES[operation.slice(5) as keyof typeof TERMINAL_BOUNDARIES];
+  const index = boundaries.findIndex((candidate) => candidate.name === boundary.name);
+  if (index < 0) throw new Error(`missing append boundary ${operation}/${boundary.name}`);
+  return index + 1;
+}
+
+function boundary(name: string, type: string, normalizedKind?: string): EventBoundary {
+  return { name, type, normalizedKind };
+}
+
+const CREATE_BOUNDARIES = [
+  boundary('core TaskCreated', 'TaskCreated'),
+  boundary('normalized task-created', 'NormalizedRuntimeEventRecorded', 'task-created'),
+] as const;
+
+const SHELL_START_BOUNDARIES = [
+  boundary('RunCreated', 'RunCreated'),
+  boundary('AttemptCreated', 'AttemptCreated'),
+  boundary('ContextAllocated', 'ContextAllocated'),
+  boundary('core AttemptStarted', 'AttemptStarted'),
+  boundary('normalized attempt-started', 'NormalizedRuntimeEventRecorded', 'attempt-started'),
+] as const;
+
+const CLAUDE_START_BOUNDARIES = [
+  ...SHELL_START_BOUNDARIES.slice(0, 3),
+  boundary('raw provider observation', 'RawProviderObservationRecorded'),
+  boundary('normalized provider observation', 'NormalizedRuntimeEventRecorded',
+    'provider-session-observed'),
+  ...SHELL_START_BOUNDARIES.slice(3),
+] as const;
+
+const PROVIDER_BOUNDARIES = [
+  boundary('ProviderSessionActionDecided', 'ProviderSessionActionDecided'),
+  boundary('AttemptSupersessionRequested', 'AttemptSupersessionRequested'),
+  boundary('AttemptSuperseded', 'AttemptSuperseded'),
+  boundary('reserved child Attempt', 'provider-child'),
+  boundary('ContextAllocated', 'ContextAllocated'),
+  boundary('raw provider observation', 'RawProviderObservationRecorded'),
+  boundary('normalized provider observation', 'NormalizedRuntimeEventRecorded',
+    'provider-session-observed'),
+  boundary('core AttemptStarted', 'AttemptStarted'),
+  boundary('normalized attempt-started', 'NormalizedRuntimeEventRecorded', 'attempt-started'),
+] as const;
+
+const TERMINAL_BOUNDARIES = {
+  completed: [
+    boundary('core AttemptCompleted', 'AttemptCompleted'),
+    boundary('normalized attempt-completed', 'NormalizedRuntimeEventRecorded', 'attempt-completed'),
+  ],
+  failed: [
+    boundary('core AttemptFailed', 'AttemptFailed'),
+    boundary('normalized attempt-failed', 'NormalizedRuntimeEventRecorded', 'attempt-failed'),
+  ],
+  cancelled: [
+    boundary('CancellationRequested', 'CancellationRequested'),
+    boundary('normalized cancellation-requested', 'NormalizedRuntimeEventRecorded',
+      'cancellation-requested'),
+    boundary('core AttemptCancelled', 'AttemptCancelled'),
+    boundary('normalized attempt-cancelled', 'NormalizedRuntimeEventRecorded', 'attempt-cancelled'),
+  ],
+} as const;
+
+function createRecoveryCases() {
+  return durabilityCases(CREATE_BOUNDARIES);
+}
+
+function startRecoveryCases() {
+  return [
+    ...durabilityCases(SHELL_START_BOUNDARIES).map((item) => ({ ...item, provider: 'shell' as const })),
+    ...durabilityCases(CLAUDE_START_BOUNDARIES).map((item) => ({ ...item, provider: 'claude' as const })),
+  ];
+}
+
+function providerRecoveryCases() {
+  return (['resume', 'fork'] as const).flatMap((action) => {
+    const boundaries = PROVIDER_BOUNDARIES.map((item) => item.type === 'provider-child'
+      ? boundary(item.name, action === 'resume' ? 'AttemptResumed' : 'AttemptForked')
+      : item);
+    return durabilityCases(boundaries).map((item) => ({ ...item, action }));
+  });
+}
+
+function terminalRecoveryCases() {
+  return (Object.keys(TERMINAL_BOUNDARIES) as Array<keyof typeof TERMINAL_BOUNDARIES>)
+    .flatMap((state) => durabilityCases(TERMINAL_BOUNDARIES[state])
+      .map((item) => ({ ...item, state })));
+}
+
+function durabilityCases<T extends EventBoundary>(boundaries: readonly T[]) {
+  return boundaries.flatMap((item) =>
+    APPEND_DURABILITY_MODES.map((mode) => ({
+      boundary: item,
+      name: item.name,
+      mode,
+    })));
+}
+
+type CreateRecoveryCase = ReturnType<typeof createRecoveryCases>[number];
+type StartRecoveryCase = ReturnType<typeof startRecoveryCases>[number];
+type ProviderRecoveryCase = ReturnType<typeof providerRecoveryCases>[number];
+type TerminalRecoveryCase = ReturnType<typeof terminalRecoveryCases>[number];
+
+function taskRequest(idempotencyKey: string) {
+  return {
+    objective: 'Recover every durable event prefix.',
+    project: 'Hariari',
+    repository: 'fake-local-checkout',
+    baseRef: 'HEAD',
+    provider: 'claude' as const,
+    idempotencyKey,
+  };
+}

@@ -62,7 +62,6 @@ export class TaskExecutionModule {
   private readonly outputPoisoned = new Set<string>();
   private readonly outputLog: TaskOutputLog;
   private readonly recovery: RecoveryReconciler;
-
   constructor(
     private readonly tasks: TaskModule,
     private readonly adapter: GenericCliExecutionAdapter,
@@ -71,7 +70,6 @@ export class TaskExecutionModule {
     this.outputLog = new TaskOutputLog(tasks.runtimeDirectory);
     this.recovery = new RecoveryReconciler(randomId);
   }
-
   start(request: StartTaskRequest, correlationId: string): Promise<TaskExecutionView> {
     return this.runTaskOperation(
       request.taskId, request.idempotencyKey,
@@ -126,7 +124,6 @@ export class TaskExecutionModule {
     const reservation = await this.tasks.reserveNativeResume(prepared.request);
     return this.startNativeResumeReserved(request.taskId, reservation);
   }
-
   private releaseLostActive(taskId: string): void {
     const active = this.active.get(taskId);
     active?.dispose();
@@ -175,16 +172,13 @@ export class TaskExecutionModule {
     const reservation = await this.tasks.reserveProviderFork(prepared);
     return this.startProviderForkReserved(request.taskId, reservation);
   }
-
   private async stopAndConfirmParentLost(
     prepared: import('./provider-session-lifecycle').PreparedProviderAction,
   ): Promise<void> {
     const active = this.active.get(prepared.request.taskId);
     try {
       if (active) await active.stop();
-      else if (await this.adapter.observe(bindingFor(prepared)) === 'live') {
-        throw new Error('parent remains live');
-      }
+      else await this.adapter.stop(bindingFor(prepared));
     } catch {
       const observation = await this.adapter.observe(bindingFor(prepared));
       if (observation === 'lost') {
@@ -201,14 +195,12 @@ export class TaskExecutionModule {
     if (observation === 'live') await this.tasks.abortProviderAction(prepared);
     throw new TaskExecutionError('internal');
   }
-
   private releaseSupersededActive(taskId: string, attemptId: string): void {
     const active = this.activeAttempts.get(attemptId);
     active?.dispose();
     this.activeAttempts.delete(attemptId);
     if (this.active.get(taskId) === active) this.active.delete(taskId);
   }
-
   private runTaskOperation(
     taskId: string,
     idempotencyKey: string,
@@ -232,11 +224,9 @@ export class TaskExecutionModule {
       () => this.releaseOperation(taskId, owned));
     return promise;
   }
-
   private releaseOperation(taskId: string, owned: InFlightOperation): void {
     if (this.operations.get(taskId) === owned) this.operations.delete(taskId);
   }
-
   private async startOwned(
     request: StartTaskRequest,
     correlationId: string,
@@ -248,7 +238,6 @@ export class TaskExecutionModule {
         )
       : reservation.execution;
   }
-
   async cancel(
     request: CancelTaskRequest,
     correlationId: string,
@@ -264,17 +253,32 @@ export class TaskExecutionModule {
       () => this.cancelOwned(operationRequest),
     );
   }
-
   private async cancelOwned(
     request: CancelTaskRequest & { readonly correlationId: string },
   ): Promise<TaskExecutionView> {
     const view = await this.tasks.requestCancellation(request);
     if (view.attempt?.state !== 'cancelling') return view;
     const active = this.active.get(request.taskId);
-    if (!active) return view;
+    if (!active) return this.continueRecoveredCancellation(request.taskId);
     return this.stopCancelled(request.taskId, active);
   }
-
+  private async continueRecoveredCancellation(
+    taskId: string,
+  ): Promise<TaskExecutionView> {
+    const binding = privateBinding(this.tasks.privateExecution(taskId));
+    const state = await this.adapter.observe(binding);
+    if (state === 'unknown') {
+      throw new TaskExecutionError('task-not-ready');
+    }
+    if (state === 'live') {
+      try {
+        await this.adapter.stop(binding);
+      } catch {
+        throw new TaskExecutionError('internal');
+      }
+    }
+    return this.tasks.cancel(taskId);
+  }
   private async stopCancelled(
     taskId: string,
     active: GenericCliExecution,
@@ -288,11 +292,9 @@ export class TaskExecutionModule {
       throw new TaskExecutionError('internal');
     }
   }
-
   get(taskId: string): TaskExecutionView {
     return this.tasks.execution(taskId);
   }
-
   async settlePendingExits(): Promise<void> {
     while (this.settlements.size > 0) {
       const results = await Promise.allSettled([...this.settlements.values()]);
@@ -300,7 +302,6 @@ export class TaskExecutionModule {
       if (rejected?.status === 'rejected') throw rejected.reason;
     }
   }
-
   async reconcile(request: ReconcileTaskRequest): Promise<TaskRecoveryView> {
     const existing = this.tasks.reconciliation(request);
     if (existing) return existing;
@@ -312,14 +313,12 @@ export class TaskExecutionModule {
       this.recovery.reconcile(desired, observation),
     );
   }
-
   recover(request: RecoverTaskRequest): Promise<TaskRecoveryDecisionView> {
     const existing = this.tasks.recoveryDecision(request);
     if (existing) return Promise.resolve(existing);
     const recovery = this.tasks.recovery(request);
     return this.tasks.recordRecoveryDecision(request, this.recovery.commit(recovery));
   }
-
   subscribe(
     taskId: string,
     listener: (event: TaskOutputEvent) => void,
@@ -336,7 +335,6 @@ export class TaskExecutionModule {
       },
     };
   }
-
   private async startReserved(
     request: StartTaskRequest,
     execution: TaskExecutionView,
@@ -364,7 +362,6 @@ export class TaskExecutionModule {
       lineage: providerRepair?.kind ?? 'new',
     });
   }
-
   private async startNativeResumeReserved(
     taskId: string,
     reservation: import('./task-execution-state').NativeResumeReservation,
@@ -456,6 +453,8 @@ export class TaskExecutionModule {
     active: GenericCliExecution | null,
     error: unknown,
   ): Promise<never> {
+    const failedContext = active?.context ??
+      (error instanceof GenericCliExecutionError ? error.context : null);
     if (active) {
       await active.stop().catch(() => undefined);
       active.dispose();
@@ -464,8 +463,8 @@ export class TaskExecutionModule {
         if (candidate === active) this.activeAttempts.delete(attemptId);
       }
     }
-    if (error instanceof GenericCliExecutionError && error.context) {
-      await this.allocateFailedContext(taskId, error.context);
+    if (failedContext && !this.tasks.execution(taskId).context) {
+      await this.allocateFailedContext(taskId, failedContext);
     }
     try {
       await this.persistTerminalWithRepair(taskId, { kind: 'start-failure' });
@@ -723,6 +722,21 @@ function bindingFor(
     attempt: prepared.execution.attempt!,
     context: prepared.context,
     providerSession: providerSource(prepared.session, prepared.context),
+  };
+}
+
+function privateBinding(view: PrivateTaskExecutionView) {
+  if (!view.run || !view.attempt || !view.context) {
+    throw new TaskExecutionError('task-not-ready');
+  }
+  return {
+    task: view.task,
+    run: view.run,
+    attempt: view.attempt,
+    context: view.context,
+    providerSession: view.providerSession
+      ? providerSource(view.providerSession, view.context)
+      : null,
   };
 }
 

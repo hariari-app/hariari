@@ -78,17 +78,16 @@ export class TaskEventTimeline {
   view(taskId: string, status: TaskExecutionView): TaskTimelineView {
     const normalizedEvents = [...(this.normalizedEvents.get(taskId) ?? [])];
     const rawObservations = [...(this.rawObservations.get(taskId) ?? [])];
-    const consistentStatus = timelineStatus(status, normalizedEvents);
     assertEventTimelineHistory(
       taskId,
-      consistentStatus,
+      status,
       rawObservations,
       normalizedEvents,
       status.run ? eventTimelineOperationChain(this.dependencies.execution(taskId)) : undefined,
     );
     return {
       taskId,
-      status: consistentStatus,
+      status,
       rawObservations,
       normalizedEvents,
       timeline: normalizedEvents.map(timelineEntry),
@@ -257,6 +256,19 @@ export class TaskEventTimeline {
       idempotencyKey: input.idempotencyKey, observation,
     });
 
+    const existingEvent = this.events(input.taskId).find((event) =>
+      event.kind === 'provider-session-observed' &&
+      event.attemptId === input.attemptId &&
+      event.providerSessionId === input.providerSessionId);
+    if (existingEvent) {
+      if (existingEvent.causationId !== observation.id ||
+        existingEvent.idempotencyKey !== input.idempotencyKey ||
+        existingEvent.correlationId !== input.correlationId) {
+        throw new Error('conflicting event identity');
+      }
+      return;
+    }
+
     const event = normalizedEvent({
       taskId: input.taskId,
       runId: input.runId,
@@ -394,33 +406,4 @@ export class TaskEventTimeline {
 
 function isTerminalState(value: unknown): value is TerminalState {
   return value === 'completed' || value === 'failed' || value === 'cancelled';
-}
-
-function timelineStatus(
-  status: TaskExecutionView,
-  events: readonly NormalizedRuntimeEventView[],
-): TaskExecutionView {
-  const attempts = status.attempts.map((attempt) => {
-    const lifecycle = events.filter((event) => event.attemptId === attempt.id);
-    const started = lifecycle.some((event) => event.kind === 'attempt-started');
-    const terminal = lifecycle.find((event) =>
-      event.kind === 'attempt-completed' || event.kind === 'attempt-failed' ||
-      event.kind === 'attempt-cancelled');
-    const terminalAgrees = terminal?.kind === `attempt-${attempt.state}`;
-    if (started && (!isTerminalState(attempt.state) || terminalAgrees)) return attempt;
-    if (!started || isTerminalState(attempt.state)) {
-      const { exitCode: _exitCode, ...rest } = attempt;
-      return { ...rest, state: started ? 'running' as const : 'starting' as const };
-    }
-    return attempt;
-  });
-  const attempt = status.attempt
-    ? attempts.find((candidate) => candidate.id === status.attempt?.id) ?? null
-    : null;
-  return {
-    ...status,
-    task: { ...status.task, executionState: attempt?.state ?? (status.run ? 'starting' : 'ready') },
-    attempt,
-    attempts,
-  };
 }

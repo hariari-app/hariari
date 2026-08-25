@@ -228,6 +228,7 @@ export type RuntimeOperationFailureCode =
   | 'idempotency-conflict'
   | 'not-found'
   | 'task-not-ready'
+  | 'event-history-invalid'
   | 'worktree-unavailable'
   | 'process-start-failed'
   | 'runtime-stopping'
