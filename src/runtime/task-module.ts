@@ -35,6 +35,7 @@ import { TaskEventStore, TaskEventStoreError } from './task-event-store';
 import { TaskEventHistoryRepair } from './task-event-history-repair';
 import { type AttemptLifecycleKind, TaskEventTimeline } from './task-event-timeline';
 import { TaskStorageError } from './task-storage-error';
+import { startTaskReplay } from './task-replay-startup';
 import type {
   ExecutionReservation,
   NativeResumeReservation,
@@ -57,9 +58,7 @@ import {
   isTerminalExecutionState,
   resumeParentExecution,
 } from './task-execution-rules';
-
 type ResumeParent = NonNullable<ReturnType<typeof resumeParentExecution>>;
-
 /** Orchestrates serialized durable Task commands and replay routing. */
 export class TaskModule {
   readonly runtimeDirectory: string;
@@ -109,21 +108,15 @@ export class TaskModule {
       taskExists: (taskId) => this.taskIds.has(taskId),
     });
   }
-
   async start(): Promise<void> {
-    try {
-      await this.store.start((event) => this.apply(event), () => this.list());
-      for (const task of this.list()) await this.historyRepair.repair(task.id);
-      this.eventTimeline.assertReplayComplete(
-        this.list().map((task) => this.executionProjection.view(task)),
-      );
-    } catch (error) {
-      if (error instanceof TaskStorageError) {
-        throw error;
-      }
-      throw new TaskStorageError(error instanceof TaskEventStoreError
-        ? 'internal' : 'event-history-invalid');
-    }
+    return startTaskReplay(
+      () => this.store.start((event) => this.apply(event), () => this.list()),
+      async () => {
+        for (const task of this.list()) await this.historyRepair.repair(task.id);
+        this.eventTimeline.assertReplayComplete(
+          this.list().map((task) => this.executionProjection.view(task)));
+      },
+    );
   }
   create(request: CreateTaskRequest, correlationId: string): Promise<TaskView> {
     return this.enqueue(async () => {
@@ -252,7 +245,6 @@ export class TaskModule {
       created: true,
     };
   }
-
   allocateContext(
     taskId: string,
     context: StoredContext,
@@ -511,6 +503,7 @@ export class TaskModule {
     return this.enqueue(async () => {
       this.throwIfPoisoned();
       const task = this.taskById(taskId);
+      await this.historyRepair.repair(task.id);
       const execution = this.executionProjection.require(task.id);
       if (
         execution.attempt?.state === 'cancelling' ||
@@ -518,15 +511,18 @@ export class TaskModule {
       ) {
         return this.executionProjection.view(task);
       }
+      let occurredAt: string | undefined;
       if (execution.attempt?.state === 'starting') {
+        occurredAt = new Date(this.now()).toISOString();
         await this.appendVisible({
           type: 'AttemptStarted',
           version: 1,
           taskId,
+          occurredAt,
         });
       }
       const started = this.executionProjection.require(task.id);
-      await this.eventTimeline.recordAttemptLifecycle(started, 'attempt-started');
+      await this.eventTimeline.recordAttemptLifecycle(started, 'attempt-started', occurredAt);
       return this.executionProjection.view(task);
     });
   }
@@ -564,13 +560,7 @@ export class TaskModule {
         await this.eventTimeline.recordAttemptLifecycle(execution, 'cancellation-requested');
         return this.executionProjection.view(task);
       }
-      if (!this.eventTimeline.hasLifecycleEvent(
-        task.id,
-        execution.attempt.id,
-        'attempt-started',
-      )) {
-        await this.eventTimeline.recordAttemptLifecycle(execution, 'attempt-started');
-      }
+      const occurredAt = new Date(this.now()).toISOString();
       await this.appendVisible({
         type: 'CancellationRequested',
         version: 1,
@@ -578,9 +568,15 @@ export class TaskModule {
         idempotencyKey: request.idempotencyKey,
         correlationId: request.correlationId,
         fingerprint,
+        occurredAt,
       });
-      await this.eventTimeline.recordAttemptLifecycle(
-        this.executionProjection.require(task.id), 'cancellation-requested');
+      const cancelling = this.executionProjection.require(task.id);
+      if (!this.eventTimeline.hasLifecycleEvent(task.id, execution.attempt.id,
+        'attempt-started')) {
+        await this.eventTimeline.recordAttemptLifecycle(cancelling, 'attempt-started', occurredAt);
+      }
+      await this.eventTimeline.recordAttemptLifecycle(cancelling, 'cancellation-requested',
+        occurredAt);
       return this.executionProjection.view(task);
     });
   }
@@ -672,6 +668,10 @@ export class TaskModule {
     return this.enqueue(async () => {
       this.throwIfPoisoned();
       const task = this.taskById(taskId);
+      const current = this.executionProjection.require(task.id);
+      if (isTerminalExecutionState(current.attempt?.state)) {
+        await this.historyRepair.repair(task.id);
+      }
       const execution = this.executionProjection.require(task.id);
       await this.eventTimeline.recordTerminalTransition(
         execution,

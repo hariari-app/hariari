@@ -4,6 +4,10 @@ import {
 } from '../shared/runtime/event-timeline-contract';
 import type { NormalizedRuntimeEventView } from '../shared/runtime/runtime-interface';
 import type {
+  AttemptCancelledEvent,
+  AttemptCompletedEvent,
+  AttemptFailedEvent,
+  AttemptStartedEvent,
   CancellationRequestedEvent,
   ContextAllocatedEvent,
   RawProviderObservationRecordedEvent,
@@ -27,10 +31,12 @@ interface AttemptHistory {
   readonly operation: OperationIdentity;
   context: ContextAllocatedEvent | null;
   observation: RawProviderObservationRecordedEvent | null;
-  started: boolean;
+  started: AttemptStartedEvent | null;
   cancellation: CancellationRequestedEvent | null;
-  terminal: 'completed' | 'failed' | 'cancelled' | null;
+  terminal: TerminalEvent | null;
 }
+
+type TerminalEvent = AttemptCompletedEvent | AttemptFailedEvent | AttemptCancelledEvent;
 
 interface TaskHistoryAnalysis {
   readonly task: TaskCreatedEvent;
@@ -95,11 +101,9 @@ export class TaskEventHistory {
       };
     }
 
-    const unstatedStart = analysis.attempts.find((attempt) =>
-      attempt.context && !attempt.started && !hasNormalizedStart(analysis, attempt));
+    const unstatedStart = analysis.attempts.find(needsCoreStartRepair);
     if (unstatedStart) {
-      if (unstatedStart.cancellation || unstatedStart.terminal) throw new TaskEventHistoryError();
-      return { type: 'AttemptStarted', version: 1, taskId };
+      return { type: 'AttemptStarted', version: 1, taskId, occurredAt: now };
     }
     return null;
   }
@@ -108,10 +112,10 @@ export class TaskEventHistory {
     const analysis = this.analyze(taskId);
     const incomplete = analysis.attempts.find((attempt) =>
       (attempt.context?.providerSession && !attempt.observation) ||
-      (attempt.context && !attempt.started && !hasNormalizedStart(analysis, attempt)));
+      needsCoreStartRepair(attempt));
     if (incomplete) throw new TaskEventHistoryError(
       `incomplete attempt ${incomplete.id}: context=${Boolean(incomplete.context)} ` +
-      `observation=${Boolean(incomplete.observation)} started=${incomplete.started}`,
+      `observation=${Boolean(incomplete.observation)} started=${Boolean(incomplete.started)}`,
     );
     const descriptors = normalizedDescriptors(analysis);
     assertNormalizedPrefix(analysis.normalized, descriptors);
@@ -130,7 +134,6 @@ export class TaskEventHistory {
     const normalized: NormalizedRuntimeEventView[] = [];
     let operation: OperationIdentity | null = null;
     let current: AttemptHistory | null = null;
-
     for (const event of taskEvents) {
       if (event.type === 'RunCreated') {
         operation = operationIdentity(event.run.id, event.idempotencyKey, event.correlationId);
@@ -152,16 +155,18 @@ export class TaskEventHistory {
         owner.observation = event;
       } else if (event.type === 'AttemptStarted') {
         current = requiredAttempt(current);
-        current.started = true;
+        if (current.started) throw new TaskEventHistoryError();
+        current.started = event;
       } else if (event.type === 'CancellationRequested') {
         current = requiredAttempt(current);
+        if (current.cancellation) throw new TaskEventHistoryError();
         current.cancellation = event;
       } else if (event.type === 'AttemptCompleted') {
-        requiredAttempt(current).terminal = 'completed';
+        setTerminal(requiredAttempt(current), event);
       } else if (event.type === 'AttemptFailed') {
-        requiredAttempt(current).terminal = 'failed';
+        setTerminal(requiredAttempt(current), event);
       } else if (event.type === 'AttemptCancelled') {
-        requiredAttempt(current).terminal = 'cancelled';
+        setTerminal(requiredAttempt(current), event);
       } else if (event.type === 'NormalizedRuntimeEventRecorded') {
         normalized.push(event.event);
       }
@@ -182,7 +187,7 @@ function addAttempt(
     operation,
     context: null,
     observation: null,
-    started: false,
+    started: null,
     cancellation: null,
     terminal: null,
   };
@@ -202,52 +207,68 @@ function normalizedDescriptors(analysis: TaskHistoryAnalysis): readonly Normaliz
     observation: null,
   }];
   for (const attempt of analysis.attempts) {
-    const session = attempt.context?.providerSession ?? null;
-    if (attempt.observation) descriptors.push({
-      kind: 'provider-session-observed', attempt, operation: attempt.operation,
-      providerSession: session, occurrenceAt: attempt.observation.observation.observedAt,
-      observation: attempt.observation,
-    });
-    if (attempt.started || hasNormalizedStart(analysis, attempt)) descriptors.push({
-      kind: 'attempt-started', attempt, operation: attempt.operation,
-      providerSession: session, occurrenceAt: null, observation: null,
-    });
-    if (attempt.cancellation) descriptors.push({
-      kind: 'cancellation-requested', attempt,
-      operation: operationIdentity(
-        attempt.operation.runId,
-        attempt.cancellation.idempotencyKey,
-        attempt.cancellation.correlationId,
-      ),
-      providerSession: session, occurrenceAt: null, observation: null,
-    });
-    if (attempt.terminal) {
-      const terminalOperation = attempt.terminal === 'cancelled' && attempt.cancellation
-        ? operationIdentity(
-            attempt.operation.runId,
-            attempt.cancellation.idempotencyKey,
-            attempt.cancellation.correlationId,
-          )
-        : attempt.operation;
-      descriptors.push({
-        kind: `attempt-${attempt.terminal}`,
-        attempt,
-        operation: terminalOperation,
-        providerSession: session,
-        occurrenceAt: null,
-        observation: null,
-      });
-    }
+    descriptors.push(...attemptDescriptors(attempt));
   }
   return descriptors;
 }
 
-function hasNormalizedStart(
-  analysis: TaskHistoryAnalysis,
-  attempt: AttemptHistory,
-): boolean {
-  return analysis.normalized.some((event) =>
-    event.attemptId === attempt.id && event.kind === 'attempt-started');
+function attemptDescriptors(attempt: AttemptHistory): readonly NormalizedDescriptor[] {
+  const descriptors: NormalizedDescriptor[] = [];
+  const providerSession = attempt.context?.providerSession ?? null;
+  if (attempt.observation) descriptors.push({
+    kind: 'provider-session-observed', attempt, operation: attempt.operation,
+    providerSession, occurrenceAt: attempt.observation.observation.observedAt,
+    observation: attempt.observation,
+  });
+  if (attempt.started || attempt.cancellation || attempt.terminal) descriptors.push({
+    kind: 'attempt-started', attempt, operation: attempt.operation, providerSession,
+    occurrenceAt: startOccurrence(attempt), observation: null,
+  });
+  if (attempt.cancellation) descriptors.push({
+    kind: 'cancellation-requested', attempt,
+    operation: cancellationOperation(attempt), providerSession,
+    occurrenceAt: attempt.cancellation.occurredAt ?? null, observation: null,
+  });
+  if (attempt.terminal) descriptors.push({
+    kind: terminalKind(attempt.terminal), attempt,
+    operation: attempt.terminal.type === 'AttemptCancelled' && attempt.cancellation
+      ? cancellationOperation(attempt) : attempt.operation,
+    providerSession, occurrenceAt: attempt.terminal.occurredAt ?? null, observation: null,
+  });
+  return descriptors;
+}
+
+function needsCoreStartRepair(attempt: AttemptHistory): boolean {
+  return Boolean(attempt.context && !attempt.started && !attempt.cancellation && !attempt.terminal);
+}
+
+function setTerminal(attempt: AttemptHistory, event: TerminalEvent): void {
+  if (attempt.terminal) throw new TaskEventHistoryError();
+  attempt.terminal = event;
+}
+
+function startOccurrence(attempt: AttemptHistory): string | null {
+  if (attempt.started) return attempt.started.occurredAt ?? null;
+  return attempt.cancellation?.occurredAt ?? attempt.terminal?.occurredAt ?? null;
+}
+
+function cancellationOperation(attempt: AttemptHistory): OperationIdentity {
+  const cancellation = attempt.cancellation;
+  if (!cancellation) throw new TaskEventHistoryError();
+  return operationIdentity(
+    attempt.operation.runId,
+    cancellation.idempotencyKey,
+    cancellation.correlationId,
+  );
+}
+
+function terminalKind(event: TerminalEvent): Extract<
+  NormalizedRuntimeEventView['kind'],
+  'attempt-completed' | 'attempt-failed' | 'attempt-cancelled'
+> {
+  if (event.type === 'AttemptCompleted') return 'attempt-completed';
+  if (event.type === 'AttemptFailed') return 'attempt-failed';
+  return 'attempt-cancelled';
 }
 
 function assertNormalizedPrefix(
@@ -263,7 +284,10 @@ function assertNormalizedPrefix(
       event.runId !== (descriptor.attempt ? descriptor.operation.runId : null) ||
       event.providerSessionId !== (descriptor.providerSession?.id ?? null) ||
       event.idempotencyKey !== descriptor.operation.idempotencyKey ||
-      event.correlationId !== descriptor.operation.correlationId) {
+      event.correlationId !== descriptor.operation.correlationId ||
+      (descriptor.occurrenceAt !== null &&
+        (event.occurrenceAt !== descriptor.occurrenceAt ||
+          event.observedAt !== descriptor.occurrenceAt))) {
       throw new TaskEventHistoryError(
         `normalized history mismatch at ${index}: ${event.kind}/${event.attemptId ?? 'none'} ` +
         `does not match ${descriptor?.kind ?? 'none'}/${expectedAttemptId ?? 'none'}`,

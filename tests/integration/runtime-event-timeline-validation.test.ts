@@ -6,6 +6,7 @@ import type { RuntimeClientSession } from '../../src/main/runtime/runtime-ports'
 import { parseTaskTimelineView } from '../../src/runtime/protocol-validation';
 import { TaskEventTimeline } from '../../src/runtime/task-event-timeline';
 import { TaskModule } from '../../src/runtime/task-module';
+import { TaskStorageError } from '../../src/runtime/task-storage-error';
 import { timelineEntry } from '../../src/shared/runtime/event-timeline-contract';
 import { FakeClaudeCodeExecutionAdapter } from './runtime-test-fakes';
 import {
@@ -15,6 +16,7 @@ import {
   readTaskEvents,
   registerRuntimeTaskTestCleanup,
   rewriteTaskEvents,
+  type RuntimeSubject,
   waitForTaskState,
 } from './runtime-task-test-harness';
 
@@ -24,7 +26,77 @@ function registerValidationTests(): void {
   registerRuntimeTaskTestCleanup();
   registerRoundSevenIdentityTests();
   registerRoundSevenDuplicateTests();
+  registerReplayErrorTaxonomyTests();
   registerExistingValidationTests();
+}
+
+function registerReplayErrorTaxonomyTests(): void {
+  it('maps a checksum-valid structurally invalid core record to event-history-invalid',
+    rejectsStructurallyInvalidCoreRecord);
+  it('maps checksum-valid core lifecycle ordering corruption to event-history-invalid',
+    rejectsCoreLifecycleOrderingCorruption);
+  it('maps contradictory checksum-valid terminal records to event-history-invalid',
+    rejectsContradictoryTerminalRecords);
+  it('keeps a physical checksum failure classified as internal', rejectsPhysicalChecksumFailure);
+}
+
+async function rejectsStructurallyInvalidCoreRecord(): Promise<void> {
+  const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter());
+  const runtime = await subject.connect();
+  const { task } = await startTimelineTask(runtime, 'invalid-core-record');
+  appendTaskEventFrame(path.join(subject.runtimeDirectory, 'tasks', 'events.log'), {
+    type: 'RunCreated', version: 1, taskId: task.id,
+    idempotencyKey: 'invalid-core-run', correlationId: 'invalid-core-correlation',
+    fingerprint: 'invalid-core-fingerprint',
+  });
+  await runtime.disconnect();
+  await expectInvalidHistory(subject);
+}
+
+async function rejectsCoreLifecycleOrderingCorruption(): Promise<void> {
+  const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter());
+  const runtime = await subject.connect();
+  await startTimelineTask(runtime, 'invalid-core-order');
+  const records = [...readTaskEvents(subject.runtimeDirectory)];
+  const startedIndex = records.findIndex((event) => event.type === 'AttemptStarted');
+  const attemptIndex = records.findIndex((event) => event.type === 'AttemptCreated');
+  const [started] = records.splice(startedIndex, 1);
+  records.splice(attemptIndex + 1, 0, started!);
+  await runtime.disconnect();
+  rewriteTaskEvents(subject.runtimeDirectory, records);
+  await expectInvalidHistory(subject);
+}
+
+async function rejectsContradictoryTerminalRecords(): Promise<void> {
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const { task } = await startTimelineTask(runtime, 'contradictory-terminal');
+  adapter.exit(task.id, 0);
+  await waitForTaskState(runtime, task.id, 'completed');
+  appendTaskEventFrame(path.join(subject.runtimeDirectory, 'tasks', 'events.log'), {
+    type: 'AttemptFailed', version: 1, taskId: task.id,
+    occurredAt: '2026-08-25T10:00:00.000Z',
+  });
+  await runtime.disconnect();
+  await expectInvalidHistory(subject);
+}
+
+async function rejectsPhysicalChecksumFailure(): Promise<void> {
+  const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter());
+  const runtime = await subject.connect();
+  await startTimelineTask(runtime, 'physical-checksum-failure');
+  await runtime.disconnect();
+  await subject.stop();
+  const eventPath = path.join(subject.runtimeDirectory, 'tasks', 'events.log');
+  const bytes = fs.readFileSync(eventPath);
+  bytes[bytes.length - 1] = bytes[bytes.length - 1]! ^ 1;
+  fs.writeFileSync(eventPath, bytes);
+  await expect(subject.restart()).rejects.toEqual(new TaskStorageError('internal'));
+}
+
+function expectInvalidHistory(subject: RuntimeSubject): Promise<void> {
+  return expect(subject.restart()).rejects.toEqual(new TaskStorageError('event-history-invalid'));
 }
 
 function registerRoundSevenIdentityTests(): void {
@@ -119,7 +191,7 @@ async function rejectsFutureProviderEvidence(): Promise<void> {
     observation: { ...timeline.rawObservations[0], version: 2 },
   });
   await runtime.disconnect();
-  await expect(subject.restart()).rejects.toBeInstanceOf(Error);
+  await expectInvalidHistory(subject);
 }
 
 async function rejectsNoncanonicalRawIdentity(): Promise<void> {
@@ -221,7 +293,7 @@ async function rejectsExactDuplicateTaskCreatedOnReplay(): Promise<void> {
     event.type === 'TaskCreated')!;
   await runtime.disconnect();
   appendTaskEventFrame(path.join(subject.runtimeDirectory, 'tasks', 'events.log'), duplicate);
-  await expect(subject.restart()).rejects.toBeInstanceOf(Error);
+  await expectInvalidHistory(subject);
 }
 
 async function rejectsExactDuplicateRawObservationOnReplay(): Promise<void> {
@@ -345,7 +417,7 @@ async function rejectsForeignProviderSessionEvidence(): Promise<void> {
     },
   });
   await runtime.disconnect();
-  await expect(subject.restart()).rejects.toBeInstanceOf(Error);
+  await expectInvalidHistory(subject);
 }
 
 async function rejectsSameTaskRawOrphan(): Promise<void> {
@@ -363,7 +435,7 @@ async function rejectsSameTaskRawOrphan(): Promise<void> {
     },
   });
   await runtime.disconnect();
-  await expect(subject.restart()).rejects.toBeInstanceOf(Error);
+  await expectInvalidHistory(subject);
 }
 
 async function rejectsMissingRawEvidence(): Promise<void> {
@@ -388,7 +460,7 @@ async function rejectsNoncanonicalNormalizedIdentity(): Promise<void> {
       kind: 'attempt-completed', causationId: started.id, sequence: started.sequence + 1 },
   });
   await runtime.disconnect();
-  await expect(subject.restart()).rejects.toBeInstanceOf(Error);
+  await expectInvalidHistory(subject);
 }
 
 async function rejectsCrossTaskCreatedEvent(): Promise<void> {
@@ -401,7 +473,7 @@ async function rejectsCrossTaskCreatedEvent(): Promise<void> {
     event: second.normalizedEvents[0],
   });
   await runtime.disconnect();
-  await expect(subject.restart()).rejects.toBeInstanceOf(Error);
+  await expectInvalidHistory(subject);
 }
 
 async function rejectsDuplicateTaskCreatedAtProtocolSeam(): Promise<void> {
@@ -444,7 +516,7 @@ async function rejectsTaskCreateOwnershipCollision(): Promise<void> {
     fingerprint: 'alternate-create-fingerprint',
   });
   await runtime.disconnect();
-  await expect(subject.restart()).rejects.toBeInstanceOf(Error);
+  await expectInvalidHistory(subject);
 }
 
 async function rejectsReplacedTaskCreatedIdentity(): Promise<void> {

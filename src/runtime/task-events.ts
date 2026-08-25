@@ -158,11 +158,16 @@ interface TaskIdEvent {
   readonly taskId: string;
 }
 
-export interface AttemptStartedEvent extends TaskIdEvent { readonly type: 'AttemptStarted' }
-export interface AttemptFailedEvent extends TaskIdEvent { readonly type: 'AttemptFailed' }
-export interface AttemptCancelledEvent extends TaskIdEvent { readonly type: 'AttemptCancelled' }
+interface TimedTaskIdEvent extends TaskIdEvent {
+  /** Missing only on legacy records written before lifecycle time was durable. */
+  readonly occurredAt?: string;
+}
 
-export interface AttemptCompletedEvent extends TaskIdEvent {
+export interface AttemptStartedEvent extends TimedTaskIdEvent { readonly type: 'AttemptStarted' }
+export interface AttemptFailedEvent extends TimedTaskIdEvent { readonly type: 'AttemptFailed' }
+export interface AttemptCancelledEvent extends TimedTaskIdEvent { readonly type: 'AttemptCancelled' }
+
+export interface AttemptCompletedEvent extends TimedTaskIdEvent {
   readonly type: 'AttemptCompleted';
   readonly exitCode: number;
 }
@@ -172,6 +177,8 @@ export interface CancellationRequestedEvent extends TaskIdEvent {
   readonly idempotencyKey: string;
   readonly correlationId: string;
   readonly fingerprint: string;
+  /** Missing only on legacy records written before lifecycle time was durable. */
+  readonly occurredAt?: string;
 }
 
 export interface TaskReconciledEvent extends TaskIdEvent {
@@ -235,9 +242,14 @@ function parseExecutionEvent(value: Record<string, unknown>, type: string): Task
   if (type === 'TaskReconciled') return parseTaskReconciled(value, taskId);
   if (type === 'TaskRecoveryDecided') return parseTaskRecoveryDecided(value, taskId);
   if (type === 'AttemptStarted' || type === 'AttemptFailed' || type === 'AttemptCancelled') {
-    return { type, version: 1, taskId };
+    exactKeys(value, ['type', 'version', 'taskId', 'occurredAt']);
+    return { type, version: 1, taskId, ...parseOptionalOccurrence(value) };
   }
-  if (type === 'AttemptCompleted') return { type, version: 1, taskId, exitCode: integer(value.exitCode) };
+  if (type === 'AttemptCompleted') {
+    exactKeys(value, ['type', 'version', 'taskId', 'exitCode', 'occurredAt']);
+    return { type, version: 1, taskId,
+      exitCode: integer(value.exitCode), ...parseOptionalOccurrence(value) };
+  }
   if (type === 'CancellationRequested') return parseCancellation(value, taskId);
   throw new Error('invalid event');
 }
@@ -395,11 +407,25 @@ function parseContextAllocated(value: Record<string, unknown>, taskId: string): 
 }
 
 function parseCancellation(value: Record<string, unknown>, taskId: string): CancellationRequestedEvent {
+  exactKeys(value, [
+    'type', 'version', 'taskId', 'idempotencyKey', 'correlationId', 'fingerprint', 'occurredAt',
+  ]);
   const idempotencyKey = string(value.idempotencyKey);
   return { type: 'CancellationRequested', version: 1, taskId,
     idempotencyKey,
     correlationId: correlation(value.correlationId, idempotencyKey),
-    fingerprint: string(value.fingerprint) };
+    fingerprint: string(value.fingerprint), ...parseOptionalOccurrence(value) };
+}
+
+function parseOptionalOccurrence(
+  value: Record<string, unknown>,
+): { readonly occurredAt?: string } {
+  if (value.occurredAt === undefined) return {};
+  const occurredAt = string(value.occurredAt);
+  if (!occurredAt.endsWith('Z') || !Number.isFinite(Date.parse(occurredAt))) {
+    throw new Error('invalid event');
+  }
+  return { occurredAt };
 }
 
 function correlation(value: unknown, legacyIdempotencyKey: string): string {

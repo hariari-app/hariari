@@ -59,6 +59,7 @@ export function registerRuntimeTaskTestCleanup(): void {
 
 export async function createSubject(
   adapterFactory: (runtimeDirectory: string) => GenericCliExecutionAdapter,
+  now: () => number = () => Date.parse('2026-08-21T10:00:00.000Z'),
 ): Promise<RuntimeSubject> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hariari-start-remediation-'));
   roots.push(root);
@@ -69,7 +70,7 @@ export async function createSubject(
   let id = 0;
   const randomId = (): string => `start-remediation-${++id}-${randomUUID()}`;
   let adapter = adapterFactory(runtimeDirectory);
-  let server = serverFor(endpoint, token, transport, randomId, adapter);
+  let server = serverFor(endpoint, token, transport, randomId, adapter, now);
   servers.push(server);
   await server.start();
   return runtimeSubject(
@@ -92,7 +93,7 @@ export async function createSubject(
 
   async function restartSubject(): Promise<void> {
     await server.stop();
-    server = serverFor(endpoint, token, transport, randomId, adapter);
+    server = serverFor(endpoint, token, transport, randomId, adapter, now);
     servers.push(server);
     await server.start();
   }
@@ -147,6 +148,7 @@ function serverFor(
   transport: ObservedRuntimeTransport,
   randomId: () => string,
   executionAdapter: GenericCliExecutionAdapter,
+  now: () => number,
 ): RuntimeServer {
   return new RuntimeServer({
     transport,
@@ -155,7 +157,7 @@ function serverFor(
     supportedProtocolRange: { min: 1, max: 1 },
     runtimeVersion: '0.6.8',
     buildId: 'start-remediation-build',
-    now: () => Date.parse('2026-08-21T10:00:00.000Z'),
+    now,
     randomId,
     randomNonce: randomId,
     handshakeDeadlineMs: 500,

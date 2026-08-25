@@ -337,6 +337,17 @@ export function assertEventTimelineHistory(
   events: readonly NormalizedRuntimeEventView[],
   operations?: EventTimelineOperationChain,
 ): void {
+  assertEventTimelinePrefix(taskId, status, raw, events);
+  if (operations) validateOperationIdentities(taskId, status, events, operations);
+  validateLifecycleStatus(status, events);
+}
+
+export function assertEventTimelinePrefix(
+  taskId: string,
+  status: EventTimelineStatus,
+  raw: readonly RawProviderObservationView[],
+  events: readonly NormalizedRuntimeEventView[],
+): void {
   if (
     events[0]?.kind !== 'task-created' ||
     events.filter((event) => event.kind === 'task-created').length !== 1 ||
@@ -357,8 +368,6 @@ export function assertEventTimelineHistory(
     .filter((event) => event.kind === 'provider-session-observed')
     .map((event) => event.causationId));
   if (raw.some((observation) => !linkedRawIds.has(observation.id))) fail();
-  if (operations) validateOperationIdentities(taskId, status, events, operations);
-  validateLifecycleStatus(status, events);
 }
 
 function validateOperationIdentities(

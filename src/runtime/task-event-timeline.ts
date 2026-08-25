@@ -1,6 +1,7 @@
 import {
   allowlistProviderObservation,
   assertEventTimelineHistory,
+  assertEventTimelinePrefix,
   assertCanonicalNormalizedEventIdentity,
   assertCanonicalProviderObservationIdentity,
   assertCanonicalTaskCreatedIdentity,
@@ -169,27 +170,32 @@ export class TaskEventTimeline {
   recordAttemptLifecycle(
     execution: StoredExecution,
     kind: AttemptLifecycleKind,
+    occurredAt: string = this.dependencies.now(),
   ): Promise<void> {
     const attempt = execution.attempt;
     if (!attempt) throw new Error('missing lifecycle attempt');
     const session = execution.providerSessions.find((candidate) =>
       candidate.attemptId === attempt.id) ?? null;
+    const attemptOperation = execution.attemptOperations.find((candidate) =>
+      candidate.attemptId === attempt.id);
+    const operation = kind === 'attempt-started' ? attemptOperation : null;
     return this.recordLifecycle({ taskId: execution.taskId, runId: execution.run.id,
       attemptId: attempt.id, providerSessionId: session?.id ?? null, kind,
-      idempotencyKey: execution.currentOperationKey,
-      correlationId: execution.currentCorrelationId,
-      occurredAt: this.dependencies.now(),
+      idempotencyKey: operation?.idempotencyKey ?? execution.currentOperationKey,
+      correlationId: operation?.correlationId ?? execution.currentCorrelationId,
+      occurredAt,
       append: this.dependencies.append });
   }
 
   recordTerminalLifecycle(
     execution: StoredExecution,
+    occurredAt?: string,
   ): Promise<void> {
     const state = execution.attempt?.state;
     if (state !== 'completed' && state !== 'failed' && state !== 'cancelled') {
       throw new Error('missing terminal lifecycle');
     }
-    return this.recordAttemptLifecycle(execution, `attempt-${state}`);
+    return this.recordAttemptLifecycle(execution, `attempt-${state}`, occurredAt);
   }
 
   async recordTerminalTransition(
@@ -197,28 +203,30 @@ export class TaskEventTimeline {
     requested: TerminalState,
     exitCode?: number,
   ): Promise<StoredExecution> {
-    if (!this.hasLifecycleEvent(execution.taskId, execution.attempt?.id ?? null,
-      'attempt-started')) {
-      await this.recordAttemptLifecycle(execution, 'attempt-started');
-    }
     if (isTerminalState(execution.attempt?.state)) {
       await this.recordTerminalLifecycle(execution);
       return execution;
     }
+    const occurredAt = this.dependencies.now();
     const cancelled = requested === 'cancelled' || execution.attempt?.state === 'cancelling';
     const event: TerminalTaskEvent = cancelled
-      ? { type: 'AttemptCancelled', version: 1, taskId: execution.taskId }
+      ? { type: 'AttemptCancelled', version: 1, taskId: execution.taskId, occurredAt }
       : requested === 'completed'
         ? {
             type: 'AttemptCompleted',
             version: 1,
             taskId: execution.taskId,
             exitCode: exitCode ?? 0,
+            occurredAt,
           }
-        : { type: 'AttemptFailed', version: 1, taskId: execution.taskId };
+        : { type: 'AttemptFailed', version: 1, taskId: execution.taskId, occurredAt };
     await this.dependencies.append(event);
     const terminal = this.dependencies.execution(execution.taskId);
-    await this.recordTerminalLifecycle(terminal);
+    if (!this.hasLifecycleEvent(terminal.taskId, terminal.attempt?.id ?? null,
+      'attempt-started')) {
+      await this.recordAttemptLifecycle(terminal, 'attempt-started', occurredAt);
+    }
+    await this.recordTerminalLifecycle(terminal, occurredAt);
     return terminal;
   }
 
@@ -371,14 +379,11 @@ export class TaskEventTimeline {
     if (this.normalizedEventById(event.id)) throw new Error('duplicate event identity');
     if (!execution) throw new Error('missing event execution');
     const updated = [...events, event];
-    assertEventTimelineHistory(
+    assertEventTimelinePrefix(
       record.taskId,
       execution,
       this.observations(record.taskId),
       updated,
-      event.kind === 'task-created'
-        ? undefined
-        : eventTimelineOperationChain(this.dependencies.execution(record.taskId)),
     );
     this.normalizedEvents.set(record.taskId, updated);
   }

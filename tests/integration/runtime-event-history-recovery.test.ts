@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { RuntimePortError, type RuntimeClientSession } from '../../src/main/runtime/runtime-ports';
 import type { TaskExecutionView, TaskTimelineView, TaskView } from '../../src/shared/runtime/runtime-interface';
 import { TaskStorageError } from '../../src/runtime/task-storage-error';
+import { GenericCliExecutionError } from '../../src/runtime/generic-cli-execution-adapter';
 import {
   FakeClaudeCodeExecutionAdapter,
   FakeGenericCliExecutionAdapter,
@@ -48,7 +49,157 @@ describe('authenticated Runtime event history recovery', () => {
     verifiesTerminalPublicationRepair);
   it('fails closed with a stable error for an unrecoverable normalized gap',
     verifiesUnrecoverableGap);
+  it.each(['start', 'resume', 'fork'] as const)(
+    'repairs a normalized-start crash prefix for %s start failure before retry and restart',
+    verifiesStartFailurePrefixRecovery,
+  );
+  it.each([
+    ['started', 'AttemptStarted', 'attempt-started'],
+    ['completed', 'AttemptCompleted', 'attempt-completed'],
+    ['failed', 'AttemptFailed', 'attempt-failed'],
+    ['cancellation-requested', 'CancellationRequested', 'cancellation-requested'],
+    ['cancelled', 'AttemptCancelled', 'attempt-cancelled'],
+  ] as const)(
+    'preserves durable %s occurrence time when normalized repair happens after restart',
+    verifiesDurableLifecycleOccurrence,
+  );
+  it('uses restart time only as the explicit fallback for a legacy untimed lifecycle record',
+    verifiesLegacyLifecycleOccurrenceFallback);
 });
+
+async function verifiesLegacyLifecycleOccurrenceFallback(): Promise<void> {
+  let clock = Date.parse('2026-08-25T10:00:00.000Z');
+  const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter(), () => clock);
+  const runtime = await subject.connect();
+  const task = await runtime.createTask(taskRequest('legacy-time-create'));
+  await runtime.startTask({ taskId: task.id, idempotencyKey: 'legacy-time-start' });
+  const prefix = prefixThrough(subject.runtimeDirectory, 'AttemptStarted').map((record) => {
+    if (record.type !== 'AttemptStarted') return record;
+    const { occurredAt: _removedLegacyTime, ...legacy } = record;
+    return legacy;
+  });
+  await runtime.disconnect();
+  await subject.stop();
+  rewriteTaskEvents(subject.runtimeDirectory, prefix);
+  const restartedAt = '2026-08-25T11:00:00.000Z';
+  clock = Date.parse(restartedAt);
+  await subject.restart();
+  const restarted = await subject.connect();
+  await expect(restarted.getTaskTimeline(task.id)).resolves.toMatchObject({
+    normalizedEvents: expect.arrayContaining([
+      expect.objectContaining({ kind: 'attempt-started', occurrenceAt: restartedAt }),
+    ]),
+  });
+}
+
+async function verifiesDurableLifecycleOccurrence(
+  phase: 'started' | 'completed' | 'failed' | 'cancellation-requested' | 'cancelled',
+  coreType: string,
+  normalizedKind: string,
+): Promise<void> {
+  let clock = Date.parse('2026-08-25T09:00:00.000Z');
+  const effectAt = '2026-08-25T10:00:00.000Z';
+  const adapter = new FakeClaudeCodeExecutionAdapter();
+  const subject = await createSubject(() => adapter, () => clock);
+  const runtime = await subject.connect();
+  const task = await runtime.createTask(taskRequest(`${phase}-time-create`));
+  clock = Date.parse(effectAt);
+  await runtime.startTask({ taskId: task.id, idempotencyKey: `${phase}-time-start` });
+  if (phase === 'completed' || phase === 'failed') {
+    adapter.exit(task.id, phase === 'completed' ? 0 : 1);
+    await waitForTaskState(runtime, task.id, phase);
+  }
+  if (phase === 'cancellation-requested' || phase === 'cancelled') {
+    await runtime.cancelTask({ taskId: task.id, idempotencyKey: `${phase}-time-cancel` });
+  }
+  const prefix = prefixThrough(subject.runtimeDirectory, coreType);
+  expect(prefix.at(-1)).toMatchObject({ type: coreType, occurredAt: effectAt });
+  await runtime.disconnect();
+  await subject.stop();
+  rewriteTaskEvents(subject.runtimeDirectory, prefix);
+  clock = Date.parse('2026-08-25T11:00:00.000Z');
+  await subject.restart();
+  const restarted = await subject.connect();
+  const timeline = await restarted.getTaskTimeline(task.id);
+  expect(timeline.normalizedEvents.find((event) => event.kind === normalizedKind))
+    .toMatchObject({ occurrenceAt: effectAt, observedAt: effectAt });
+}
+
+async function verifiesStartFailurePrefixRecovery(
+  action: 'start' | 'resume' | 'fork',
+): Promise<void> {
+  const failedAttempt = action === 'start' ? 1 : 2;
+  const adapter = new FakeClaudeCodeExecutionAdapter({
+    startError: (request) => request.attempt.number === failedAttempt
+      ? new GenericCliExecutionError('process-start-failed') : undefined,
+  });
+  const subject = await createSubject(() => adapter);
+  const runtime = await subject.connect();
+  const task = await runtime.createTask(taskRequest(`${action}-prefix-create`));
+  const parent = action === 'start' ? null : await runtime.startTask({
+    taskId: task.id, idempotencyKey: `${action}-prefix-parent`,
+  });
+  if (action === 'resume') adapter.lose(task.id);
+  const request = action === 'start'
+    ? { taskId: task.id, idempotencyKey: `${action}-prefix-child` }
+    : { taskId: task.id, providerSessionId: parent!.providerSession!.id,
+        idempotencyKey: `${action}-prefix-child` };
+  await expect(callFailureAction(runtime, action, request))
+    .rejects.toEqual(new RuntimePortError('process-start-failed', true));
+  const prefix = prefixThroughLastNormalizedStart(subject.runtimeDirectory);
+  await runtime.disconnect();
+  await subject.stop();
+  rewriteTaskEvents(subject.runtimeDirectory, prefix);
+  await subject.restart();
+  await subject.restart();
+  const restarted = await subject.connect();
+  const failed = await callFailureAction(restarted, action, request);
+  expect(failed).toMatchObject({ attempt: { number: failedAttempt, state: 'failed' } });
+  await assertFailurePrefixEffects(subject, restarted, adapter, task, action);
+}
+
+async function assertFailurePrefixEffects(
+  subject: RuntimeSubject,
+  runtime: RuntimeClientSession,
+  adapter: FakeClaudeCodeExecutionAdapter,
+  task: TaskView,
+  action: 'start' | 'resume' | 'fork',
+): Promise<void> {
+  const timeline = await runtime.getTaskTimeline(task.id);
+  expect(kinds(timeline).slice(-2)).toEqual(['attempt-started', 'attempt-failed']);
+  expect(timeline.status.task.executionState).toBe('failed');
+  expect(adapter.startCount(task.id)).toBe(action === 'start' ? 1 : 2);
+  expect(adapter.stopCount(task.id)).toBe(action === 'fork' ? 1 : 0);
+  await subject.restart();
+  const replay = await subject.connect();
+  await expect(replay.getTaskTimeline(task.id)).resolves.toEqual(timeline);
+}
+
+function callFailureAction(
+  runtime: RuntimeClientSession,
+  action: 'start' | 'resume' | 'fork',
+  request: { readonly taskId: string; readonly idempotencyKey: string;
+    readonly providerSessionId?: string },
+): Promise<TaskExecutionView> {
+  if (action === 'start') return runtime.startTask(request);
+  const providerRequest = { ...request, providerSessionId: request.providerSessionId! };
+  return action === 'resume'
+    ? runtime.resumeProviderSession(providerRequest)
+    : runtime.forkProviderSession(providerRequest);
+}
+
+function prefixThroughLastNormalizedStart(runtimeDirectory: string) {
+  const events = readTaskEvents(runtimeDirectory);
+  let index = -1;
+  for (const [candidateIndex, record] of events.entries()) {
+    const event = record.event as { readonly kind?: unknown } | undefined;
+    if (record.type === 'NormalizedRuntimeEventRecorded' && event?.kind === 'attempt-started') {
+      index = candidateIndex;
+    }
+  }
+  if (index < 0) throw new Error('missing normalized attempt-started');
+  return events.slice(0, index + 1);
+}
 
 async function verifiesContextOnlyRecovery(): Promise<void> {
   const adapter = new FakeClaudeCodeExecutionAdapter();
