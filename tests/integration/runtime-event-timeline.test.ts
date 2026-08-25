@@ -68,6 +68,8 @@ function registerTimelineContractTests(): void {
     rejectsFutureProviderEvidence);
   it('fails closed when a normalized event crosses Task identities',
     rejectsCrossTaskNormalizedEvidence);
+  it('fails closed when a normalized durable event kind is an inherited object key',
+    rejectsInheritedNormalizedEventKind);
   it('fails closed when an unreferenced raw observation crosses Task identities',
     rejectsCrossTaskRawProtocolView);
   it('retains distinct literal request correlations for accepted timeline operations',
@@ -418,6 +420,46 @@ async function rejectsCrossTaskNormalizedEvidence(): Promise<void> {
       taskId: first.taskId, runId: first.status.run?.id,
       attemptId: first.status.attempt?.id, providerSessionId: first.status.providerSession?.id,
       sequence: first.normalizedEvents.length + 1,
+    },
+  });
+  await runtime.disconnect();
+
+  await expect(subject.restart()).rejects.toBeInstanceOf(Error);
+}
+
+async function rejectsInheritedNormalizedEventKind(): Promise<void> {
+  const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter());
+  const runtime = await subject.connect();
+  const task = await runtime.createTask({
+    objective: 'Reject inherited normalized event kinds.',
+    project: 'Hariari',
+    repository: 'fake-local-checkout',
+    baseRef: 'HEAD',
+    provider: 'claude',
+    idempotencyKey: 'inherited-kind-create',
+  });
+  await runtime.startTask({ taskId: task.id, idempotencyKey: 'inherited-kind-start' });
+  const timeline = await runtime.getTaskTimeline(task.id);
+  appendFramedPayload(path.join(subject.runtimeDirectory, 'tasks', 'events.log'), {
+    type: 'NormalizedRuntimeEventRecorded',
+    version: 1,
+    taskId: task.id,
+    event: {
+      schema: 'hariari.runtime.event',
+      version: 1,
+      id: 'independently-built-inherited-kind-event',
+      taskId: task.id,
+      runId: timeline.status.run?.id,
+      attemptId: timeline.status.attempt?.id,
+      providerSessionId: timeline.status.providerSession?.id,
+      kind: 'toString',
+      correlationId: 'inherited-kind-correlation',
+      causationId: timeline.normalizedEvents.at(-1)?.id,
+      idempotencyKey: 'inherited-kind-operation',
+      sequence: timeline.normalizedEvents.length + 1,
+      occurrenceAt: '2026-08-21T10:00:00.000Z',
+      observedAt: '2026-08-21T10:00:00.000Z',
+      redaction: { status: 'allowlisted', omittedFields: [] },
     },
   });
   await runtime.disconnect();

@@ -5,8 +5,43 @@ import type {
 import type {
   StoredContext,
   StoredProviderSession,
+  TaskEvent,
 } from './task-events';
-import type { StoredExecution } from './task-execution-state';
+import {
+  abortProviderActionExecution,
+  cancelExecution,
+  executionFromRun,
+  forkExecution,
+  resumeExecution,
+  terminalExecution,
+  type StoredExecution,
+} from './task-execution-state';
+import { isTerminalExecutionState } from './task-execution-rules';
+import { TaskStorageError } from './task-storage-error';
+
+export type ExecutionProjectionEvent = Extract<
+  TaskEvent,
+  {
+    type:
+      | 'RunCreated'
+      | 'AttemptCreated'
+      | 'ContextAllocated'
+      | 'AttemptStarted'
+      | 'AttemptSupersessionRequested'
+      | 'AttemptSuperseded'
+      | 'AttemptResumed'
+      | 'ProviderSessionActionAborted'
+      | 'CancellationRequested'
+      | 'AttemptCompleted'
+      | 'AttemptFailed'
+      | 'AttemptCancelled'
+      | 'AttemptForked';
+  }
+>;
+
+interface TaskExecutionProjectionDependencies {
+  readonly taskExists: (taskId: string) => boolean;
+}
 
 export interface PrivateTaskExecutionView extends Omit<
   TaskExecutionView,
@@ -16,6 +51,233 @@ export interface PrivateTaskExecutionView extends Omit<
   readonly executionContexts: readonly StoredContext[];
   readonly providerSession: StoredProviderSession | null;
   readonly providerSessions: readonly StoredProviderSession[];
+}
+
+/** Owns the replayed execution state, indexes, and transition invariants. */
+export class TaskExecutionProjection {
+  private readonly executions = new Map<string, StoredExecution>();
+  private readonly executionKeys = new Map<string, StoredExecution>();
+
+  constructor(private readonly dependencies: TaskExecutionProjectionDependencies) {}
+
+  apply(event: ExecutionProjectionEvent): void {
+    switch (event.type) {
+      case 'RunCreated':
+        this.applyRunCreated(event);
+        return;
+      case 'AttemptCreated':
+        this.applyAttemptCreated(event);
+        return;
+      case 'ContextAllocated':
+        this.applyContextAllocated(event);
+        return;
+      case 'AttemptStarted':
+        this.applyAttemptStarted(event);
+        return;
+      case 'AttemptSupersessionRequested':
+        this.applySupersessionRequested(event);
+        return;
+      case 'AttemptSuperseded':
+        this.applyAttemptSuperseded(event);
+        return;
+      case 'AttemptResumed': {
+        const execution = this.require(event.taskId);
+        this.replace(event.taskId, resumeExecution(execution, event));
+        return;
+      }
+      case 'ProviderSessionActionAborted': {
+        const execution = this.require(event.taskId);
+        this.replace(event.taskId, abortProviderActionExecution(execution));
+        return;
+      }
+      case 'CancellationRequested': {
+        const execution = this.require(event.taskId);
+        this.replace(event.taskId, cancelExecution(execution, event));
+        return;
+      }
+      case 'AttemptCompleted':
+      case 'AttemptFailed':
+      case 'AttemptCancelled': {
+        const execution = this.require(event.taskId);
+        this.replace(event.taskId, terminalExecution(execution, event));
+        return;
+      }
+      case 'AttemptForked': {
+        const execution = this.require(event.taskId);
+        this.replace(event.taskId, forkExecution(execution, event));
+        return;
+      }
+    }
+  }
+
+  optional(taskId: string): StoredExecution | undefined {
+    return this.executions.get(taskId);
+  }
+
+  require(taskId: string): StoredExecution {
+    const execution = this.optional(taskId);
+    if (!execution) {
+      throw new TaskStorageError('internal');
+    }
+    return execution;
+  }
+
+  byKey(idempotencyKey: string): StoredExecution | undefined {
+    return this.executionKeys.get(idempotencyKey);
+  }
+
+  view(task: TaskView): TaskExecutionView {
+    return projectExecution(task, this.optional(task.id) ?? null);
+  }
+
+  privateView(task: TaskView): PrivateTaskExecutionView {
+    return privateExecutionProjection(task, this.optional(task.id) ?? null);
+  }
+
+  recoveryWorktrees(): readonly { readonly taskId: string; readonly worktreeId: string }[] {
+    return [...this.executions.values()].flatMap((execution) => {
+      const worktreeIds = new Set(
+        execution.executionContexts.map((context) => context.worktreeId),
+      );
+      return [...worktreeIds].map((worktreeId) => ({
+        taskId: execution.taskId,
+        worktreeId,
+      }));
+    });
+  }
+
+  private applyRunCreated(
+    event: Extract<ExecutionProjectionEvent, { type: 'RunCreated' }>,
+  ): void {
+    if (!this.dependencies.taskExists(event.taskId) || this.executions.has(event.taskId)) {
+      throw new TaskStorageError('internal');
+    }
+    const execution = executionFromRun(event);
+    this.executions.set(event.taskId, execution);
+    this.executionKeys.set(event.idempotencyKey, execution);
+  }
+
+  private applyAttemptCreated(
+    event: Extract<ExecutionProjectionEvent, { type: 'AttemptCreated' }>,
+  ): void {
+    const execution = this.require(event.taskId);
+    if (execution.attempt) {
+      throw new TaskStorageError('internal');
+    }
+    this.replace(event.taskId, {
+      ...execution,
+      attempt: event.attempt,
+      attempts: [...execution.attempts, event.attempt],
+    });
+  }
+
+  private applyContextAllocated(
+    event: Extract<ExecutionProjectionEvent, { type: 'ContextAllocated' }>,
+  ): void {
+    const execution = this.require(event.taskId);
+    if (
+      !execution.attempt ||
+      execution.context ||
+      (execution.attempt.state !== 'starting' && execution.attempt.state !== 'cancelling')
+    ) {
+      throw new TaskStorageError('internal');
+    }
+    const session = event.providerSession;
+    if (
+      session &&
+      (
+        session.taskId !== event.taskId ||
+        session.executionContextId !== event.context.id ||
+        session.attemptId !== execution.attempt.id
+      )
+    ) {
+      throw new TaskStorageError('internal');
+    }
+    this.replace(event.taskId, {
+      ...execution,
+      context: event.context,
+      executionContexts: [...execution.executionContexts, event.context],
+      providerSession: session,
+      providerSessions: session
+        ? [...execution.providerSessions, session]
+        : execution.providerSessions,
+      plannedAction: null,
+    });
+  }
+
+  private applyAttemptStarted(
+    event: Extract<ExecutionProjectionEvent, { type: 'AttemptStarted' }>,
+  ): void {
+    const execution = this.require(event.taskId);
+    if (!execution.attempt || !execution.context || execution.attempt.state !== 'starting') {
+      throw new TaskStorageError('internal');
+    }
+    this.replaceAttempt(execution, { ...execution.attempt, state: 'running' });
+  }
+
+  private applySupersessionRequested(
+    event: Extract<ExecutionProjectionEvent, { type: 'AttemptSupersessionRequested' }>,
+  ): void {
+    const execution = this.require(event.taskId);
+    if (
+      !execution.attempt ||
+      !execution.providerSession ||
+      execution.attempt.id !== event.parentAttemptId ||
+      execution.providerSession.id !== event.parentSessionId ||
+      isTerminalExecutionState(execution.attempt.state)
+    ) {
+      throw new TaskStorageError('internal');
+    }
+    this.replaceAttempt(execution, { ...execution.attempt, state: 'superseding' });
+    const updated = this.require(event.taskId);
+    this.replace(event.taskId, {
+      ...updated,
+      supersession: {
+        actionKey: event.actionKey,
+        reason: event.reason,
+        parentAttemptId: event.parentAttemptId,
+        parentSessionId: event.parentSessionId,
+      },
+    });
+  }
+
+  private applyAttemptSuperseded(
+    event: Extract<ExecutionProjectionEvent, { type: 'AttemptSuperseded' }>,
+  ): void {
+    const execution = this.require(event.taskId);
+    if (
+      !execution.attempt ||
+      execution.attempt.id !== event.attemptId ||
+      execution.attempt.state !== 'superseding'
+    ) {
+      throw new TaskStorageError('internal');
+    }
+    this.replaceAttempt(execution, { ...execution.attempt, state: 'superseded' });
+  }
+
+  private replace(taskId: string, replacement: StoredExecution): void {
+    const current = this.require(taskId);
+    if (this.executionKeys.get(current.idempotencyKey) !== current) {
+      throw new TaskStorageError('internal');
+    }
+    this.executions.set(replacement.taskId, replacement);
+    this.executionKeys.set(replacement.idempotencyKey, replacement);
+  }
+
+  private replaceAttempt(
+    execution: StoredExecution,
+    attempt: StoredExecution['attempt'],
+  ): void {
+    if (!attempt) {
+      throw new TaskStorageError('internal');
+    }
+    this.replace(execution.taskId, {
+      ...execution,
+      attempt,
+      attempts: execution.attempts.map((stored) =>
+        stored.id === attempt.id ? attempt : stored),
+    });
+  }
 }
 
 export function projectExecution(
@@ -44,9 +306,14 @@ export function privateExecutionProjection(
   return {
     ...projectExecution(task, execution),
     context: execution?.context ? { ...execution.context } : null,
-    executionContexts: execution?.executionContexts.map((context) => ({ ...context })) ?? [],
+    executionContexts: execution?.executionContexts.map((context) => ({
+      ...context,
+    })) ?? [],
     providerSession: execution?.providerSession
-      ? { ...execution.providerSession, capabilities: { ...execution.providerSession.capabilities } }
+      ? {
+          ...execution.providerSession,
+          capabilities: { ...execution.providerSession.capabilities },
+        }
       : null,
     providerSessions: execution?.providerSessions.map((session) => ({
       ...session,

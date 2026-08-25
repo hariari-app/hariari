@@ -19,6 +19,13 @@ export const EVENT_TIMELINE_MESSAGES = {
 export type NormalizedRuntimeEventKind = keyof typeof EVENT_TIMELINE_MESSAGES;
 export type TaskTimelineMessage = (typeof EVENT_TIMELINE_MESSAGES)[NormalizedRuntimeEventKind];
 
+export function isNormalizedRuntimeEventKind(
+  value: unknown,
+): value is NormalizedRuntimeEventKind {
+  return typeof value === 'string' &&
+    Object.prototype.hasOwnProperty.call(EVENT_TIMELINE_MESSAGES, value);
+}
+
 export interface EventRedactionMetadata {
   readonly status: 'allowlisted';
   readonly omittedFields: readonly (typeof EVENT_REDACTION_FIELDS)[number][];
@@ -124,6 +131,7 @@ export function allowlistProviderObservation(
 }
 
 export function normalizedEvent(input: NormalizedEventInput): NormalizedRuntimeEventView {
+  if (!isNormalizedRuntimeEventKind(input.kind)) fail();
   return parseNormalizedRuntimeEvent({
     schema: RUNTIME_EVENT_SCHEMA,
     version: EVENT_TIMELINE_SCHEMA_VERSION,
@@ -144,6 +152,7 @@ export function normalizedEvent(input: NormalizedEventInput): NormalizedRuntimeE
 }
 
 export function timelineEntry(event: NormalizedRuntimeEventView): TaskTimelineEntry {
+  if (!isNormalizedRuntimeEventKind(event.kind)) fail();
   return {
     eventId: event.id,
     sequence: event.sequence,
@@ -184,9 +193,9 @@ export function parseNormalizedRuntimeEvent(value: unknown): NormalizedRuntimeEv
     'observedAt', 'redaction',
   ]);
   if (record.schema !== RUNTIME_EVENT_SCHEMA ||
-    record.version !== EVENT_TIMELINE_SCHEMA_VERSION || typeof record.kind !== 'string' ||
-    !(record.kind in EVENT_TIMELINE_MESSAGES)) fail();
-  const kind = record.kind as NormalizedRuntimeEventView['kind'];
+    record.version !== EVENT_TIMELINE_SCHEMA_VERSION ||
+    !isNormalizedRuntimeEventKind(record.kind)) fail();
+  const kind = record.kind;
   const event = {
     schema: RUNTIME_EVENT_SCHEMA,
     version: EVENT_TIMELINE_SCHEMA_VERSION,
