@@ -65,6 +65,7 @@ export class TaskModule {
   private readonly store: TaskEventStore;
   private readonly tasks = new Map<string, TaskView>();
   private readonly taskIds = new Map<string, TaskView>();
+  private readonly taskOwnershipKeys = new Map<string, string>();
   private readonly fingerprints = new Map<string, string>();
   private readonly taskCorrelations = new Map<string, string>();
   private readonly executionProjection: TaskExecutionProjection;
@@ -106,6 +107,9 @@ export class TaskModule {
   async start(): Promise<void> {
     try {
       await this.store.start((event) => this.apply(event), () => this.list());
+      this.eventTimeline.assertReplayComplete(
+        this.list().map((task) => this.executionProjection.view(task)),
+      );
     } catch (error) {
       if (error instanceof TaskStorageError) {
         throw error;
@@ -549,6 +553,13 @@ export class TaskModule {
         }
         return this.executionProjection.view(task);
       }
+      if (!this.eventTimeline.hasLifecycleEvent(
+        task.id,
+        execution.attempt.id,
+        'attempt-started',
+      )) {
+        await this.eventTimeline.recordAttemptLifecycle(execution, 'attempt-started');
+      }
       await this.appendVisible({
         type: 'CancellationRequested',
         version: 1,
@@ -676,16 +687,13 @@ export class TaskModule {
         this.applyTaskCreated(event);
         return;
       case 'RawProviderObservationRecorded': {
-        this.taskById(event.taskId);
-        this.eventTimeline.apply(event);
+        const task = this.taskById(event.taskId);
+        this.eventTimeline.apply(event, this.executionProjection.view(task));
         return;
       }
       case 'NormalizedRuntimeEventRecorded': {
-        this.taskById(event.taskId);
-        const execution = event.event.kind === 'task-created'
-          ? undefined
-          : this.executionProjection.require(event.taskId);
-        this.eventTimeline.apply(event, execution);
+        const task = this.taskById(event.taskId);
+        this.eventTimeline.apply(event, this.executionProjection.view(task));
         return;
       }
       case 'ProviderSessionActionDecided':
@@ -709,18 +717,27 @@ export class TaskModule {
     if (
       existing &&
       (
-        existing.id !== event.task.id ||
-        this.fingerprints.get(event.idempotencyKey) !== event.fingerprint
+        JSON.stringify(existing) !== JSON.stringify(event.task) ||
+        this.fingerprints.get(event.idempotencyKey) !== event.fingerprint ||
+        this.taskCorrelations.get(event.idempotencyKey) !== event.correlationId
       )
     ) {
       throw new TaskStorageError('internal');
     }
     const matchingTask = this.taskIds.get(event.task.id);
-    if (matchingTask && matchingTask.id !== event.task.id) {
+    const ownershipKey = this.taskOwnershipKeys.get(event.task.id);
+    if (matchingTask && (ownershipKey !== event.idempotencyKey ||
+      JSON.stringify(matchingTask) !== JSON.stringify(event.task))) {
       throw new TaskStorageError('internal');
     }
+    this.eventTimeline.registerTaskCreated(
+      event.task,
+      event.idempotencyKey,
+      event.correlationId,
+    );
     this.tasks.set(event.idempotencyKey, event.task);
     this.taskIds.set(event.task.id, event.task);
+    this.taskOwnershipKeys.set(event.task.id, event.idempotencyKey);
     this.fingerprints.set(event.idempotencyKey, event.fingerprint);
     this.taskCorrelations.set(event.idempotencyKey, event.correlationId);
   }

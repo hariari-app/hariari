@@ -24,7 +24,8 @@ import {
 
 const FAILED_ALLOCATION_APPEND_CASES = ['ContextAllocated', 'AttemptFailed'].flatMap(
   (name, index) => FAILED_APPEND_MODES.map((mode) => ({
-    operation: 'task.start', name, eventType: name, mode, writeCall: index + 3,
+    operation: 'task.start', name, eventType: name, mode,
+    writeCall: name === 'AttemptFailed' ? 5 : index + 3,
   })),
 );
 const NATIVE_RESUME_APPEND_CASES = [

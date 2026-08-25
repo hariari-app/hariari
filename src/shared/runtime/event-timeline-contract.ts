@@ -36,6 +36,8 @@ export interface RawProviderObservationView {
   readonly version: typeof EVENT_TIMELINE_SCHEMA_VERSION;
   readonly id: string;
   readonly taskId: string;
+  readonly providerSessionId: string;
+  readonly idempotencyKey: string;
   readonly provider: 'claude';
   readonly kind: 'provider-session-observed';
   readonly observedAt: string;
@@ -69,14 +71,26 @@ export interface TaskTimelineEntry {
 }
 
 export interface EventTimelineStatus {
-  readonly task: { readonly id: string };
+  readonly task: { readonly id: string; readonly executionState: EventTimelineLifecycleState };
   readonly run: { readonly id: string } | null;
-  readonly attempts: readonly { readonly id: string }[];
+  readonly attempt: { readonly id: string; readonly state: EventTimelineLifecycleState } | null;
+  readonly attempts: readonly { readonly id: string; readonly state: EventTimelineLifecycleState }[];
   readonly providerSessions: readonly {
     readonly id: string;
     readonly attemptId: string;
   }[];
 }
+
+type EventTimelineLifecycleState =
+  | 'ready'
+  | 'starting'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelling'
+  | 'cancelled'
+  | 'superseding'
+  | 'superseded';
 
 export interface EventTimelineView<TStatus extends EventTimelineStatus> {
   readonly taskId: string;
@@ -117,6 +131,13 @@ export interface ProviderObservationIdentity {
   readonly idempotencyKey: string;
 }
 
+export interface TaskCreationIdentity {
+  readonly taskId: string;
+  readonly idempotencyKey: string;
+  readonly correlationId: string;
+  readonly createdAt: string;
+}
+
 export function allowlistProviderObservation(
   input: ProviderObservationInput,
 ): RawProviderObservationView {
@@ -128,6 +149,8 @@ export function allowlistProviderObservation(
     version: EVENT_TIMELINE_SCHEMA_VERSION,
     id: observationId(input),
     taskId: identifier(input.taskId),
+    providerSessionId: identifier(input.providerSessionId),
+    idempotencyKey: identifier(input.idempotencyKey),
     provider: 'claude',
     kind: 'provider-session-observed',
     observedAt: timestamp(input.observedAt),
@@ -170,7 +193,8 @@ export function timelineEntry(event: NormalizedRuntimeEventView): TaskTimelineEn
 export function parseRawProviderObservation(value: unknown): RawProviderObservationView {
   const record = object(value);
   exactKeys(record, [
-    'schema', 'version', 'id', 'taskId', 'provider', 'kind', 'observedAt', 'evidence', 'redaction',
+    'schema', 'version', 'id', 'taskId', 'providerSessionId', 'idempotencyKey', 'provider',
+    'kind', 'observedAt', 'evidence', 'redaction',
   ]);
   if (record.schema !== PROVIDER_OBSERVATION_SCHEMA ||
     record.version !== EVENT_TIMELINE_SCHEMA_VERSION || record.provider !== 'claude' ||
@@ -183,6 +207,8 @@ export function parseRawProviderObservation(value: unknown): RawProviderObservat
     version: EVENT_TIMELINE_SCHEMA_VERSION,
     id: identifier(record.id),
     taskId: identifier(record.taskId),
+    providerSessionId: identifier(record.providerSessionId),
+    idempotencyKey: identifier(record.idempotencyKey),
     provider: 'claude',
     kind: 'provider-session-observed',
     observedAt: timestamp(record.observedAt),
@@ -227,7 +253,10 @@ export function assertCanonicalProviderObservationIdentity(
   observation: RawProviderObservationView,
   identity: ProviderObservationIdentity,
 ): void {
-  if (observation.taskId !== identity.taskId || observation.id !== observationId(identity)) fail();
+  if (observation.taskId !== identity.taskId ||
+    observation.providerSessionId !== identity.providerSessionId ||
+    observation.idempotencyKey !== identity.idempotencyKey ||
+    observation.id !== observationId(identity)) fail();
 }
 
 export function assertCanonicalNormalizedEventIdentity(
@@ -235,6 +264,26 @@ export function assertCanonicalNormalizedEventIdentity(
   taskId: string,
 ): void {
   if (event.taskId !== taskId || event.id !== normalizedEventId(event)) fail();
+}
+
+export function assertCanonicalTaskCreatedIdentity(
+  event: NormalizedRuntimeEventView,
+  identity: TaskCreationIdentity,
+): void {
+  const expected = normalizedEvent({
+    taskId: identity.taskId,
+    runId: null,
+    attemptId: null,
+    providerSessionId: null,
+    kind: 'task-created',
+    correlationId: identity.correlationId,
+    idempotencyKey: identity.idempotencyKey,
+    sequence: 1,
+    occurrenceAt: identity.createdAt,
+    observedAt: identity.createdAt,
+    causationId: null,
+  });
+  if (JSON.stringify(event) !== JSON.stringify(expected)) fail();
 }
 
 export function parseTaskTimeline<TStatus extends EventTimelineStatus>(
@@ -260,21 +309,86 @@ function validateTimeline(
   events: readonly NormalizedRuntimeEventView[],
   entries: readonly TaskTimelineEntry[],
 ): void {
+  assertEventTimelineHistory(taskId, status, raw, events);
+  if (entries.length !== events.length) fail();
+  for (const [index, event] of events.entries()) {
+    if (JSON.stringify(entries[index]) !== JSON.stringify(timelineEntry(event))) fail();
+  }
+}
+
+export function assertEventTimelineHistory(
+  taskId: string,
+  status: EventTimelineStatus,
+  raw: readonly RawProviderObservationView[],
+  events: readonly NormalizedRuntimeEventView[],
+): void {
   if (
+    events[0]?.kind !== 'task-created' ||
+    events.filter((event) => event.kind === 'task-created').length !== 1 ||
     raw.some((item) => item.taskId !== taskId) ||
     new Set(raw.map((item) => item.id)).size !== raw.length ||
     new Set(events.map((item) => item.id)).size !== events.length ||
-    entries.length !== events.length
+    raw.length !== events.filter((event) => event.kind === 'provider-session-observed').length
   ) {
     fail();
   }
   for (const [index, event] of events.entries()) {
     assertCanonicalNormalizedEventIdentity(event, taskId);
-    if (event.taskId !== taskId || event.sequence !== index + 1 ||
-      JSON.stringify(entries[index]) !== JSON.stringify(timelineEntry(event))) fail();
+    if (event.taskId !== taskId || event.sequence !== index + 1) fail();
     validateStatusIdentities(status, event);
     validateCausation(raw, events.slice(0, index), event);
   }
+  const linkedRawIds = new Set(events
+    .filter((event) => event.kind === 'provider-session-observed')
+    .map((event) => event.causationId));
+  if (raw.some((observation) => !linkedRawIds.has(observation.id))) fail();
+  validateLifecycleStatus(status, events);
+}
+
+function validateLifecycleStatus(
+  status: EventTimelineStatus,
+  events: readonly NormalizedRuntimeEventView[],
+): void {
+  const currentState = status.attempt?.state ?? (status.run ? 'starting' : 'ready');
+  if (status.task.executionState !== currentState ||
+    new Set(status.attempts.map((attempt) => attempt.id)).size !== status.attempts.length ||
+    new Set(status.providerSessions.map((session) => session.id)).size !==
+      status.providerSessions.length ||
+    status.providerSessions.some((session) =>
+      !status.attempts.some((attempt) => attempt.id === session.attemptId))) fail();
+  if (status.attempt) {
+    const current = status.attempts.find((attempt) => attempt.id === status.attempt?.id);
+    if (!current || current.state !== status.attempt.state) fail();
+  }
+  for (const attempt of status.attempts) {
+    const lifecycle = events.filter((event) => event.attemptId === attempt.id);
+    const starts = lifecycle.filter((event) => event.kind === 'attempt-started');
+    const terminals = lifecycle.filter((event) =>
+      event.kind === 'attempt-completed' || event.kind === 'attempt-failed' ||
+      event.kind === 'attempt-cancelled');
+    const providerEvents = lifecycle.filter((event) => event.kind === 'provider-session-observed');
+    if (starts.length > 1 || terminals.length > 1 || providerEvents.length > 1) fail();
+    const providerIndex = providerEvents[0] ? events.indexOf(providerEvents[0]) : -1;
+    const startIndex = starts[0] ? events.indexOf(starts[0]) : -1;
+    const terminalIndex = terminals[0] ? events.indexOf(terminals[0]) : -1;
+    if ((providerIndex >= 0 && startIndex >= 0 && providerIndex >= startIndex) ||
+      (terminalIndex >= 0 && (startIndex < 0 || startIndex >= terminalIndex))) fail();
+    if (attempt.state !== 'starting' && starts.length !== 1) fail();
+    const expectedTerminal = terminalKind(attempt.state);
+    if ((expectedTerminal === null && terminals.length !== 0) ||
+      (expectedTerminal !== null &&
+        (terminals.length !== 1 || terminals[0]?.kind !== expectedTerminal))) fail();
+  }
+}
+
+function terminalKind(
+  state: EventTimelineLifecycleState,
+): Extract<NormalizedRuntimeEventKind,
+  'attempt-completed' | 'attempt-failed' | 'attempt-cancelled'> | null {
+  if (state === 'completed') return 'attempt-completed';
+  if (state === 'failed') return 'attempt-failed';
+  if (state === 'cancelled') return 'attempt-cancelled';
+  return null;
 }
 
 function validateStatusIdentities(
@@ -284,10 +398,8 @@ function validateStatusIdentities(
   if (event.kind === 'task-created') return;
   if (!status.run || event.runId !== status.run.id || !event.attemptId ||
     !status.attempts.some((attempt) => attempt.id === event.attemptId)) fail();
-  if (event.providerSessionId) {
-    const session = status.providerSessions.find((item) => item.id === event.providerSessionId);
-    if (!session || session.attemptId !== event.attemptId) fail();
-  }
+  const sessions = status.providerSessions.filter((item) => item.attemptId === event.attemptId);
+  if (sessions.length > 1 || event.providerSessionId !== (sessions[0]?.id ?? null)) fail();
 }
 
 function validateCausation(
@@ -300,13 +412,33 @@ function validateCausation(
     return;
   }
   if (event.kind === 'provider-session-observed') {
+    if (!event.providerSessionId) fail();
+    const expectedObservationId = observationId({
+      taskId: event.taskId,
+      providerSessionId: event.providerSessionId,
+      idempotencyKey: event.idempotencyKey,
+    });
     const observation = raw.find((item) => item.id === event.causationId);
-    if (!observation || observation.taskId !== event.taskId ||
+    if (!observation || event.causationId !== expectedObservationId ||
+      observation.taskId !== event.taskId ||
+      observation.providerSessionId !== event.providerSessionId ||
+      observation.idempotencyKey !== event.idempotencyKey ||
       observation.observedAt !== event.observedAt || event.occurrenceAt !== event.observedAt ||
       JSON.stringify(observation.redaction) !== JSON.stringify(event.redaction)) fail();
     return;
   }
-  if (!prior.some((candidate) => candidate.id === event.causationId)) fail();
+  if (event.kind === 'attempt-started') {
+    const cause = event.providerSessionId
+      ? prior.find((candidate) => candidate.kind === 'provider-session-observed' &&
+          candidate.attemptId === event.attemptId &&
+          candidate.providerSessionId === event.providerSessionId)
+      : prior.find((candidate) => candidate.kind === 'task-created');
+    if (!cause || event.causationId !== cause.id) fail();
+    return;
+  }
+  const started = prior.find((candidate) => candidate.kind === 'attempt-started' &&
+    candidate.attemptId === event.attemptId);
+  if (!started || event.causationId !== started.id) fail();
 }
 
 function assertApplicableIdentities(event: NormalizedRuntimeEventView): void {

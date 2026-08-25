@@ -125,7 +125,8 @@ async function verifiesShellStartBoundary(fault: ShellStartCase): Promise<void> 
   const timeline = await runtime.getTaskTimeline(task.id);
   expect(timeline.normalizedEvents.map(eventIdentity)).toEqual([
     ['task-created', `${correlation}-create`, createKey],
-    [startFailed ? 'attempt-failed' : 'attempt-started', correlation, startKey],
+    ['attempt-started', correlation, startKey],
+    ...(startFailed ? [['attempt-failed', correlation, startKey]] : []),
   ]);
   await assertAuthenticatedTaskReplay(subject, runtime, task, result, timeline);
 }
@@ -180,8 +181,9 @@ async function verifiesProviderStartBoundary(fault: ProviderStartCase): Promise<
   observed.assertObserved();
   const timeline = await runtime.getTaskTimeline(task.id);
   const expectedKinds = failedStart
-    ? fault.eventType === 'ContextAllocated' ? ['task-created', 'attempt-failed']
-      : ['task-created', 'provider-session-observed', 'attempt-failed']
+    ? fault.eventType === 'ContextAllocated'
+      ? ['task-created', 'attempt-started', 'attempt-failed']
+      : ['task-created', 'provider-session-observed', 'attempt-started', 'attempt-failed']
     : ['task-created', 'provider-session-observed', 'attempt-started'];
   expect(timeline.normalizedEvents.map((event) => event.kind)).toEqual(expectedKinds);
   expect(timeline.normalizedEvents.at(-1)).toMatchObject({
@@ -219,11 +221,16 @@ async function verifiesProviderActionBoundary(fault: ProviderActionCase): Promis
   observed.assertObserved();
   const timeline = await runtime.getTaskTimeline(task.id);
   expect(timeline.rawObservations).toHaveLength(2);
-  expect(timeline.normalizedEvents).toHaveLength(5);
-  expect(timeline.normalizedEvents.slice(-2).map(eventIdentity)).toEqual([
+  expect(timeline.normalizedEvents).toHaveLength(failedCoreStart ? 6 : 5);
+  const expectedTail = [
     ['provider-session-observed', correlation, request.idempotencyKey],
-    [failedCoreStart ? 'attempt-failed' : 'attempt-started', correlation, request.idempotencyKey],
-  ]);
+    ['attempt-started', correlation, request.idempotencyKey],
+    ...(failedCoreStart
+      ? [['attempt-failed', correlation, request.idempotencyKey]]
+      : []),
+  ];
+  expect(timeline.normalizedEvents.slice(-expectedTail.length).map(eventIdentity))
+    .toEqual(expectedTail);
   expect(eventCount(subject, 'AttemptStarted')).toBe(failedCoreStart ? 1 : 2);
   expect(result).toMatchObject({
     attempt: { number: 2, state: failedCoreStart ? 'failed' : 'running' },

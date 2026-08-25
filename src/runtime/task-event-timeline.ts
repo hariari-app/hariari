@@ -1,7 +1,9 @@
 import {
   allowlistProviderObservation,
+  assertEventTimelineHistory,
   assertCanonicalNormalizedEventIdentity,
   assertCanonicalProviderObservationIdentity,
+  assertCanonicalTaskCreatedIdentity,
   normalizedEvent,
   parseNormalizedRuntimeEvent,
   parseRawProviderObservation,
@@ -63,18 +65,51 @@ interface RecordLifecycleEvent {
 export class TaskEventTimeline {
   private readonly rawObservations = new Map<string, RawProviderObservationView[]>();
   private readonly normalizedEvents = new Map<string, NormalizedRuntimeEventView[]>();
+  private readonly taskCreations = new Map<string, {
+    readonly taskId: string;
+    readonly idempotencyKey: string;
+    readonly correlationId: string;
+    readonly createdAt: string;
+  }>();
 
   constructor(private readonly dependencies: TaskEventTimelineDependencies) {}
 
   view(taskId: string, status: TaskExecutionView): TaskTimelineView {
     const normalizedEvents = [...(this.normalizedEvents.get(taskId) ?? [])];
+    const rawObservations = [...(this.rawObservations.get(taskId) ?? [])];
+    const consistentStatus = timelineStatus(status, normalizedEvents);
+    assertEventTimelineHistory(taskId, consistentStatus, rawObservations, normalizedEvents);
     return {
       taskId,
-      status,
-      rawObservations: [...(this.rawObservations.get(taskId) ?? [])],
+      status: consistentStatus,
+      rawObservations,
       normalizedEvents,
       timeline: normalizedEvents.map(timelineEntry),
     };
+  }
+
+  assertReplayComplete(statuses: readonly TaskExecutionView[]): void {
+    for (const status of statuses) {
+      assertEventTimelineHistory(
+        status.task.id,
+        status,
+        this.observations(status.task.id),
+        this.events(status.task.id),
+      );
+    }
+  }
+
+  registerTaskCreated(
+    task: TaskView,
+    idempotencyKey: string,
+    correlationId: string,
+  ): void {
+    const identity = { taskId: task.id, idempotencyKey, correlationId, createdAt: task.createdAt };
+    const existing = this.taskCreations.get(task.id);
+    if (existing && JSON.stringify(existing) !== JSON.stringify(identity)) {
+      throw new Error('conflicting Task create identity');
+    }
+    this.taskCreations.set(task.id, identity);
   }
 
   hasMatchingProviderObservation(
@@ -96,11 +131,14 @@ export class TaskEventTimeline {
     return this.events(taskId).some((event) => event.kind === kind && event.attemptId === attemptId);
   }
 
-  apply(event: TimelineEvent, execution?: StoredExecution): void {
-    if (event.type === 'RawProviderObservationRecorded') this.applyRaw(event);
+  apply(event: TimelineEvent, execution?: TaskExecutionView): void {
+    if (event.type === 'RawProviderObservationRecorded') {
+      this.assertRawExecution(event, execution);
+      this.applyRaw(event);
+    }
     else {
       this.assertApplicableExecution(event.taskId, event.event, execution);
-      this.applyNormalized(event);
+      this.applyNormalized(event, execution);
     }
   }
 
@@ -145,6 +183,10 @@ export class TaskEventTimeline {
     requested: TerminalState,
     exitCode?: number,
   ): Promise<StoredExecution> {
+    if (!this.hasLifecycleEvent(execution.taskId, execution.attempt?.id ?? null,
+      'attempt-started')) {
+      await this.recordAttemptLifecycle(execution, 'attempt-started');
+    }
     if (isTerminalState(execution.attempt?.state)) {
       await this.recordTerminalLifecycle(execution);
       return execution;
@@ -278,55 +320,59 @@ export class TaskEventTimeline {
     this.rawObservations.set(record.taskId, [...observations, observation]);
   }
 
-  private applyNormalized(record: NormalizedRuntimeEventRecordedEvent): void {
+  private assertRawExecution(
+    record: RawProviderObservationRecordedEvent,
+    execution: TaskExecutionView | undefined,
+  ): void {
+    if (!execution || execution.task.id !== record.taskId ||
+      !execution.providerSessions.some((session) => session.id === record.providerSessionId)) {
+      throw new Error('invalid observation provider-session identity');
+    }
+  }
+
+  private applyNormalized(
+    record: NormalizedRuntimeEventRecordedEvent,
+    execution: TaskExecutionView | undefined,
+  ): void {
     const event = parseNormalizedRuntimeEvent(record.event);
     assertCanonicalNormalizedEventIdentity(event, record.taskId);
+    if (event.kind === 'task-created') {
+      const identity = this.taskCreations.get(record.taskId);
+      if (!identity) throw new Error('missing Task create identity');
+      assertCanonicalTaskCreatedIdentity(event, identity);
+    }
     const events = this.events(record.taskId);
     if (event.taskId !== record.taskId || event.sequence !== events.length + 1) {
       throw new Error('invalid normalized event identity');
     }
-    this.assertCausation(event, events);
     const existing = events.find((candidate) => candidate.id === event.id);
     if (existing) return this.assertSame(existing, event);
     if (this.normalizedEventById(event.id)) throw new Error('duplicate event identity');
-    this.normalizedEvents.set(record.taskId, [...events, event]);
+    if (!execution) throw new Error('missing event execution');
+    const updated = [...events, event];
+    assertEventTimelineHistory(
+      record.taskId,
+      execution,
+      this.observations(record.taskId),
+      updated,
+    );
+    this.normalizedEvents.set(record.taskId, updated);
   }
 
   private assertApplicableExecution(
     taskId: string,
     event: NormalizedRuntimeEventView,
-    execution: StoredExecution | undefined,
+    execution: TaskExecutionView | undefined,
   ): void {
     if (event.taskId !== taskId) throw new Error('invalid event execution identity');
     if (event.kind === 'task-created') return;
     const attempt = execution?.attempts.find((candidate) => candidate.id === event.attemptId);
-    if (!execution || event.runId !== execution.run.id || !attempt) {
+    if (!execution || event.runId !== execution.run?.id || !attempt) {
       throw new Error('invalid event execution identity');
     }
     if (event.providerSessionId && !execution.providerSessions.some((candidate) =>
       candidate.id === event.providerSessionId && candidate.attemptId === attempt.id)) {
       throw new Error('invalid event provider-session identity');
-    }
-  }
-
-  private assertCausation(
-    event: NormalizedRuntimeEventView,
-    prior: readonly NormalizedRuntimeEventView[],
-  ): void {
-    if (event.kind === 'task-created') {
-      if (event.causationId !== null) throw new Error('invalid event causation');
-      return;
-    }
-    if (event.kind === 'provider-session-observed') {
-      const raw = event.causationId && this.rawObservationById(event.causationId);
-      if (!raw || raw.taskId !== event.taskId || raw.observedAt !== event.observedAt ||
-        JSON.stringify(raw.redaction) !== JSON.stringify(event.redaction)) {
-        throw new Error('invalid event causation');
-      }
-      return;
-    }
-    if (!prior.some((candidate) => candidate.id === event.causationId)) {
-      throw new Error('invalid event causation');
     }
   }
 
@@ -353,4 +399,33 @@ export class TaskEventTimeline {
 
 function isTerminalState(value: unknown): value is TerminalState {
   return value === 'completed' || value === 'failed' || value === 'cancelled';
+}
+
+function timelineStatus(
+  status: TaskExecutionView,
+  events: readonly NormalizedRuntimeEventView[],
+): TaskExecutionView {
+  const attempts = status.attempts.map((attempt) => {
+    const lifecycle = events.filter((event) => event.attemptId === attempt.id);
+    const started = lifecycle.some((event) => event.kind === 'attempt-started');
+    const terminal = lifecycle.find((event) =>
+      event.kind === 'attempt-completed' || event.kind === 'attempt-failed' ||
+      event.kind === 'attempt-cancelled');
+    const terminalAgrees = terminal?.kind === `attempt-${attempt.state}`;
+    if (started && (!isTerminalState(attempt.state) || terminalAgrees)) return attempt;
+    if (!started || isTerminalState(attempt.state)) {
+      const { exitCode: _exitCode, ...rest } = attempt;
+      return { ...rest, state: started ? 'running' as const : 'starting' as const };
+    }
+    return attempt;
+  });
+  const attempt = status.attempt
+    ? attempts.find((candidate) => candidate.id === status.attempt?.id) ?? null
+    : null;
+  return {
+    ...status,
+    task: { ...status.task, executionState: attempt?.state ?? (status.run ? 'starting' : 'ready') },
+    attempt,
+    attempts,
+  };
 }

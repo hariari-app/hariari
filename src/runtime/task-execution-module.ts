@@ -293,6 +293,14 @@ export class TaskExecutionModule {
     return this.tasks.execution(taskId);
   }
 
+  async settlePendingExits(): Promise<void> {
+    while (this.settlements.size > 0) {
+      const results = await Promise.allSettled([...this.settlements.values()]);
+      const rejected = results.find((result) => result.status === 'rejected');
+      if (rejected?.status === 'rejected') throw rejected.reason;
+    }
+  }
+
   async reconcile(request: ReconcileTaskRequest): Promise<TaskRecoveryView> {
     const existing = this.tasks.reconciliation(request);
     if (existing) return existing;

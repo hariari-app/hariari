@@ -151,6 +151,7 @@ export class RuntimeServer {
   private async finishStop(owned: RuntimeServerLifecycle): Promise<void> {
     for (const connection of this.connections) connection.close();
     this.connections.clear();
+    await this.executions.settlePendingExits();
     const listener = await ownedListener(owned);
     await listener?.close();
     this.lifecycle = { phase: 'stopped' };
