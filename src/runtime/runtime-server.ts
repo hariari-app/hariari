@@ -36,6 +36,7 @@ import {
 import {
   RuntimeProtocolValidationError,
   parseAuthenticateFrame,
+  parseInvalidIdempotencyRequestFrame,
   parseRequestFrame,
   parseCreateTaskRequest,
   parseCancelTaskRequest,
@@ -181,7 +182,12 @@ export class RuntimeServer {
           if (error instanceof RuntimeTransportError && error.code === 'deadline') continue;
           throw error;
         }
-        const request = parseRequestFrame(frame);
+        const request = await this.parseAuthenticatedRequest(
+          connection,
+          frame,
+          selectedProtocol,
+        );
+        if (!request) continue;
         if (request.operation.name === TASK_OUTPUT_SUBSCRIBE_OPERATION) {
           await this.serveOutputSubscription(connection, request, selectedProtocol);
           return;
@@ -200,6 +206,24 @@ export class RuntimeServer {
     } finally {
       this.connections.delete(connection);
       connection.close();
+    }
+  }
+
+  private async parseAuthenticatedRequest(
+    connection: RuntimeFrameConnection,
+    frame: Record<string, unknown>,
+    protocolVersion: number,
+  ): Promise<RuntimeRequestFrame | null> {
+    try {
+      return parseRequestFrame(frame);
+    } catch (error) {
+      if (!(error instanceof RuntimeProtocolValidationError)) throw error;
+      const request = parseInvalidIdempotencyRequestFrame(frame);
+      await connection.writeFrame(
+        failure(request, protocolVersion, 'invalid-request', false),
+        this.options.requestDeadlineMs,
+      );
+      return null;
     }
   }
 

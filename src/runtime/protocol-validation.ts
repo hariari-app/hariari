@@ -150,16 +150,35 @@ function authenticatedReplyEnvelope(
 }
 
 export function parseRequestFrame(value: unknown): RuntimeRequestFrame {
+  const { rawIdempotencyKey, ...frame } = parseRequestEnvelope(value);
+  return {
+    ...frame,
+    idempotencyKey: optionalTaskIdempotencyKey(rawIdempotencyKey),
+  };
+}
+
+export function parseInvalidIdempotencyRequestFrame(value: unknown): RuntimeRequestFrame {
+  const { rawIdempotencyKey, ...frame } = parseRequestEnvelope(value);
+  try {
+    optionalTaskIdempotencyKey(rawIdempotencyKey);
+  } catch (error) {
+    if (error instanceof RuntimeProtocolValidationError) return { ...frame, idempotencyKey: null };
+    throw error;
+  }
+  invalid();
+}
+
+function parseRequestEnvelope(value: unknown) {
   const frame = object(value);
   if (frame.kind !== 'runtime.request') invalid();
   return {
-    kind: 'runtime.request',
+    kind: 'runtime.request' as const,
     protocolVersion: positiveInteger(frame.protocolVersion),
     requestId: identifier(frame.requestId),
     operation: operation(frame.operation),
     correlationId: identifier(frame.correlationId),
     causationId: optionalIdentifier(frame.causationId),
-    idempotencyKey: optionalTaskIdempotencyKey(frame.idempotencyKey),
+    rawIdempotencyKey: frame.idempotencyKey,
     payload: object(frame.payload),
   };
 }
@@ -563,9 +582,7 @@ function optionalIdentifier(value: unknown): string | null {
 }
 
 function optionalTaskIdempotencyKey(value: unknown): string | null {
-  if (value === null) return null;
-  if (typeof value !== 'string' || value.length === 0) invalid();
-  return value;
+  return value === null ? null : identifier(value);
 }
 
 function nonce(value: unknown): string {

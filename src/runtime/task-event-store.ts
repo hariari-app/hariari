@@ -41,8 +41,8 @@ export class TaskEventStore {
     tasks: () => readonly TaskView[],
   ): Promise<void> {
     this.throwIfPoisoned();
-    await this.append(event);
-    apply(event);
+    const validated = await this.append(event);
+    apply(validated);
     await this.writeProjection(tasks());
   }
 
@@ -88,9 +88,10 @@ export class TaskEventStore {
     return Number.MAX_SAFE_INTEGER;
   }
 
-  private async append(event: TaskEvent): Promise<void> {
+  private async append(event: TaskEvent): Promise<TaskEvent> {
     await verifyProtectedFile(this.eventPath);
     const payload = Buffer.from(JSON.stringify(event), 'utf8');
+    const validated = parseTaskEvent(payload);
     if (payload.length > MAX_EVENT_BYTES) throw new TaskEventStoreError();
     const frame = framed(payload);
     const handle = await fs.promises.open(this.eventPath, 'a', 0o600);
@@ -99,6 +100,7 @@ export class TaskEventStore {
     } finally {
       await handle.close();
     }
+    return validated;
   }
 
   private async writeFrame(handle: fs.promises.FileHandle, frame: Buffer): Promise<void> {
