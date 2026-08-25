@@ -1,21 +1,13 @@
-import {
-  EVENT_TIMELINE_SCHEMA_VERSION,
-  PROVIDER_OBSERVATION_SCHEMA,
-  RUNTIME_EVENT_SCHEMA,
-  type EventRedactionMetadata,
-  type NormalizedRuntimeEventView,
-  type RawProviderObservationView,
-  type TaskExecutionView,
-  type TaskTimelineEntry,
-  type TaskTimelineView,
-} from './runtime-interface';
+export const PROVIDER_OBSERVATION_SCHEMA = 'hariari.provider-observation' as const;
+export const RUNTIME_EVENT_SCHEMA = 'hariari.runtime.event' as const;
+export const EVENT_TIMELINE_SCHEMA_VERSION = 1 as const;
 
-const REDACTION_FIELDS = [
+export const EVENT_REDACTION_FIELDS = [
   'nativeSessionId', 'capabilities', 'providerNativeId', 'absolutePath',
   'command', 'environment', 'secret', 'unproven',
 ] as const;
 
-const TIMELINE_MESSAGES = {
+export const EVENT_TIMELINE_MESSAGES = {
   'task-created': 'Task created',
   'provider-session-observed': 'Claude provider session observed',
   'attempt-started': 'Attempt started',
@@ -23,6 +15,69 @@ const TIMELINE_MESSAGES = {
   'attempt-failed': 'Attempt failed',
   'attempt-cancelled': 'Attempt cancelled',
 } as const;
+
+export type NormalizedRuntimeEventKind = keyof typeof EVENT_TIMELINE_MESSAGES;
+export type TaskTimelineMessage = (typeof EVENT_TIMELINE_MESSAGES)[NormalizedRuntimeEventKind];
+
+export interface EventRedactionMetadata {
+  readonly status: 'allowlisted';
+  readonly omittedFields: readonly (typeof EVENT_REDACTION_FIELDS)[number][];
+}
+
+export interface RawProviderObservationView {
+  readonly schema: typeof PROVIDER_OBSERVATION_SCHEMA;
+  readonly version: typeof EVENT_TIMELINE_SCHEMA_VERSION;
+  readonly id: string;
+  readonly taskId: string;
+  readonly provider: 'claude';
+  readonly kind: 'provider-session-observed';
+  readonly observedAt: string;
+  readonly evidence: { readonly sessionState: 'active' };
+  readonly redaction: EventRedactionMetadata;
+}
+
+export interface NormalizedRuntimeEventView {
+  readonly schema: typeof RUNTIME_EVENT_SCHEMA;
+  readonly version: typeof EVENT_TIMELINE_SCHEMA_VERSION;
+  readonly id: string;
+  readonly taskId: string;
+  readonly runId: string | null;
+  readonly attemptId: string | null;
+  readonly providerSessionId: string | null;
+  readonly kind: NormalizedRuntimeEventKind;
+  readonly correlationId: string;
+  readonly causationId: string | null;
+  readonly idempotencyKey: string;
+  readonly sequence: number;
+  readonly occurrenceAt: string;
+  readonly observedAt: string;
+  readonly redaction: EventRedactionMetadata;
+}
+
+export interface TaskTimelineEntry {
+  readonly eventId: string;
+  readonly sequence: number;
+  readonly occurredAt: string;
+  readonly message: TaskTimelineMessage;
+}
+
+export interface EventTimelineStatus {
+  readonly task: { readonly id: string };
+  readonly run: { readonly id: string } | null;
+  readonly attempts: readonly { readonly id: string }[];
+  readonly providerSessions: readonly {
+    readonly id: string;
+    readonly attemptId: string;
+  }[];
+}
+
+export interface EventTimelineView<TStatus extends EventTimelineStatus> {
+  readonly taskId: string;
+  readonly status: TStatus;
+  readonly rawObservations: readonly RawProviderObservationView[];
+  readonly normalizedEvents: readonly NormalizedRuntimeEventView[];
+  readonly timeline: readonly TaskTimelineEntry[];
+}
 
 export class EventTimelineContractError extends Error {}
 
@@ -32,6 +87,7 @@ export interface NormalizedEventInput {
   readonly attemptId: string | null;
   readonly providerSessionId: string | null;
   readonly kind: NormalizedRuntimeEventView['kind'];
+  readonly correlationId: string;
   readonly idempotencyKey: string;
   readonly sequence: number;
   readonly occurrenceAt: string;
@@ -77,7 +133,7 @@ export function normalizedEvent(input: NormalizedEventInput): NormalizedRuntimeE
     attemptId: input.attemptId,
     providerSessionId: input.providerSessionId,
     kind: input.kind,
-    correlationId: input.idempotencyKey,
+    correlationId: input.correlationId,
     causationId: input.causationId,
     idempotencyKey: input.idempotencyKey,
     sequence: input.sequence,
@@ -92,7 +148,7 @@ export function timelineEntry(event: NormalizedRuntimeEventView): TaskTimelineEn
     eventId: event.id,
     sequence: event.sequence,
     occurredAt: event.occurrenceAt,
-    message: TIMELINE_MESSAGES[event.kind],
+    message: EVENT_TIMELINE_MESSAGES[event.kind],
   };
 }
 
@@ -129,7 +185,7 @@ export function parseNormalizedRuntimeEvent(value: unknown): NormalizedRuntimeEv
   ]);
   if (record.schema !== RUNTIME_EVENT_SCHEMA ||
     record.version !== EVENT_TIMELINE_SCHEMA_VERSION || typeof record.kind !== 'string' ||
-    !(record.kind in TIMELINE_MESSAGES)) fail();
+    !(record.kind in EVENT_TIMELINE_MESSAGES)) fail();
   const kind = record.kind as NormalizedRuntimeEventView['kind'];
   const event = {
     schema: RUNTIME_EVENT_SCHEMA,
@@ -148,15 +204,14 @@ export function parseNormalizedRuntimeEvent(value: unknown): NormalizedRuntimeEv
     observedAt: timestamp(record.observedAt),
     redaction: parseRedaction(record.redaction),
   };
-  if (event.correlationId !== event.idempotencyKey) fail();
   assertApplicableIdentities(event);
   return event;
 }
 
-export function parseTaskTimeline(
+export function parseTaskTimeline<TStatus extends EventTimelineStatus>(
   value: unknown,
-  parseStatus: (value: unknown) => TaskExecutionView,
-): TaskTimelineView {
+  parseStatus: (value: unknown) => TStatus,
+): EventTimelineView<TStatus> {
   const record = object(value);
   exactKeys(record, ['taskId', 'status', 'rawObservations', 'normalizedEvents', 'timeline']);
   const taskId = identifier(record.taskId);
@@ -171,13 +226,19 @@ export function parseTaskTimeline(
 
 function validateTimeline(
   taskId: string,
-  status: TaskExecutionView,
+  status: EventTimelineStatus,
   raw: readonly RawProviderObservationView[],
   events: readonly NormalizedRuntimeEventView[],
   entries: readonly TaskTimelineEntry[],
 ): void {
-  if (new Set(raw.map((item) => item.id)).size !== raw.length ||
-    new Set(events.map((item) => item.id)).size !== events.length || entries.length !== events.length) fail();
+  if (
+    raw.some((item) => item.taskId !== taskId) ||
+    new Set(raw.map((item) => item.id)).size !== raw.length ||
+    new Set(events.map((item) => item.id)).size !== events.length ||
+    entries.length !== events.length
+  ) {
+    fail();
+  }
   for (const [index, event] of events.entries()) {
     if (event.taskId !== taskId || event.sequence !== index + 1 ||
       JSON.stringify(entries[index]) !== JSON.stringify(timelineEntry(event))) fail();
@@ -186,7 +247,10 @@ function validateTimeline(
   }
 }
 
-function validateStatusIdentities(status: TaskExecutionView, event: NormalizedRuntimeEventView): void {
+function validateStatusIdentities(
+  status: EventTimelineStatus,
+  event: NormalizedRuntimeEventView,
+): void {
   if (event.kind === 'task-created') return;
   if (!status.run || event.runId !== status.run.id || !event.attemptId ||
     !status.attempts.some((attempt) => attempt.id === event.attemptId)) fail();
@@ -228,7 +292,9 @@ function assertApplicableIdentities(event: NormalizedRuntimeEventView): void {
 function parseTimelineEntry(value: unknown): TaskTimelineEntry {
   const record = object(value);
   exactKeys(record, ['eventId', 'sequence', 'occurredAt', 'message']);
-  if (!Object.values(TIMELINE_MESSAGES).includes(record.message as TaskTimelineEntry['message'])) fail();
+  if (!Object.values(EVENT_TIMELINE_MESSAGES).includes(record.message as TaskTimelineEntry['message'])) {
+    fail();
+  }
   return { eventId: identifier(record.eventId), sequence: positiveInteger(record.sequence),
     occurredAt: timestamp(record.occurredAt), message: record.message as TaskTimelineEntry['message'] };
 }
@@ -239,7 +305,10 @@ function redactionFor(value: Record<string, unknown>): EventRedactionMetadata {
     if (key === 'provider' || key === 'kind' || key === 'sessionState') continue;
     omitted.add(redactionField(key));
   }
-  return { status: 'allowlisted', omittedFields: REDACTION_FIELDS.filter((field) => omitted.has(field)) };
+  return {
+    status: 'allowlisted',
+    omittedFields: EVENT_REDACTION_FIELDS.filter((field) => omitted.has(field)),
+  };
 }
 
 function redactionField(key: string): EventRedactionMetadata['omittedFields'][number] {
@@ -260,7 +329,9 @@ function parseRedaction(value: unknown): EventRedactionMetadata {
 }
 
 function indexOfField(value: unknown): number {
-  const index = REDACTION_FIELDS.indexOf(value as (typeof REDACTION_FIELDS)[number]);
+  const index = EVENT_REDACTION_FIELDS.indexOf(
+    value as (typeof EVENT_REDACTION_FIELDS)[number],
+  );
   if (index < 0) fail();
   return index;
 }

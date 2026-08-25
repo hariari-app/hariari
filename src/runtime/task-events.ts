@@ -61,6 +61,7 @@ export interface TaskCreatedEvent {
   readonly version: 1;
   readonly task: TaskView;
   readonly idempotencyKey: string;
+  readonly correlationId: string;
   readonly fingerprint: string;
 }
 
@@ -69,6 +70,7 @@ export interface RunCreatedEvent {
   readonly version: 1;
   readonly taskId: string;
   readonly idempotencyKey: string;
+  readonly correlationId: string;
   readonly fingerprint: string;
   readonly run: StoredRun;
 }
@@ -131,6 +133,7 @@ export interface AttemptResumedEvent {
   readonly sourceAttemptId: string;
   readonly sourceSessionId: string;
   readonly actionKey: string;
+  readonly correlationId: string;
   readonly plannedContext: StoredContext;
 }
 
@@ -142,6 +145,7 @@ export interface AttemptForkedEvent {
   readonly parentAttemptId: string;
   readonly parentSessionId: string;
   readonly forkKey: string;
+  readonly correlationId: string;
   readonly plannedContext?: StoredContext;
 }
 
@@ -162,6 +166,7 @@ export interface AttemptCompletedEvent extends TaskIdEvent {
 export interface CancellationRequestedEvent extends TaskIdEvent {
   readonly type: 'CancellationRequested';
   readonly idempotencyKey: string;
+  readonly correlationId: string;
   readonly fingerprint: string;
 }
 
@@ -197,9 +202,12 @@ export function parseTaskEvent(payload: Buffer): TaskEvent {
 }
 
 function parseTaskCreated(value: Record<string, unknown>): TaskCreatedEvent {
+  const idempotencyKey = string(value.idempotencyKey);
   return {
     type: 'TaskCreated', version: 1, task: parseTask(object(value.task)),
-    idempotencyKey: string(value.idempotencyKey), fingerprint: string(value.fingerprint),
+    idempotencyKey,
+    correlationId: correlation(value.correlationId, idempotencyKey),
+    fingerprint: string(value.fingerprint),
   };
 }
 
@@ -282,9 +290,12 @@ function parseProviderActionDecided(
   const reason = optionalActionRejection(value.reason);
   if ((outcome === 'accepted') !== (decision !== null) ||
     (outcome === 'rejected') !== (reason !== null)) throw new Error('invalid event');
+  const idempotencyKey = string(value.idempotencyKey);
   return { type: 'ProviderSessionActionDecided', version: 1, taskId,
     action: providerAction(value.action), providerSessionId: string(value.providerSessionId),
-    idempotencyKey: string(value.idempotencyKey), fingerprint: string(value.fingerprint),
+    idempotencyKey,
+    correlationId: correlation(value.correlationId, idempotencyKey),
+    fingerprint: string(value.fingerprint),
     outcome, decision, reason };
 }
 
@@ -315,6 +326,7 @@ function parseAttemptResumed(
   return { type: 'AttemptResumed', version: 1, taskId,
     attempt: parseAttempt(object(value.attempt)), sourceAttemptId: string(value.sourceAttemptId),
     sourceSessionId: string(value.sourceSessionId), actionKey: string(value.actionKey),
+    correlationId: correlation(value.correlationId, string(value.actionKey)),
     plannedContext: parseContext(object(value.plannedContext)) };
 }
 
@@ -342,8 +354,11 @@ function supersessionReason(value: unknown): SupersessionReason {
 }
 
 function parseRunCreated(value: Record<string, unknown>, taskId: string): RunCreatedEvent {
+  const idempotencyKey = string(value.idempotencyKey);
   return { type: 'RunCreated', version: 1, taskId,
-    idempotencyKey: string(value.idempotencyKey), fingerprint: string(value.fingerprint),
+    idempotencyKey,
+    correlationId: correlation(value.correlationId, idempotencyKey),
+    fingerprint: string(value.fingerprint),
     run: parseRun(object(value.run)) };
 }
 
@@ -351,9 +366,11 @@ function parseAttemptForked(value: Record<string, unknown>, taskId: string): Att
   const plannedContext = value.plannedContext === undefined
     ? undefined
     : parseContext(object(value.plannedContext));
+  const forkKey = string(value.forkKey);
   return { type: 'AttemptForked', version: 1, taskId, attempt: parseAttempt(object(value.attempt)),
     parentAttemptId: string(value.parentAttemptId), parentSessionId: string(value.parentSessionId),
-    forkKey: string(value.forkKey), ...(plannedContext ? { plannedContext } : {}) };
+    forkKey, correlationId: correlation(value.correlationId, forkKey),
+    ...(plannedContext ? { plannedContext } : {}) };
 }
 
 function parseContextAllocated(value: Record<string, unknown>, taskId: string): ContextAllocatedEvent {
@@ -364,8 +381,15 @@ function parseContextAllocated(value: Record<string, unknown>, taskId: string): 
 }
 
 function parseCancellation(value: Record<string, unknown>, taskId: string): CancellationRequestedEvent {
+  const idempotencyKey = string(value.idempotencyKey);
   return { type: 'CancellationRequested', version: 1, taskId,
-    idempotencyKey: string(value.idempotencyKey), fingerprint: string(value.fingerprint) };
+    idempotencyKey,
+    correlationId: correlation(value.correlationId, idempotencyKey),
+    fingerprint: string(value.fingerprint) };
+}
+
+function correlation(value: unknown, legacyIdempotencyKey: string): string {
+  return value === undefined ? legacyIdempotencyKey : string(value);
 }
 
 function parseTask(value: Record<string, unknown>): TaskView {

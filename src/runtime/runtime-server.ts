@@ -284,8 +284,8 @@ export class RuntimeServer {
       return this.handleTaskCreate(request, protocolVersion);
     }
     if (request.operation.name === TASK_START_OPERATION) {
-      return this.handleExecutionRequest(request, protocolVersion, (parsed) =>
-        this.executions.start(parsed),
+      return this.handleExecutionRequest(request, protocolVersion, (parsed, correlationId) =>
+        this.executions.start(parsed, correlationId),
       );
     }
     if (request.operation.name === PROVIDER_SESSION_RESUME_OPERATION) {
@@ -301,8 +301,8 @@ export class RuntimeServer {
       return this.handleRecovery(request, protocolVersion);
     }
     if (request.operation.name === TASK_CANCEL_OPERATION) {
-      return this.handleExecutionRequest(request, protocolVersion, (parsed) =>
-        this.executions.cancel(parsed),
+      return this.handleExecutionRequest(request, protocolVersion, (parsed, correlationId) =>
+        this.executions.cancel(parsed, correlationId),
       );
     }
     if (request.operation.name === TASK_EXECUTION_OPERATION) {
@@ -322,8 +322,8 @@ export class RuntimeServer {
     try {
       const parsed = parseProviderSessionActionRequest(request);
       const execution = action === 'resume'
-        ? await this.executions.resumeProvider(parsed)
-        : await this.executions.forkProvider(parsed);
+        ? await this.executions.resumeProvider(parsed, request.correlationId)
+        : await this.executions.forkProvider(parsed, request.correlationId);
       return success(request, protocolVersion, execution as unknown as Record<string, unknown>);
     } catch (error) {
       return executionFailure(request, protocolVersion, error);
@@ -385,7 +385,7 @@ export class RuntimeServer {
       return failure(request, protocolVersion, 'invalid-request', false);
     }
     try {
-      const task = await this.tasks.create(taskRequest);
+      const task = await this.tasks.create(taskRequest, request.correlationId);
       return success(request, protocolVersion, task as unknown as Record<string, unknown>);
     } catch (error) {
       if (error instanceof TaskStorageError) {
@@ -426,14 +426,21 @@ export class RuntimeServer {
   private async handleExecutionRequest(
     request: RuntimeRequestFrame,
     protocolVersion: number,
-    operation: (parsed: { readonly taskId: string; readonly idempotencyKey: string }) => Promise<unknown>,
+    operation: (
+      parsed: { readonly taskId: string; readonly idempotencyKey: string },
+      correlationId: string,
+    ) => Promise<unknown>,
   ): Promise<RuntimeResponseFrame> {
     try {
       const parsed =
         request.operation.name === TASK_START_OPERATION
           ? parseStartTaskRequest(request)
           : parseCancelTaskRequest(request);
-      return success(request, protocolVersion, (await operation(parsed)) as Record<string, unknown>);
+      return success(
+        request,
+        protocolVersion,
+        (await operation(parsed, request.correlationId)) as Record<string, unknown>,
+      );
     } catch (error) {
       return executionFailure(request, protocolVersion, error);
     }

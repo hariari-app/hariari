@@ -2,7 +2,6 @@ import type {
   CancelTaskRequest,
   CreateTaskRequest,
   StartTaskRequest,
-  ProviderSessionActionRequest,
   ReconcileTaskRequest,
   RecoverTaskRequest,
   TaskExecutionState,
@@ -36,6 +35,7 @@ import {
   type ProviderActionDecision,
   type ProviderActionRejection,
   type ProviderSessionAction,
+  type ProviderSessionOperationRequest,
 } from './provider-session-lifecycle';
 import { TaskEventStore, TaskEventStoreError } from './task-event-store';
 import { type AttemptLifecycleKind, TaskEventTimeline } from './task-event-timeline';
@@ -47,6 +47,15 @@ import type {
   ProviderActionRepair,
   ProviderForkReservation,
   StoredExecution,
+} from './task-execution-state';
+import {
+  abortProviderActionExecution,
+  cancelExecution,
+  executionFromRun,
+  forkExecution,
+  plannedProviderRepair,
+  resumeExecution,
+  terminalExecution,
 } from './task-execution-state';
 import {
   canonicalExecutionFingerprint,
@@ -70,9 +79,10 @@ export class TaskModule {
   private readonly tasks = new Map<string, TaskView>();
   private readonly taskIds = new Map<string, TaskView>();
   private readonly fingerprints = new Map<string, string>();
+  private readonly taskCorrelations = new Map<string, string>();
   private readonly executions = new Map<string, StoredExecution>();
   private readonly executionKeys = new Map<string, StoredExecution>();
-  private readonly eventTimeline = new TaskEventTimeline({ now: () => new Date(this.now()).toISOString(), append: (event) => this.appendVisible(event) });
+  private readonly eventTimeline: TaskEventTimeline;
   private readonly providerLifecycle: ProviderSessionLifecycle;
   private readonly recoveryJournal: TaskRecoveryJournal;
   private mutation: Promise<void> = Promise.resolve();
@@ -84,6 +94,11 @@ export class TaskModule {
   ) {
     this.runtimeDirectory = runtimeDirectory;
     this.store = new TaskEventStore(runtimeDirectory, randomId);
+    this.eventTimeline = new TaskEventTimeline({
+      now: () => new Date(this.now()).toISOString(),
+      append: (event) => this.appendVisible(event),
+      execution: (taskId) => this.executionFor(taskId),
+    });
     this.providerLifecycle = new ProviderSessionLifecycle({
       view: (taskId) => this.lifecycleView(taskId),
       append: (event) => this.appendVisible(event),
@@ -91,7 +106,9 @@ export class TaskModule {
     this.recoveryJournal = new TaskRecoveryJournal({
       append: (event) => this.appendVisible(event),
       assertWritable: () => this.throwIfPoisoned(),
-      fail: (code) => { throw new TaskStorageError(code); },
+      fail: (code) => {
+        throw new TaskStorageError(code);
+      },
       serialize: (operation) => this.enqueue(operation),
       taskExists: (taskId) => this.taskIds.has(taskId),
     });
@@ -106,13 +123,20 @@ export class TaskModule {
     }
   }
 
-  create(request: CreateTaskRequest): Promise<TaskView> {
+  create(request: CreateTaskRequest, correlationId: string): Promise<TaskView> {
     return this.enqueue(async () => {
       this.throwIfPoisoned();
       const fingerprint = canonicalTaskFingerprint(request);
       const existing = this.tasks.get(request.idempotencyKey);
       if (existing) {
-        if (this.fingerprints.get(request.idempotencyKey) === fingerprint) { await this.eventTimeline.recordTaskCreated(existing, request.idempotencyKey); return existing; }
+        if (this.fingerprints.get(request.idempotencyKey) === fingerprint) {
+          await this.eventTimeline.recordTaskCreated(
+            existing,
+            request.idempotencyKey,
+            this.taskCorrelations.get(request.idempotencyKey) ?? request.idempotencyKey,
+          );
+          return existing;
+        }
         throw new TaskStorageError('idempotency-conflict');
       }
       const task: TaskView = {
@@ -129,9 +153,10 @@ export class TaskModule {
         version: 1,
         task,
         idempotencyKey: request.idempotencyKey,
+        correlationId,
         fingerprint,
       });
-      await this.eventTimeline.recordTaskCreated(task, request.idempotencyKey);
+      await this.eventTimeline.recordTaskCreated(task, request.idempotencyKey, correlationId);
       return task;
     });
   }
@@ -146,7 +171,10 @@ export class TaskModule {
         .map((worktreeId) => ({ taskId: execution.taskId, worktreeId })));
   }
 
-  reserveExecution(request: StartTaskRequest): Promise<ExecutionReservation> {
+  reserveExecution(
+    request: StartTaskRequest,
+    correlationId: string,
+  ): Promise<ExecutionReservation> {
     return this.enqueue(async () => {
       this.throwIfPoisoned();
       const task = this.taskById(request.taskId);
@@ -164,7 +192,7 @@ export class TaskModule {
           return { execution: this.viewFor(task, this.executionFor(task.id)), created: true };
         }
         if (keyed.attempt.state === 'starting' && !keyed.context) {
-          const providerRepair = this.providerRepair(keyed);
+          const providerRepair = plannedProviderRepair(keyed);
           return {
             execution: this.viewFor(task, keyed), created: true,
             providerRepair,
@@ -179,6 +207,7 @@ export class TaskModule {
         version: 1,
         taskId: task.id,
         idempotencyKey: request.idempotencyKey,
+        correlationId,
         fingerprint,
         run,
       });
@@ -194,7 +223,6 @@ export class TaskModule {
       this.throwIfPoisoned();
       const task = this.taskById(taskId);
       const current = this.executionFor(task.id);
-      const operationKey = current.currentOperationKey;
       if (current.context) {
         if (current.context.id !== context.id || current.providerSession?.id !== providerSession?.id) {
           throw new TaskStorageError('internal');
@@ -205,13 +233,16 @@ export class TaskModule {
       if (providerSession) {
         if (providerObservation === null) throw new TaskStorageError('internal');
         await this.eventTimeline.recordProviderObservation(
-          this.executionFor(taskId), providerSession, operationKey, providerObservation);
+          this.executionFor(taskId),
+          providerSession,
+          providerObservation,
+        );
       }
       return this.viewFor(task, this.executionFor(task.id));
     });
   }
 
-  reserveNativeResume(request: ProviderSessionActionRequest): Promise<NativeResumeReservation> {
+  reserveNativeResume(request: ProviderSessionOperationRequest): Promise<NativeResumeReservation> {
     return this.enqueue(async () => {
       this.throwIfPoisoned();
       const task = this.taskById(request.taskId);
@@ -238,7 +269,9 @@ export class TaskModule {
         type: 'AttemptResumed', version: 1, taskId: task.id,
         attempt: { id: this.randomId(), number: parent.attempt.number + 1, state: 'starting' },
         sourceAttemptId: parent.attempt.id, sourceSessionId: parent.session.id,
-        actionKey: request.idempotencyKey, plannedContext,
+        actionKey: request.idempotencyKey,
+        correlationId: request.correlationId,
+        plannedContext,
       });
       return { kind: 'native-resume', execution: this.viewFor(task, this.executionFor(task.id)),
         parentContext: parent.context, parentSession: parent.session, plannedContext };
@@ -246,7 +279,7 @@ export class TaskModule {
   }
 
   prepareProviderAction(
-    request: ProviderSessionActionRequest,
+    request: ProviderSessionOperationRequest,
     action: ProviderSessionAction,
   ): Promise<PreparedProviderAction> {
     return this.enqueue(() => this.runProvider(() => this.providerLifecycle.prepare(request, action)));
@@ -312,7 +345,9 @@ export class TaskModule {
         type: 'AttemptForked', version: 1, taskId: task.id,
         attempt: { id: this.randomId(), number: execution.attempt.number + 1, state: 'starting' },
         parentAttemptId: execution.attempt.id, parentSessionId: prepared.session.id,
-        forkKey: prepared.request.idempotencyKey, plannedContext,
+        forkKey: prepared.request.idempotencyKey,
+        correlationId: prepared.request.correlationId,
+        plannedContext,
       });
       return { kind: 'fork', execution: this.viewFor(task, this.executionFor(task.id)),
         parentContext: prepared.context, parentSession: prepared.session, plannedContext };
@@ -320,7 +355,7 @@ export class TaskModule {
   }
 
   recoverProviderAction(
-    request: ProviderSessionActionRequest, kind: PlannedProviderRepair['kind'],
+    request: ProviderSessionOperationRequest, kind: PlannedProviderRepair['kind'],
   ): Promise<ProviderActionRepair | null> {
     return this.enqueue(async () => {
       const task = this.taskById(request.taskId);
@@ -329,7 +364,7 @@ export class TaskModule {
       if (!planned || planned.kind !== kind || planned.actionKey !== request.idempotencyKey ||
         planned.sourceSessionId !== request.providerSessionId) return null;
       if (isTerminalExecutionState(execution.attempt?.state)) return { execution: this.viewFor(task, execution), repair: null };
-      const repair = this.providerRepair(execution);
+      const repair = plannedProviderRepair(execution);
       if (!repair) throw new TaskStorageError('internal');
       return { execution: this.viewFor(task, execution), repair };
     });
@@ -363,7 +398,9 @@ export class TaskModule {
     return this.finish(taskId, 'failed');
   }
 
-  requestCancellation(request: CancelTaskRequest): Promise<TaskExecutionView> {
+  requestCancellation(
+    request: CancelTaskRequest & { readonly correlationId: string },
+  ): Promise<TaskExecutionView> {
     return this.enqueue(async () => {
       this.throwIfPoisoned();
       const task = this.taskById(request.taskId);
@@ -385,6 +422,7 @@ export class TaskModule {
         version: 1,
         taskId: task.id,
         idempotencyKey: request.idempotencyKey,
+        correlationId: request.correlationId,
         fingerprint,
       });
       return this.viewFor(task, this.executionFor(task.id));
@@ -405,9 +443,11 @@ export class TaskModule {
     return this.eventTimeline.view(taskId, this.execution(taskId));
   }
   hasCompleteProviderSessionObservation(taskId: string, attemptId: string, providerSessionId: string): boolean {
-    return this.eventTimeline.hasMatchingProviderObservation(taskId, attemptId, providerSessionId); }
+    return this.eventTimeline.hasMatchingProviderObservation(taskId, attemptId, providerSessionId);
+  }
   hasAttemptLifecycleEvent(taskId: string, attemptId: string, kind: AttemptLifecycleKind): boolean {
-    return this.eventTimeline.hasLifecycleEvent(taskId, attemptId, kind); }
+    return this.eventTimeline.hasLifecycleEvent(taskId, attemptId, kind);
+  }
   privateExecution(taskId: string): PrivateTaskExecutionView {
     const task = this.taskById(taskId);
     return this.privateViewFor(task, this.executions.get(task.id) ?? null);
@@ -463,17 +503,11 @@ export class TaskModule {
       this.throwIfPoisoned();
       const task = this.taskById(taskId);
       const execution = this.executionFor(task.id);
-      if (isTerminalExecutionState(execution.attempt?.state)) {
-        await this.eventTimeline.recordTerminalLifecycle(execution); return this.viewFor(task, execution); }
-      const cancelled = requested === 'cancelled' || execution.attempt?.state === 'cancelling';
-      const event = cancelled
-        ? { type: 'AttemptCancelled' as const, version: 1 as const, taskId }
-        : requested === 'completed'
-          ? { type: 'AttemptCompleted' as const, version: 1 as const, taskId, exitCode: exitCode ?? 0 }
-          : { type: 'AttemptFailed' as const, version: 1 as const, taskId };
-      await this.appendVisible(event);
-      const terminal = this.executionFor(task.id);
-      await this.eventTimeline.recordTerminalLifecycle(terminal);
+      const terminal = await this.eventTimeline.recordTerminalTransition(
+        execution,
+        requested,
+        exitCode,
+      );
       return this.viewFor(task, terminal);
     });
   }
@@ -489,16 +523,19 @@ export class TaskModule {
 
   private apply(event: TaskEvent): void {
     switch (event.type) {
-      case 'TaskCreated': return void this.applyTaskCreated(event);
-      case 'RunCreated': return void this.applyRunCreated(event);
-      case 'AttemptCreated': return void this.applyAttemptCreated(event);
-      case 'ContextAllocated': return void this.applyContextAllocated(event);
+      case 'TaskCreated':
+      case 'RunCreated':
+      case 'AttemptCreated':
+      case 'ContextAllocated':
+        this.applyFoundationEvent(event);
+        return;
       case 'RawProviderObservationRecorded':
       case 'NormalizedRuntimeEventRecorded':
-        this.taskById(event.taskId);
-        this.eventTimeline.apply(event, event.type === 'NormalizedRuntimeEventRecorded' && event.event.kind !== 'task-created' ? this.executionFor(event.taskId) : undefined);
+        this.applyTimelineEvent(event);
         return;
-      case 'AttemptStarted': return void this.applyAttemptStarted(event);
+      case 'AttemptStarted':
+        this.applyAttemptStarted(event);
+        return;
       case 'AttemptSupersessionRequested':
         this.applySupersessionRequested(event);
         return;
@@ -519,13 +556,9 @@ export class TaskModule {
         this.applyCancellationRequested(event);
         return;
       case 'AttemptCompleted':
-        this.applyTerminal(event.taskId, 'completed', event.exitCode);
-        return;
       case 'AttemptFailed':
-        this.applyTerminal(event.taskId, 'failed');
-        return;
       case 'AttemptCancelled':
-        this.applyTerminal(event.taskId, 'cancelled');
+        this.applyTerminalTransition(event);
         return;
       case 'AttemptForked':
         this.applyAttemptForked(event);
@@ -535,6 +568,52 @@ export class TaskModule {
         this.recoveryJournal.replay(event);
         return;
     }
+  }
+
+  private applyFoundationEvent(
+    event: Extract<
+      TaskEvent,
+      { type: 'TaskCreated' | 'RunCreated' | 'AttemptCreated' | 'ContextAllocated' }
+    >,
+  ): void {
+    switch (event.type) {
+      case 'TaskCreated':
+        this.applyTaskCreated(event);
+        return;
+      case 'RunCreated':
+        this.applyRunCreated(event);
+        return;
+      case 'AttemptCreated':
+        this.applyAttemptCreated(event);
+        return;
+      case 'ContextAllocated':
+        this.applyContextAllocated(event);
+        return;
+    }
+  }
+
+  private applyTimelineEvent(
+    event: Extract<
+      TaskEvent,
+      { type: 'RawProviderObservationRecorded' | 'NormalizedRuntimeEventRecorded' }
+    >,
+  ): void {
+    this.taskById(event.taskId);
+    const execution = event.type === 'NormalizedRuntimeEventRecorded' &&
+      event.event.kind !== 'task-created'
+      ? this.executionFor(event.taskId)
+      : undefined;
+    this.eventTimeline.apply(event, execution);
+  }
+
+  private applyTerminalTransition(
+    event: Extract<
+      TaskEvent,
+      { type: 'AttemptCompleted' | 'AttemptFailed' | 'AttemptCancelled' }
+    >,
+  ): void {
+    const execution = this.executionFor(event.taskId);
+    this.replaceExecution(execution, terminalExecution(execution, event));
   }
 
   private applyTaskCreated(event: TaskCreatedEvent): void {
@@ -550,28 +629,14 @@ export class TaskModule {
     this.tasks.set(event.idempotencyKey, event.task);
     this.taskIds.set(event.task.id, event.task);
     this.fingerprints.set(event.idempotencyKey, event.fingerprint);
+    this.taskCorrelations.set(event.idempotencyKey, event.correlationId);
   }
 
   private applyRunCreated(event: RunCreatedEvent): void {
     if (!this.taskIds.has(event.taskId) || this.executions.has(event.taskId)) {
       throw new TaskStorageError('internal');
     }
-    const execution: StoredExecution = {
-      taskId: event.taskId,
-      idempotencyKey: event.idempotencyKey,
-      fingerprint: event.fingerprint,
-      currentOperationKey: event.idempotencyKey,
-      run: event.run,
-      attempt: null,
-      attempts: [],
-      context: null,
-      executionContexts: [],
-      providerSession: null,
-      providerSessions: [],
-      supersession: null,
-      plannedAction: null,
-      cancellation: null,
-    };
+    const execution = executionFromRun(event);
     this.executions.set(event.taskId, execution);
     this.executionKeys.set(event.idempotencyKey, execution);
   }
@@ -635,86 +700,22 @@ export class TaskModule {
 
   private applyAttemptResumed(event: AttemptResumedEvent): void {
     const execution = this.executionFor(event.taskId);
-    if (!execution.attempt || execution.attempt.id !== event.sourceAttemptId ||
-      execution.attempt.state !== 'superseded' ||
-      execution.providerSession?.id !== event.sourceSessionId) throw new TaskStorageError('internal');
-    this.replaceExecution(execution, {
-      ...execution, attempt: event.attempt, attempts: [...execution.attempts, event.attempt],
-      context: null, providerSession: null, cancellation: null, supersession: null,
-      plannedAction: {
-        kind: 'native-resume', actionKey: event.actionKey,
-        sourceAttemptId: event.sourceAttemptId,
-        sourceSessionId: event.sourceSessionId, plannedContext: event.plannedContext,
-      },
-      currentOperationKey: event.actionKey,
-    });
+    this.replaceExecution(execution, resumeExecution(execution, event));
   }
 
   private applyProviderActionAborted(taskId: string): void {
     const execution = this.executionFor(taskId);
-    if (!execution.attempt || execution.attempt.state !== 'superseding' ||
-      !execution.supersession) throw new TaskStorageError('internal');
-    this.replaceExecution(execution, {
-      ...this.withAttempt(execution, { ...execution.attempt, state: 'running' }),
-      supersession: null,
-    });
+    this.replaceExecution(execution, abortProviderActionExecution(execution));
   }
 
   private applyCancellationRequested(event: CancellationRequestedEvent): void {
     const execution = this.executionFor(event.taskId);
-    if (!execution.attempt || isTerminalExecutionState(execution.attempt.state) || execution.cancellation) {
-      throw new TaskStorageError('internal');
-    }
-    this.replaceExecution(execution, {
-      ...this.withAttempt(execution, { ...execution.attempt, state: 'cancelling' }),
-      cancellation: {
-        idempotencyKey: event.idempotencyKey,
-        fingerprint: event.fingerprint,
-      },
-      currentOperationKey: event.idempotencyKey,
-    });
+    this.replaceExecution(execution, cancelExecution(execution, event));
   }
 
-  private applyTerminal(
-    taskId: string,
-    state: Extract<TaskExecutionState, 'completed' | 'failed' | 'cancelled'>,
-    exitCode?: number,
-  ): void {
-    const execution = this.executionFor(taskId);
-    if (!execution.attempt || isTerminalExecutionState(execution.attempt.state)) throw new TaskStorageError('internal');
-    this.replaceAttempt(execution, {
-      ...execution.attempt,
-      state,
-      ...(exitCode === undefined ? {} : { exitCode }),
-    });
-  }
   private applyAttemptForked(event: AttemptForkedEvent): void {
     const execution = this.executionFor(event.taskId);
-    if (!execution.attempt || !execution.context || !execution.providerSession || execution.attempt.id !== event.parentAttemptId || execution.providerSession.id !== event.parentSessionId || execution.attempt.number >= event.attempt.number) throw new TaskStorageError('internal');
-    const parent = event.plannedContext ? execution.attempt
-      : { ...execution.attempt, state: 'superseded' as const };
-    this.replaceExecution(execution, { ...execution, attempt: event.attempt,
-      attempts: [...execution.attempts.map((attempt) =>
-        attempt.id === parent.id ? parent : attempt), event.attempt], context: null,
-      providerSession: null, cancellation: null, supersession: null,
-      currentOperationKey: event.forkKey,
-      plannedAction: event.plannedContext ? {
-        kind: 'fork', actionKey: event.forkKey,
-        sourceAttemptId: event.parentAttemptId,
-        sourceSessionId: event.parentSessionId, plannedContext: event.plannedContext,
-      } : null });
-  }
-
-  private providerRepair(execution: StoredExecution): PlannedProviderRepair | undefined {
-    const planned = execution.plannedAction;
-    if (!planned) return undefined;
-    const parentSession = execution.providerSessions.find((session) =>
-      session.id === planned.sourceSessionId && session.attemptId === planned.sourceAttemptId);
-    const parentContext = parentSession && execution.executionContexts.find((context) =>
-      context.id === parentSession.executionContextId);
-    if (!parentSession || !parentContext) throw new TaskStorageError('internal');
-    return { kind: planned.kind, parentContext, parentSession,
-      plannedContext: planned.plannedContext };
+    this.replaceExecution(execution, forkExecution(execution, event));
   }
 
   private replaceExecution(current: StoredExecution, replacement: StoredExecution): void {

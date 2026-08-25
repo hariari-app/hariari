@@ -24,6 +24,7 @@ export interface RuntimeSubject {
   readonly runtimeDirectory: string;
   readonly transport: ObservedRuntimeTransport;
   connect(): Promise<RuntimeClientSession>;
+  connectWithCorrelations(correlationIds: readonly string[]): Promise<RuntimeClientSession>;
   restart(): Promise<void>;
   restartWith(adapter: GenericCliExecutionAdapter): Promise<void>;
 }
@@ -51,10 +52,21 @@ export async function createSubject(
   let server = serverFor(endpoint, token, transport, randomId, adapter);
   servers.push(server);
   await server.start();
-  return runtimeSubject(runtimeDirectory, transport, connectSubject, restartSubject, restartWith);
+  return runtimeSubject(
+    runtimeDirectory,
+    transport,
+    connectSubject,
+    connectWithCorrelations,
+    restartSubject,
+    restartWith,
+  );
 
   function connectSubject(): Promise<RuntimeClientSession> {
     return connect(endpoint, token, transport, randomId);
+  }
+
+  function connectWithCorrelations(correlationIds: readonly string[]): Promise<RuntimeClientSession> {
+    return connect(endpoint, token, transport, clientIds(correlationIds));
   }
 
   async function restartSubject(): Promise<void> {
@@ -78,10 +90,32 @@ function runtimeSubject(
   runtimeDirectory: string,
   transport: ObservedRuntimeTransport,
   connect: () => Promise<RuntimeClientSession>,
+  connectWithCorrelations: (
+    correlationIds: readonly string[],
+  ) => Promise<RuntimeClientSession>,
   restart: () => Promise<void>,
   restartWith: (adapter: GenericCliExecutionAdapter) => Promise<void>,
 ): RuntimeSubject {
-  return { runtimeDirectory, transport, connect, restart, restartWith };
+  return {
+    runtimeDirectory,
+    transport,
+    connect,
+    connectWithCorrelations,
+    restart,
+    restartWith,
+  };
+}
+
+function clientIds(correlationIds: readonly string[]): () => string {
+  const correlations = [...correlationIds];
+  let call = 0;
+  return () => {
+    call += 1;
+    if (call === 1) return 'authenticated-handshake-request';
+    if (call === 2) return 'authenticated-handshake-nonce';
+    if (call % 2 === 1) return `authenticated-operation-request-${(call - 1) / 2}`;
+    return correlations.shift() ?? `authenticated-query-correlation-${call}`;
+  };
 }
 
 function serverFor(

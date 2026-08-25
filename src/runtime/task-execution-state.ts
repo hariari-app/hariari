@@ -1,16 +1,27 @@
-import type { TaskExecutionView } from '../shared/runtime/runtime-interface';
 import type {
+  TaskExecutionState,
+  TaskExecutionView,
+} from '../shared/runtime/runtime-interface';
+import type {
+  AttemptForkedEvent,
+  AttemptResumedEvent,
+  CancellationRequestedEvent,
+  RunCreatedEvent,
   StoredAttempt,
   StoredContext,
   StoredProviderSession,
   StoredRun,
+  TaskEvent,
 } from './task-events';
+import { isTerminalExecutionState } from './task-execution-rules';
+import { TaskStorageError } from './task-storage-error';
 
 export interface StoredExecution {
   readonly taskId: string;
   readonly idempotencyKey: string;
   readonly fingerprint: string;
   readonly currentOperationKey: string;
+  readonly currentCorrelationId: string;
   readonly run: StoredRun;
   readonly attempt: StoredAttempt | null;
   readonly attempts: readonly StoredAttempt[];
@@ -31,7 +42,11 @@ export interface StoredExecution {
     readonly sourceSessionId: string;
     readonly plannedContext: StoredContext;
   } | null;
-  readonly cancellation: { readonly idempotencyKey: string; readonly fingerprint: string } | null;
+  readonly cancellation: {
+    readonly idempotencyKey: string;
+    readonly correlationId: string;
+    readonly fingerprint: string;
+  } | null;
 }
 
 export interface ExecutionReservation {
@@ -54,3 +69,200 @@ export interface NativeResumeReservation extends PlannedProviderRepair {
 }
 
 export type ProviderForkReservation = NativeResumeReservation;
+
+export function executionFromRun(event: RunCreatedEvent): StoredExecution {
+  return {
+    taskId: event.taskId,
+    idempotencyKey: event.idempotencyKey,
+    fingerprint: event.fingerprint,
+    currentOperationKey: event.idempotencyKey,
+    currentCorrelationId: event.correlationId,
+    run: event.run,
+    attempt: null,
+    attempts: [],
+    context: null,
+    executionContexts: [],
+    providerSession: null,
+    providerSessions: [],
+    supersession: null,
+    plannedAction: null,
+    cancellation: null,
+  };
+}
+
+export function resumeExecution(
+  execution: StoredExecution,
+  event: AttemptResumedEvent,
+): StoredExecution {
+  if (
+    !execution.attempt ||
+    execution.attempt.id !== event.sourceAttemptId ||
+    execution.attempt.state !== 'superseded' ||
+    execution.providerSession?.id !== event.sourceSessionId
+  ) {
+    throw new TaskStorageError('internal');
+  }
+  return {
+    ...execution,
+    attempt: event.attempt,
+    attempts: [...execution.attempts, event.attempt],
+    context: null,
+    providerSession: null,
+    cancellation: null,
+    supersession: null,
+    plannedAction: {
+      kind: 'native-resume',
+      actionKey: event.actionKey,
+      sourceAttemptId: event.sourceAttemptId,
+      sourceSessionId: event.sourceSessionId,
+      plannedContext: event.plannedContext,
+    },
+    currentOperationKey: event.actionKey,
+    currentCorrelationId: event.correlationId,
+  };
+}
+
+export function cancelExecution(
+  execution: StoredExecution,
+  event: CancellationRequestedEvent,
+): StoredExecution {
+  if (
+    !execution.attempt ||
+    execution.cancellation ||
+    ['completed', 'failed', 'cancelled', 'superseded'].includes(execution.attempt.state)
+  ) {
+    throw new TaskStorageError('internal');
+  }
+  const attempt = { ...execution.attempt, state: 'cancelling' as const };
+  return {
+    ...execution,
+    attempt,
+    attempts: execution.attempts.map((stored) => stored.id === attempt.id ? attempt : stored),
+    cancellation: {
+      idempotencyKey: event.idempotencyKey,
+      correlationId: event.correlationId,
+      fingerprint: event.fingerprint,
+    },
+    currentOperationKey: event.idempotencyKey,
+    currentCorrelationId: event.correlationId,
+  };
+}
+
+export function abortProviderActionExecution(execution: StoredExecution): StoredExecution {
+  if (
+    !execution.attempt ||
+    execution.attempt.state !== 'superseding' ||
+    !execution.supersession
+  ) {
+    throw new TaskStorageError('internal');
+  }
+  const attempt = { ...execution.attempt, state: 'running' as const };
+  return {
+    ...execution,
+    attempt,
+    attempts: execution.attempts.map((stored) => stored.id === attempt.id ? attempt : stored),
+    supersession: null,
+  };
+}
+
+export function plannedProviderRepair(
+  execution: StoredExecution,
+): PlannedProviderRepair | undefined {
+  const planned = execution.plannedAction;
+  if (!planned) {
+    return undefined;
+  }
+  const parentSession = execution.providerSessions.find((session) =>
+    session.id === planned.sourceSessionId && session.attemptId === planned.sourceAttemptId);
+  const parentContext = parentSession && execution.executionContexts.find((context) =>
+    context.id === parentSession.executionContextId);
+  if (!parentSession || !parentContext) {
+    throw new TaskStorageError('internal');
+  }
+  return {
+    kind: planned.kind,
+    parentContext,
+    parentSession,
+    plannedContext: planned.plannedContext,
+  };
+}
+
+export function terminalExecution(
+  execution: StoredExecution,
+  event: Extract<
+    TaskEvent,
+    { type: 'AttemptCompleted' | 'AttemptFailed' | 'AttemptCancelled' }
+  >,
+): StoredExecution {
+  if (!execution.attempt || isTerminalExecutionState(execution.attempt.state)) {
+    throw new TaskStorageError('internal');
+  }
+  const state = terminalState(event);
+  const attempt: StoredAttempt = {
+    ...execution.attempt,
+    state,
+    ...(event.type === 'AttemptCompleted' ? { exitCode: event.exitCode } : {}),
+  };
+  return {
+    ...execution,
+    attempt,
+    attempts: execution.attempts.map((stored) => stored.id === attempt.id ? attempt : stored),
+  };
+}
+
+function terminalState(
+  event: Extract<
+    TaskEvent,
+    { type: 'AttemptCompleted' | 'AttemptFailed' | 'AttemptCancelled' }
+  >,
+): Extract<TaskExecutionState, 'completed' | 'failed' | 'cancelled'> {
+  if (event.type === 'AttemptCompleted') {
+    return 'completed';
+  }
+  if (event.type === 'AttemptFailed') {
+    return 'failed';
+  }
+  return 'cancelled';
+}
+
+export function forkExecution(
+  execution: StoredExecution,
+  event: AttemptForkedEvent,
+): StoredExecution {
+  if (
+    !execution.attempt ||
+    !execution.context ||
+    !execution.providerSession ||
+    execution.attempt.id !== event.parentAttemptId ||
+    execution.providerSession.id !== event.parentSessionId ||
+    execution.attempt.number >= event.attempt.number
+  ) {
+    throw new TaskStorageError('internal');
+  }
+  const parent = event.plannedContext
+    ? execution.attempt
+    : { ...execution.attempt, state: 'superseded' as const };
+  return {
+    ...execution,
+    attempt: event.attempt,
+    attempts: [
+      ...execution.attempts.map((attempt) => attempt.id === parent.id ? parent : attempt),
+      event.attempt,
+    ],
+    context: null,
+    providerSession: null,
+    cancellation: null,
+    supersession: null,
+    currentOperationKey: event.forkKey,
+    currentCorrelationId: event.correlationId,
+    plannedAction: event.plannedContext
+      ? {
+          kind: 'fork',
+          actionKey: event.forkKey,
+          sourceAttemptId: event.parentAttemptId,
+          sourceSessionId: event.parentSessionId,
+          plannedContext: event.plannedContext,
+        }
+      : null,
+  };
+}

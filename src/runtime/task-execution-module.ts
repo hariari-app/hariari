@@ -19,6 +19,7 @@ import {
   type ExecutionLaunchPlan,
 } from './generic-cli-execution-adapter';
 import { TaskModule } from './task-module';
+import type { ProviderSessionOperationRequest } from './provider-session-lifecycle';
 import type { PlannedProviderRepair } from './task-execution-state';
 import type { PrivateTaskExecutionView } from './task-execution-projection';
 import { TaskOutputLog } from './task-output-log';
@@ -71,23 +72,27 @@ export class TaskExecutionModule {
     this.recovery = new RecoveryReconciler(randomId);
   }
 
-  start(request: StartTaskRequest): Promise<TaskExecutionView> {
+  start(request: StartTaskRequest, correlationId: string): Promise<TaskExecutionView> {
     return this.runTaskOperation(
       request.taskId, request.idempotencyKey,
       JSON.stringify(['start', request.taskId]),
-      () => this.startOwned(request),
+      () => this.startOwned(request, correlationId),
     );
   }
-  resumeProvider(request: ProviderSessionActionRequest): Promise<TaskExecutionView> {
+  resumeProvider(
+    request: ProviderSessionActionRequest,
+    correlationId: string,
+  ): Promise<TaskExecutionView> {
+    const operationRequest = { ...request, correlationId };
     return this.runTaskOperation(
       request.taskId,
       request.idempotencyKey,
       JSON.stringify(['resume', request.taskId, request.providerSessionId]),
-      () => this.resumeProviderOwned(request),
+      () => this.resumeProviderOwned(operationRequest),
     );
   }
   private async resumeProviderOwned(
-    request: ProviderSessionActionRequest,
+    request: ProviderSessionOperationRequest,
   ): Promise<TaskExecutionView> {
     const prepared = await this.tasks.prepareProviderAction(request, 'resume');
     if (prepared.prior?.decision === 'exact-reattach') {
@@ -97,7 +102,7 @@ export class TaskExecutionModule {
     if (prepared.prior?.decision === 'native-resume' &&
       current.providerSession?.parentId === request.providerSessionId &&
       current.providerSession.lineage === 'native-resume') return current;
-    const recovery = await this.tasks.recoverProviderAction(request, 'native-resume');
+    const recovery = await this.tasks.recoverProviderAction(prepared.request, 'native-resume');
     if (recovery && !recovery.repair) return recovery.execution;
     if (recovery?.repair) return this.startReserved(
       { taskId: request.taskId, idempotencyKey: request.idempotencyKey },
@@ -105,7 +110,7 @@ export class TaskExecutionModule {
     );
     if (prepared.prior?.decision === 'native-resume') {
       this.releaseLostActive(request.taskId);
-      const reservation = await this.tasks.reserveNativeResume(request);
+      const reservation = await this.tasks.reserveNativeResume(prepared.request);
       return this.startNativeResumeReserved(request.taskId, reservation);
     }
     const observation = await this.adapter.observe(bindingFor(prepared));
@@ -118,7 +123,7 @@ export class TaskExecutionModule {
     }
     await this.tasks.acceptProviderAction(prepared, 'native-resume');
     this.releaseLostActive(request.taskId);
-    const reservation = await this.tasks.reserveNativeResume(request);
+    const reservation = await this.tasks.reserveNativeResume(prepared.request);
     return this.startNativeResumeReserved(request.taskId, reservation);
   }
 
@@ -130,23 +135,27 @@ export class TaskExecutionModule {
       if (candidate === active) this.activeAttempts.delete(attemptId);
     }
   }
-  forkProvider(request: ProviderSessionActionRequest): Promise<TaskExecutionView> {
+  forkProvider(
+    request: ProviderSessionActionRequest,
+    correlationId: string,
+  ): Promise<TaskExecutionView> {
+    const operationRequest = { ...request, correlationId };
     return this.runTaskOperation(
       request.taskId,
       request.idempotencyKey,
       JSON.stringify(['fork', request.taskId, request.providerSessionId]),
-      () => this.forkProviderOwned(request),
+      () => this.forkProviderOwned(operationRequest),
     );
   }
   private async forkProviderOwned(
-    request: ProviderSessionActionRequest,
+    request: ProviderSessionOperationRequest,
   ): Promise<TaskExecutionView> {
     const prepared = await this.tasks.prepareProviderAction(request, 'fork');
     const current = this.tasks.execution(request.taskId);
     if (prepared.prior && current.providerSession?.parentId === request.providerSessionId) {
       return current;
     }
-    const recovery = await this.tasks.recoverProviderAction(request, 'fork');
+    const recovery = await this.tasks.recoverProviderAction(prepared.request, 'fork');
     if (recovery && !recovery.repair) return recovery.execution;
     if (recovery?.repair) return this.startReserved(
       { taskId: request.taskId, idempotencyKey: request.idempotencyKey },
@@ -228,8 +237,11 @@ export class TaskExecutionModule {
     if (this.operations.get(taskId) === owned) this.operations.delete(taskId);
   }
 
-  private async startOwned(request: StartTaskRequest): Promise<TaskExecutionView> {
-    const reservation = await this.tasks.reserveExecution(request);
+  private async startOwned(
+    request: StartTaskRequest,
+    correlationId: string,
+  ): Promise<TaskExecutionView> {
+    const reservation = await this.tasks.reserveExecution(request, correlationId);
     return reservation.created
       ? this.startReserved(
           request, reservation.execution, reservation.providerRepair,
@@ -237,19 +249,25 @@ export class TaskExecutionModule {
       : reservation.execution;
   }
 
-  async cancel(request: CancelTaskRequest): Promise<TaskExecutionView> {
+  async cancel(
+    request: CancelTaskRequest,
+    correlationId: string,
+  ): Promise<TaskExecutionView> {
+    const operationRequest = { ...request, correlationId };
     const inFlight = this.operations.get(request.taskId);
     if (inFlight?.fingerprint === JSON.stringify(['start', request.taskId])) {
-      return this.tasks.requestCancellation(request);
+      return this.tasks.requestCancellation(operationRequest);
     }
     return this.runTaskOperation(
       request.taskId, request.idempotencyKey,
       JSON.stringify(['cancel', request.taskId]),
-      () => this.cancelOwned(request),
+      () => this.cancelOwned(operationRequest),
     );
   }
 
-  private async cancelOwned(request: CancelTaskRequest): Promise<TaskExecutionView> {
+  private async cancelOwned(
+    request: CancelTaskRequest & { readonly correlationId: string },
+  ): Promise<TaskExecutionView> {
     const view = await this.tasks.requestCancellation(request);
     if (view.attempt?.state !== 'cancelling') return view;
     const active = this.active.get(request.taskId);

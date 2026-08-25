@@ -11,6 +11,10 @@ export type ProviderActionRejection = Extract<
   'not-found' | 'task-not-ready' | 'unsupported-operation'
 >;
 
+export interface ProviderSessionOperationRequest extends ProviderSessionActionRequest {
+  readonly correlationId: string;
+}
+
 export interface ProviderSessionActionDecidedEvent {
   readonly type: 'ProviderSessionActionDecided';
   readonly version: 1;
@@ -18,6 +22,7 @@ export interface ProviderSessionActionDecidedEvent {
   readonly action: ProviderSessionAction;
   readonly providerSessionId: string;
   readonly idempotencyKey: string;
+  readonly correlationId: string;
   readonly fingerprint: string;
   readonly outcome: 'accepted' | 'rejected';
   readonly decision: ProviderActionDecision | null;
@@ -48,7 +53,7 @@ export interface ProviderActionSource {
 }
 
 export interface PreparedProviderAction extends ProviderActionSource {
-  readonly request: ProviderSessionActionRequest;
+  readonly request: ProviderSessionOperationRequest;
   readonly action: ProviderSessionAction;
   readonly fingerprint: string;
   readonly prior: ProviderSessionActionDecidedEvent | null;
@@ -67,7 +72,7 @@ export class ProviderSessionLifecycle {
   constructor(private readonly port: ProviderSessionLifecyclePort) {}
 
   async prepare(
-    request: ProviderSessionActionRequest,
+    request: ProviderSessionOperationRequest,
     action: ProviderSessionAction,
   ): Promise<PreparedProviderAction> {
     const fingerprint = actionFingerprint(request, action);
@@ -112,7 +117,7 @@ export class ProviderSessionLifecycle {
   }
 
   async rejectWithFingerprint(
-    request: ProviderSessionActionRequest,
+    request: ProviderSessionOperationRequest,
     action: ProviderSessionAction,
     fingerprint: string,
     reason: ProviderActionRejection,
@@ -151,7 +156,7 @@ export class ProviderSessionLifecycle {
   }
 
   private replayPrior(
-    request: ProviderSessionActionRequest,
+    request: ProviderSessionOperationRequest,
     action: ProviderSessionAction,
     fingerprint: string,
     prior: ProviderSessionActionDecidedEvent,
@@ -163,11 +168,17 @@ export class ProviderSessionLifecycle {
       throw new ProviderSessionLifecycleError(prior.reason ?? 'internal');
     }
     const source = sourceForHistory(this.port.view(request.taskId), request.providerSessionId);
-    return { request, action, fingerprint, prior, ...source };
+    return {
+      request: { ...request, correlationId: prior.correlationId },
+      action,
+      fingerprint,
+      prior,
+      ...source,
+    };
   }
 
   private async decide(
-    request: ProviderSessionActionRequest,
+    request: ProviderSessionOperationRequest,
     action: ProviderSessionAction,
     fingerprint: string,
     outcome: 'accepted' | 'rejected',
@@ -177,7 +188,9 @@ export class ProviderSessionLifecycle {
     await this.port.append({
       type: 'ProviderSessionActionDecided', version: 1, taskId: request.taskId,
       action, providerSessionId: request.providerSessionId,
-      idempotencyKey: request.idempotencyKey, fingerprint,
+      idempotencyKey: request.idempotencyKey,
+      correlationId: request.correlationId,
+      fingerprint,
       outcome, decision, reason,
     });
   }
@@ -185,7 +198,7 @@ export class ProviderSessionLifecycle {
 
 function sourceFor(
   execution: PrivateTaskExecutionView | null,
-  request: ProviderSessionActionRequest,
+  request: ProviderSessionOperationRequest,
   action: ProviderSessionAction,
 ): ProviderActionSource | { readonly reason: ProviderActionRejection } {
   if (!execution) return { reason: 'not-found' };
@@ -217,7 +230,7 @@ function sourceForHistory(
 }
 
 function actionFingerprint(
-  request: ProviderSessionActionRequest,
+  request: ProviderSessionOperationRequest,
   action: ProviderSessionAction,
 ): string {
   return JSON.stringify([action, request.taskId, request.providerSessionId]);

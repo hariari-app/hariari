@@ -13,6 +13,9 @@ import type {
   TaskView,
 } from '../shared/runtime/runtime-interface';
 import type {
+  AttemptCancelledEvent,
+  AttemptCompletedEvent,
+  AttemptFailedEvent,
   NormalizedRuntimeEventRecordedEvent,
   RawProviderObservationRecordedEvent,
   StoredProviderSession,
@@ -20,11 +23,14 @@ import type {
 import type { StoredExecution } from './task-execution-state';
 
 type TimelineEvent = RawProviderObservationRecordedEvent | NormalizedRuntimeEventRecordedEvent;
+type TerminalTaskEvent = AttemptCancelledEvent | AttemptCompletedEvent | AttemptFailedEvent;
+type TerminalState = 'completed' | 'failed' | 'cancelled';
 export type AttemptLifecycleKind = Exclude<NormalizedRuntimeEventView['kind'], 'task-created' | 'provider-session-observed'>;
 
 interface TaskEventTimelineDependencies {
   readonly now: () => string;
-  readonly append: (event: TimelineEvent) => Promise<void>;
+  readonly append: (event: TimelineEvent | TerminalTaskEvent) => Promise<void>;
+  readonly execution: (taskId: string) => StoredExecution;
 }
 
 interface ProviderObservationAppend {
@@ -33,6 +39,7 @@ interface ProviderObservationAppend {
   readonly attemptId: string;
   readonly providerSessionId: string;
   readonly idempotencyKey: string;
+  readonly correlationId: string;
   readonly observedAt: string;
   readonly evidence: unknown;
   readonly append: (event: TimelineEvent) => Promise<void>;
@@ -45,6 +52,7 @@ interface RecordLifecycleEvent {
   readonly providerSessionId: string | null;
   readonly kind: Exclude<NormalizedRuntimeEventView['kind'], 'provider-session-observed'>;
   readonly idempotencyKey: string;
+  readonly correlationId: string;
   readonly occurredAt: string;
   readonly append: (event: NormalizedRuntimeEventRecordedEvent) => Promise<void>;
 }
@@ -97,9 +105,10 @@ export class TaskEventTimeline {
   recordTaskCreated(
     task: TaskView,
     idempotencyKey: string,
+    correlationId: string,
   ): Promise<void> {
     return this.recordLifecycle({ taskId: task.id, runId: null, attemptId: null,
-      providerSessionId: null, kind: 'task-created', idempotencyKey,
+      providerSessionId: null, kind: 'task-created', idempotencyKey, correlationId,
       occurredAt: task.createdAt, append: this.dependencies.append });
   }
 
@@ -113,7 +122,9 @@ export class TaskEventTimeline {
       candidate.attemptId === attempt.id) ?? null;
     return this.recordLifecycle({ taskId: execution.taskId, runId: execution.run.id,
       attemptId: attempt.id, providerSessionId: session?.id ?? null, kind,
-      idempotencyKey: execution.currentOperationKey, occurredAt: this.dependencies.now(),
+      idempotencyKey: execution.currentOperationKey,
+      correlationId: execution.currentCorrelationId,
+      occurredAt: this.dependencies.now(),
       append: this.dependencies.append });
   }
 
@@ -127,16 +138,44 @@ export class TaskEventTimeline {
     return this.recordAttemptLifecycle(execution, `attempt-${state}`);
   }
 
+  async recordTerminalTransition(
+    execution: StoredExecution,
+    requested: TerminalState,
+    exitCode?: number,
+  ): Promise<StoredExecution> {
+    if (isTerminalState(execution.attempt?.state)) {
+      await this.recordTerminalLifecycle(execution);
+      return execution;
+    }
+    const cancelled = requested === 'cancelled' || execution.attempt?.state === 'cancelling';
+    const event: TerminalTaskEvent = cancelled
+      ? { type: 'AttemptCancelled', version: 1, taskId: execution.taskId }
+      : requested === 'completed'
+        ? {
+            type: 'AttemptCompleted',
+            version: 1,
+            taskId: execution.taskId,
+            exitCode: exitCode ?? 0,
+          }
+        : { type: 'AttemptFailed', version: 1, taskId: execution.taskId };
+    await this.dependencies.append(event);
+    const terminal = this.dependencies.execution(execution.taskId);
+    await this.recordTerminalLifecycle(terminal);
+    return terminal;
+  }
+
   recordProviderObservation(
     execution: StoredExecution,
     providerSession: StoredProviderSession,
-    idempotencyKey: string,
     evidence: unknown,
   ): Promise<void> {
     const attempt = execution.attempt;
     if (!attempt) throw new Error('missing provider observation attempt');
     return this.appendProviderObservation({ taskId: execution.taskId, runId: execution.run.id,
-      attemptId: attempt.id, providerSessionId: providerSession.id, idempotencyKey,
+      attemptId: attempt.id,
+      providerSessionId: providerSession.id,
+      idempotencyKey: execution.currentOperationKey,
+      correlationId: execution.currentCorrelationId,
       observedAt: this.dependencies.now(), evidence, append: this.dependencies.append });
   }
 
@@ -165,6 +204,7 @@ export class TaskEventTimeline {
       providerSessionId: input.providerSessionId,
       kind: 'provider-session-observed',
       idempotencyKey: input.idempotencyKey,
+      correlationId: input.correlationId,
       sequence: this.events(input.taskId).length + 1,
       occurrenceAt: observation.observedAt,
       observedAt: observation.observedAt,
@@ -179,7 +219,8 @@ export class TaskEventTimeline {
       event.kind === input.kind && event.attemptId === input.attemptId);
     if (existing) {
       if (existing.runId !== input.runId || existing.providerSessionId !== input.providerSessionId ||
-        existing.idempotencyKey !== input.idempotencyKey) {
+        existing.idempotencyKey !== input.idempotencyKey ||
+        existing.correlationId !== input.correlationId) {
         throw new Error('conflicting lifecycle event identity');
       }
       return;
@@ -191,6 +232,7 @@ export class TaskEventTimeline {
       providerSessionId: input.providerSessionId,
       kind: input.kind,
       idempotencyKey: input.idempotencyKey,
+      correlationId: input.correlationId,
       sequence: this.events(input.taskId).length + 1,
       occurrenceAt: input.occurredAt,
       observedAt: input.occurredAt,
@@ -301,4 +343,8 @@ export class TaskEventTimeline {
   private normalizedEventById(id: string): NormalizedRuntimeEventView | undefined {
     return [...this.normalizedEvents.values()].flat().find((event) => event.id === id);
   }
+}
+
+function isTerminalState(value: unknown): value is TerminalState {
+  return value === 'completed' || value === 'failed' || value === 'cancelled';
 }

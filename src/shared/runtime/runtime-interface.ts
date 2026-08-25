@@ -1,3 +1,21 @@
+import type { EventTimelineView } from './event-timeline-contract';
+
+export {
+  EVENT_REDACTION_FIELDS,
+  EVENT_TIMELINE_MESSAGES,
+  EVENT_TIMELINE_SCHEMA_VERSION,
+  PROVIDER_OBSERVATION_SCHEMA,
+  RUNTIME_EVENT_SCHEMA,
+} from './event-timeline-contract';
+export type {
+  EventRedactionMetadata,
+  NormalizedRuntimeEventKind,
+  NormalizedRuntimeEventView,
+  RawProviderObservationView,
+  TaskTimelineEntry,
+  TaskTimelineMessage,
+} from './event-timeline-contract';
+
 export interface RuntimeProtocolRange {
   readonly min: number;
   readonly max: number;
@@ -186,74 +204,7 @@ export interface TaskExecutionView {
   readonly providerSessions: readonly ProviderSessionView[];
 }
 
-export const PROVIDER_OBSERVATION_SCHEMA = 'hariari.provider-observation' as const;
-export const RUNTIME_EVENT_SCHEMA = 'hariari.runtime.event' as const;
-export const EVENT_TIMELINE_SCHEMA_VERSION = 1 as const;
-
-export interface EventRedactionMetadata {
-  readonly status: 'allowlisted';
-  readonly omittedFields: readonly (
-    | 'nativeSessionId' | 'capabilities' | 'providerNativeId' | 'absolutePath'
-    | 'command' | 'environment' | 'secret' | 'unproven'
-  )[];
-}
-
-export interface RawProviderObservationView {
-  readonly schema: typeof PROVIDER_OBSERVATION_SCHEMA;
-  readonly version: typeof EVENT_TIMELINE_SCHEMA_VERSION;
-  readonly id: string;
-  readonly taskId: string;
-  readonly provider: 'claude';
-  readonly kind: 'provider-session-observed';
-  readonly observedAt: string;
-  readonly evidence: { readonly sessionState: 'active' };
-  readonly redaction: EventRedactionMetadata;
-}
-
-export interface NormalizedRuntimeEventView {
-  readonly schema: typeof RUNTIME_EVENT_SCHEMA;
-  readonly version: typeof EVENT_TIMELINE_SCHEMA_VERSION;
-  readonly id: string;
-  readonly taskId: string;
-  readonly runId: string | null;
-  readonly attemptId: string | null;
-  readonly providerSessionId: string | null;
-  readonly kind:
-    | 'task-created'
-    | 'provider-session-observed'
-    | 'attempt-started'
-    | 'attempt-completed'
-    | 'attempt-failed'
-    | 'attempt-cancelled';
-  readonly correlationId: string;
-  readonly causationId: string | null;
-  readonly idempotencyKey: string;
-  readonly sequence: number;
-  readonly occurrenceAt: string;
-  readonly observedAt: string;
-  readonly redaction: EventRedactionMetadata;
-}
-
-export interface TaskTimelineEntry {
-  readonly eventId: string;
-  readonly sequence: number;
-  readonly occurredAt: string;
-  readonly message:
-    | 'Task created'
-    | 'Claude provider session observed'
-    | 'Attempt started'
-    | 'Attempt completed'
-    | 'Attempt failed'
-    | 'Attempt cancelled';
-}
-
-export interface TaskTimelineView {
-  readonly taskId: string;
-  readonly status: TaskExecutionView;
-  readonly rawObservations: readonly RawProviderObservationView[];
-  readonly normalizedEvents: readonly NormalizedRuntimeEventView[];
-  readonly timeline: readonly TaskTimelineEntry[];
-}
+export type TaskTimelineView = EventTimelineView<TaskExecutionView>;
 
 export type TaskOutputEvent =
   | {
