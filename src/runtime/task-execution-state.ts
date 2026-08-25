@@ -2,7 +2,10 @@ import type {
   TaskExecutionState,
   TaskExecutionView,
 } from '../shared/runtime/runtime-interface';
-import type { EventTimelineOperationIdentity } from '../shared/runtime/event-timeline-contract';
+import type {
+  EventTimelineOperationChain,
+  EventTimelineOperationIdentity,
+} from '../shared/runtime/event-timeline-contract';
 import type {
   AttemptForkedEvent,
   AttemptResumedEvent,
@@ -282,4 +285,14 @@ export function attemptOperation(
 ): EventTimelineOperationIdentity {
   return { taskId: execution.taskId, runId: execution.run.id, attemptId,
     idempotencyKey, correlationId };
+}
+
+export function eventTimelineOperationChain(
+  execution: StoredExecution,
+): EventTimelineOperationChain {
+  const cancellation = execution.cancellation && execution.attempt
+    ? attemptOperation(execution, execution.attempt.id,
+        execution.cancellation.idempotencyKey, execution.cancellation.correlationId)
+    : null;
+  return { attempts: execution.attemptOperations, cancellation };
 }

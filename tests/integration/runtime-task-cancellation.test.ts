@@ -22,7 +22,7 @@ const subjects: CancellationSubject[] = [];
 const FAILURE_MODES = ['zero-first', 'partial-then-zero', 'partial-then-error'] as const;
 const CANCELLATION_TRANSITIONS = [
   { name: 'CancellationRequested', write: 1 },
-  { name: 'AttemptCancelled', write: 2 },
+  { name: 'AttemptCancelled', write: 3 },
 ] as const;
 const OUTPUT_APPEND_FAILURES = ['zero-write', 'partial-then-error'] as const;
 

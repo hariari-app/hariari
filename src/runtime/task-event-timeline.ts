@@ -25,6 +25,7 @@ import type {
   StoredProviderSession,
 } from './task-events';
 import type { StoredExecution } from './task-execution-state';
+import { eventTimelineOperationChain } from './task-execution-state';
 
 type TimelineEvent = RawProviderObservationRecordedEvent | NormalizedRuntimeEventRecordedEvent;
 type TerminalTaskEvent = AttemptCancelledEvent | AttemptCompletedEvent | AttemptFailedEvent;
@@ -83,7 +84,7 @@ export class TaskEventTimeline {
       consistentStatus,
       rawObservations,
       normalizedEvents,
-      status.run ? this.dependencies.execution(taskId).attemptOperations : [],
+      status.run ? eventTimelineOperationChain(this.dependencies.execution(taskId)) : undefined,
     );
     return {
       taskId,
@@ -101,8 +102,19 @@ export class TaskEventTimeline {
         status,
         this.observations(status.task.id),
         this.events(status.task.id),
-        status.run ? this.dependencies.execution(status.task.id).attemptOperations : [],
+        status.run
+          ? eventTimelineOperationChain(this.dependencies.execution(status.task.id))
+          : undefined,
       );
+    }
+  }
+
+  async repairMissingTaskCreations(tasks: readonly TaskView[]): Promise<void> {
+    for (const task of tasks) {
+      if (this.events(task.id).length > 0) continue;
+      const identity = this.taskCreations.get(task.id);
+      if (!identity) throw new Error('missing Task create identity');
+      await this.recordTaskCreated(task, identity.idempotencyKey, identity.correlationId);
     }
   }
 
@@ -307,6 +319,10 @@ export class TaskEventTimeline {
         event.attemptId === input.attemptId && event.kind === 'provider-session-observed')?.id ??
         events.find((event) => event.kind === 'task-created')?.id ?? null;
     }
+    if (input.kind === 'attempt-cancelled') {
+      return [...events].reverse().find((event) =>
+        event.attemptId === input.attemptId && event.kind === 'cancellation-requested')?.id ?? null;
+    }
     return [...events].reverse().find((event) =>
       event.attemptId === input.attemptId && event.kind === 'attempt-started')?.id ??
       [...events].reverse().find((event) => event.attemptId === input.attemptId)?.id ??
@@ -349,8 +365,8 @@ export class TaskEventTimeline {
       this.observations(record.taskId),
       updated,
       event.kind === 'task-created'
-        ? []
-        : this.dependencies.execution(record.taskId).attemptOperations,
+        ? undefined
+        : eventTimelineOperationChain(this.dependencies.execution(record.taskId)),
     );
     this.normalizedEvents.set(record.taskId, updated);
   }

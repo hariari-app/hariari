@@ -43,6 +43,7 @@ function registerTimelineContractTests(): void {
       'task-created': 'Task created',
       'provider-session-observed': 'Claude provider session observed',
       'attempt-started': 'Attempt started',
+      'cancellation-requested': 'Cancellation requested',
       'attempt-completed': 'Attempt completed',
       'attempt-failed': 'Attempt failed',
       'attempt-cancelled': 'Attempt cancelled',
@@ -216,6 +217,7 @@ function expectTimelineRequestCorrelations(timeline: TaskTimelineView): void {
     ['attempt-started', REQUEST_CORRELATIONS.resume, 'literal-resume-idempotency'],
     ['provider-session-observed', REQUEST_CORRELATIONS.fork, 'literal-fork-idempotency'],
     ['attempt-started', REQUEST_CORRELATIONS.fork, 'literal-fork-idempotency'],
+    ['cancellation-requested', REQUEST_CORRELATIONS.cancel, 'literal-cancel-idempotency'],
     ['attempt-cancelled', REQUEST_CORRELATIONS.cancel, 'literal-cancel-idempotency'],
   ]);
 }
@@ -307,10 +309,13 @@ async function rebuildsTerminalLifecycle(
   const timeline = await runtime.getTaskTimeline(task.id);
 
   expect(timeline.normalizedEvents.map((event) => event.kind)).toEqual([
-    'task-created', 'provider-session-observed', 'attempt-started', `attempt-${terminalState}`,
+    'task-created', 'provider-session-observed', 'attempt-started',
+    ...(terminalState === 'cancelled' ? ['cancellation-requested' as const] : []),
+    `attempt-${terminalState}`,
   ]);
   expect(timeline.timeline.map((entry) => entry.message)).toEqual([
     'Task created', 'Claude provider session observed', 'Attempt started',
+    ...(terminalState === 'cancelled' ? ['Cancellation requested' as const] : []),
     terminalState === 'completed' ? 'Attempt completed'
       : terminalState === 'failed' ? 'Attempt failed' : 'Attempt cancelled',
   ]);

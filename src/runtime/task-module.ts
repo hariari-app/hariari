@@ -32,6 +32,7 @@ import {
   type ProviderSessionOperationRequest,
 } from './provider-session-lifecycle';
 import { TaskEventStore, TaskEventStoreError } from './task-event-store';
+import { TaskEventHistory } from './task-event-history';
 import { type AttemptLifecycleKind, TaskEventTimeline } from './task-event-timeline';
 import { TaskStorageError } from './task-storage-error';
 import type {
@@ -63,6 +64,7 @@ type ResumeParent = NonNullable<ReturnType<typeof resumeParentExecution>>;
 export class TaskModule {
   readonly runtimeDirectory: string;
   private readonly store: TaskEventStore;
+  private readonly eventHistory = new TaskEventHistory();
   private readonly tasks = new Map<string, TaskView>();
   private readonly taskIds = new Map<string, TaskView>();
   private readonly taskOwnershipKeys = new Map<string, string>();
@@ -107,6 +109,7 @@ export class TaskModule {
   async start(): Promise<void> {
     try {
       await this.store.start((event) => this.apply(event), () => this.list());
+      await this.eventTimeline.repairMissingTaskCreations(this.list());
       this.eventTimeline.assertReplayComplete(
         this.list().map((task) => this.executionProjection.view(task)),
       );
@@ -551,6 +554,7 @@ export class TaskModule {
         if (execution.cancellation.fingerprint !== fingerprint) {
           throw new TaskStorageError('idempotency-conflict');
         }
+        await this.eventTimeline.recordAttemptLifecycle(execution, 'cancellation-requested');
         return this.executionProjection.view(task);
       }
       if (!this.eventTimeline.hasLifecycleEvent(
@@ -568,6 +572,8 @@ export class TaskModule {
         correlationId: request.correlationId,
         fingerprint,
       });
+      await this.eventTimeline.recordAttemptLifecycle(
+        this.executionProjection.require(task.id), 'cancellation-requested');
       return this.executionProjection.view(task);
     });
   }
@@ -682,6 +688,9 @@ export class TaskModule {
   }
 
   private apply(event: TaskEvent): void {
+    this.eventHistory.accept(event, 'taskId' in event
+      ? this.executionProjection.optional(event.taskId)?.attempt?.id ?? null
+      : null);
     switch (event.type) {
       case 'TaskCreated':
         this.applyTaskCreated(event);

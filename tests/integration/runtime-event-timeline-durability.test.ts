@@ -69,8 +69,10 @@ const TERMINAL_CASES = cases([
   terminalBoundary('failed', 'normalized attempt-failed', 2,
     'NormalizedRuntimeEventRecorded', 'attempt-failed'),
   terminalBoundary('cancelled', 'CancellationRequested', 1, 'CancellationRequested'),
-  terminalBoundary('cancelled', 'core AttemptCancelled', 2, 'AttemptCancelled'),
-  terminalBoundary('cancelled', 'normalized attempt-cancelled', 3,
+  terminalBoundary('cancelled', 'normalized cancellation-requested', 2,
+    'NormalizedRuntimeEventRecorded', 'cancellation-requested'),
+  terminalBoundary('cancelled', 'core AttemptCancelled', 3, 'AttemptCancelled'),
+  terminalBoundary('cancelled', 'normalized attempt-cancelled', 4,
     'NormalizedRuntimeEventRecorded', 'attempt-cancelled'),
 ]);
 
@@ -305,7 +307,8 @@ async function settleTerminal(
 ): Promise<void> {
   if (fault.state === 'cancelled') {
     const request = { taskId, idempotencyKey: `${key}-cancel` };
-    if (fault.eventType === 'CancellationRequested' && fault.mode !== 'complete') {
+    if ((fault.eventType === 'CancellationRequested' ||
+      fault.normalizedKind === 'cancellation-requested') && fault.mode !== 'complete') {
       await expect(runtime.cancelTask(request)).rejects.toEqual(new RuntimePortError('internal', true));
     }
     await runtime.cancelTask(request);

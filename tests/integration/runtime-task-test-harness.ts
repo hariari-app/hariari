@@ -46,6 +46,7 @@ export interface RuntimeSubject {
   connectWithCorrelations(correlationIds: readonly string[]): Promise<RuntimeClientSession>;
   restart(): Promise<void>;
   restartWith(adapter: GenericCliExecutionAdapter): Promise<void>;
+  stop(): Promise<void>;
 }
 
 export function registerRuntimeTaskTestCleanup(): void {
@@ -78,6 +79,7 @@ export async function createSubject(
     connectWithCorrelations,
     restartSubject,
     restartWith,
+    () => server.stop(),
   );
 
   function connectSubject(): Promise<RuntimeClientSession> {
@@ -114,6 +116,7 @@ function runtimeSubject(
   ) => Promise<RuntimeClientSession>,
   restart: () => Promise<void>,
   restartWith: (adapter: GenericCliExecutionAdapter) => Promise<void>,
+  stop: () => Promise<void>,
 ): RuntimeSubject {
   return {
     runtimeDirectory,
@@ -122,6 +125,7 @@ function runtimeSubject(
     connectWithCorrelations,
     restart,
     restartWith,
+    stop,
   };
 }
 

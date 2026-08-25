@@ -11,6 +11,7 @@ export const EVENT_TIMELINE_MESSAGES = {
   'task-created': 'Task created',
   'provider-session-observed': 'Claude provider session observed',
   'attempt-started': 'Attempt started',
+  'cancellation-requested': 'Cancellation requested',
   'attempt-completed': 'Attempt completed',
   'attempt-failed': 'Attempt failed',
   'attempt-cancelled': 'Attempt cancelled',
@@ -144,6 +145,11 @@ export interface EventTimelineOperationIdentity {
   readonly attemptId: string;
   readonly idempotencyKey: string;
   readonly correlationId: string;
+}
+
+export interface EventTimelineOperationChain {
+  readonly attempts: readonly EventTimelineOperationIdentity[];
+  readonly cancellation: EventTimelineOperationIdentity | null;
 }
 
 export function allowlistProviderObservation(
@@ -329,7 +335,7 @@ export function assertEventTimelineHistory(
   status: EventTimelineStatus,
   raw: readonly RawProviderObservationView[],
   events: readonly NormalizedRuntimeEventView[],
-  operations?: readonly EventTimelineOperationIdentity[],
+  operations?: EventTimelineOperationChain,
 ): void {
   if (
     events[0]?.kind !== 'task-created' ||
@@ -359,20 +365,31 @@ function validateOperationIdentities(
   taskId: string,
   status: EventTimelineStatus,
   events: readonly NormalizedRuntimeEventView[],
-  operations: readonly EventTimelineOperationIdentity[],
+  operations: EventTimelineOperationChain,
 ): void {
-  if (operations.length !== status.attempts.length ||
-    new Set(operations.map((operation) => operation.attemptId)).size !== operations.length) fail();
-  for (const operation of operations) {
+  if (operations.attempts.length !== status.attempts.length ||
+    new Set(operations.attempts.map((operation) => operation.attemptId)).size !==
+      operations.attempts.length) fail();
+  for (const operation of operations.attempts) {
     if (operation.taskId !== taskId || operation.runId !== status.run?.id ||
       !status.attempts.some((attempt) => attempt.id === operation.attemptId)) fail();
     const phases = events.filter((event) => event.attemptId === operation.attemptId &&
-      (event.kind === 'provider-session-observed' || event.kind === 'attempt-started'));
+      (event.kind === 'provider-session-observed' || event.kind === 'attempt-started' ||
+        event.kind === 'attempt-completed' || event.kind === 'attempt-failed'));
     if (phases.some((event) => event.taskId !== operation.taskId ||
       event.runId !== operation.runId ||
       event.idempotencyKey !== operation.idempotencyKey ||
       event.correlationId !== operation.correlationId)) fail();
   }
+  const cancellationEvents = events.filter((event) =>
+    event.kind === 'cancellation-requested' || event.kind === 'attempt-cancelled');
+  if ((operations.cancellation === null) !== (cancellationEvents.length === 0)) fail();
+  if (operations.cancellation && cancellationEvents.some((event) =>
+    event.taskId !== operations.cancellation!.taskId ||
+    event.runId !== operations.cancellation!.runId ||
+    event.attemptId !== operations.cancellation!.attemptId ||
+    event.idempotencyKey !== operations.cancellation!.idempotencyKey ||
+    event.correlationId !== operations.cancellation!.correlationId)) fail();
 }
 
 function validateLifecycleStatus(
@@ -396,15 +413,22 @@ function validateLifecycleStatus(
     const terminals = lifecycle.filter((event) =>
       event.kind === 'attempt-completed' || event.kind === 'attempt-failed' ||
       event.kind === 'attempt-cancelled');
+    const cancellations = lifecycle.filter((event) => event.kind === 'cancellation-requested');
     const providerEvents = lifecycle.filter((event) => event.kind === 'provider-session-observed');
-    if (starts.length > 1 || terminals.length > 1 || providerEvents.length > 1) fail();
+    if (starts.length > 1 || terminals.length > 1 || providerEvents.length > 1 ||
+      cancellations.length > 1) fail();
     const providerIndex = providerEvents[0] ? events.indexOf(providerEvents[0]) : -1;
     const startIndex = starts[0] ? events.indexOf(starts[0]) : -1;
     const terminalIndex = terminals[0] ? events.indexOf(terminals[0]) : -1;
+    const cancellationIndex = cancellations[0] ? events.indexOf(cancellations[0]) : -1;
     if ((providerIndex >= 0 && startIndex >= 0 && providerIndex >= startIndex) ||
       (terminalIndex >= 0 && (startIndex < 0 || startIndex >= terminalIndex))) fail();
+    if (cancellationIndex >= 0 && (startIndex < 0 || startIndex >= cancellationIndex ||
+      (terminalIndex >= 0 && cancellationIndex >= terminalIndex))) fail();
     if (attempt.state !== 'starting' && starts.length !== 1) fail();
     const expectedTerminal = terminalKind(attempt.state);
+    const expectsCancellation = attempt.state === 'cancelling' || attempt.state === 'cancelled';
+    if (cancellations.length !== (expectsCancellation ? 1 : 0)) fail();
     if ((expectedTerminal === null && terminals.length !== 0) ||
       (expectedTerminal !== null &&
         (terminals.length !== 1 || terminals[0]?.kind !== expectedTerminal))) fail();
@@ -469,9 +493,32 @@ function validateCausation(
           event.correlationId !== cause.correlationId))) fail();
     return;
   }
+  validatePostStartCausation(prior, event);
+}
+
+function validatePostStartCausation(
+  prior: readonly NormalizedRuntimeEventView[],
+  event: NormalizedRuntimeEventView,
+): void {
+  if (event.kind === 'cancellation-requested') {
+    const started = prior.find((candidate) => candidate.kind === 'attempt-started' &&
+      candidate.attemptId === event.attemptId);
+    if (!started || event.causationId !== started.id) fail();
+    return;
+  }
+  if (event.kind === 'attempt-cancelled') {
+    const cancellation = prior.find((candidate) => candidate.kind === 'cancellation-requested' &&
+      candidate.attemptId === event.attemptId);
+    if (!cancellation || event.causationId !== cancellation.id ||
+      event.idempotencyKey !== cancellation.idempotencyKey ||
+      event.correlationId !== cancellation.correlationId) fail();
+    return;
+  }
   const started = prior.find((candidate) => candidate.kind === 'attempt-started' &&
     candidate.attemptId === event.attemptId);
-  if (!started || event.causationId !== started.id) fail();
+  if (!started || event.causationId !== started.id ||
+    event.idempotencyKey !== started.idempotencyKey ||
+    event.correlationId !== started.correlationId) fail();
 }
 
 function assertApplicableIdentities(event: NormalizedRuntimeEventView): void {

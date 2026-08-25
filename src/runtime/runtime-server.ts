@@ -151,10 +151,20 @@ export class RuntimeServer {
   private async finishStop(owned: RuntimeServerLifecycle): Promise<void> {
     for (const connection of this.connections) connection.close();
     this.connections.clear();
-    await this.executions.settlePendingExits();
-    const listener = await ownedListener(owned);
-    await listener?.close();
+    let failure: unknown;
+    try {
+      await this.executions.settlePendingExits();
+    } catch (error) {
+      failure = error;
+    }
+    try {
+      const listener = await ownedListener(owned);
+      await listener?.close();
+    } catch (error) {
+      failure ??= error;
+    }
     this.lifecycle = { phase: 'stopped' };
+    if (failure) throw failure;
   }
 
   private async serveConnection(connection: RuntimeFrameConnection): Promise<void> {
