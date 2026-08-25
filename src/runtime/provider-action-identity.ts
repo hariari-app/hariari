@@ -16,18 +16,25 @@ export interface AcceptedProviderActionIdentity {
   readonly sourceSessionId: string;
 }
 
+export function assertProviderActionFingerprint(
+  event: ProviderSessionActionDecidedEvent,
+): void {
+  const expected = JSON.stringify([event.action, event.taskId, event.providerSessionId]);
+  if (event.fingerprint !== expected) throw new Error('invalid provider action fingerprint');
+}
+
 export function assertAcceptedProviderActionAuthority(
   event: ProviderSessionActionDecidedEvent,
   source: StoredProviderSession | null,
 ): void {
+  assertProviderActionFingerprint(event);
   if (event.outcome !== 'accepted') return;
   const validPair = (event.action === 'resume' &&
       (event.decision === 'exact-reattach' || event.decision === 'native-resume')) ||
     (event.action === 'fork' && event.decision === 'fork');
-  const fingerprint = JSON.stringify([event.action, event.taskId, event.providerSessionId]);
   const capable = source && (event.action === 'resume'
     ? source.capabilities.resume : source.capabilities.fork);
-  if (!validPair || event.fingerprint !== fingerprint || !source ||
+  if (!validPair || !source ||
     !capable || source.id !== event.providerSessionId || source.taskId !== event.taskId) {
     throw new Error('invalid accepted provider action authority');
   }

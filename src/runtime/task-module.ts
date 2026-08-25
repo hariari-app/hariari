@@ -111,7 +111,7 @@ export class TaskModule {
     return startTaskReplay(
       () => this.store.start((event) => this.apply(event), () => this.list()),
       async () => {
-        for (const task of this.list()) await this.historyRepair.repair(task.id);
+        await this.historyRepair.repairAll(this.list().map((task) => task.id));
         this.eventTimeline.assertReplayComplete(
           this.list().map((task) => this.executionProjection.view(task)));
       },

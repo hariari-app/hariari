@@ -130,6 +130,29 @@ export class TaskEventHistory {
     return null;
   }
 
+  planRepairs(taskIds: readonly string[], now: string): readonly RepairableEvent[] {
+    const plannedHistory = new TaskEventHistory();
+    for (const event of this.events) plannedHistory.acceptForCurrentAttempt(event);
+    const repairs: RepairableEvent[] = [];
+    for (const taskId of taskIds) {
+      while (true) {
+        const repair = plannedHistory.nextRepair(taskId, now);
+        if (!repair) break;
+        plannedHistory.acceptForCurrentAttempt(repair);
+        repairs.push(repair);
+      }
+    }
+    for (const taskId of taskIds) plannedHistory.assertComplete(taskId);
+    return repairs;
+  }
+
+  private acceptForCurrentAttempt(event: TaskEvent): void {
+    const currentAttemptId = isAttemptScopedPhase(event)
+      ? this.analyze(eventTaskId(event)).attempts.at(-1)?.id ?? null
+      : null;
+    this.accept(event, currentAttemptId);
+  }
+
   assertComplete(taskId: string): void {
     const analysis = this.analyze(taskId);
     const incomplete = analysis.attempts.find((attempt) =>

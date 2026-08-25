@@ -1,4 +1,5 @@
 import {
+  RUNTIME_IDENTIFIER_MAX_LENGTH,
   TASK_PROVIDERS,
   type ProviderSessionView,
   type TaskExecutionState,
@@ -26,8 +27,13 @@ import {
   parseRecoveryDecisionView,
   parseRecoveryView,
 } from './recovery-view-parser';
+import { assertProviderActionFingerprint } from './provider-action-identity';
 
 const TASK_PROVIDER_SET = new Set<string>(TASK_PROVIDERS);
+const DURABLE_EVENT_TOKEN_MAX_LENGTH = 64;
+const TASK_TEXT_MAX_LENGTH = 512;
+const RUNTIME_REFERENCE_MAX_LENGTH = 512;
+const DURABLE_FINGERPRINT_MAX_LENGTH = 4096;
 
 export interface StoredRun {
   readonly id: string;
@@ -215,7 +221,7 @@ export type TaskEvent =
 
 export function parseTaskEvent(payload: Buffer): TaskEvent {
   const value = object(JSON.parse(payload.toString('utf8')));
-  const type = string(value.type);
+  const type = eventToken(value.type);
   if (value.version !== 1) throw new Error('invalid event');
   return type === 'TaskCreated' ? parseTaskCreated(value) : parseExecutionEvent(value, type);
 }
@@ -224,17 +230,17 @@ function parseTaskCreated(value: Record<string, unknown>): TaskCreatedEvent {
   exactKeys(value, [
     'type', 'version', 'task', 'idempotencyKey', 'correlationId', 'fingerprint',
   ]);
-  const idempotencyKey = string(value.idempotencyKey);
+  const idempotencyKey = identity(value.idempotencyKey);
   return {
     type: 'TaskCreated', version: 1, task: parseTask(object(value.task)),
     idempotencyKey,
     correlationId: correlation(value.correlationId, idempotencyKey),
-    fingerprint: string(value.fingerprint),
+    fingerprint: fingerprint(value.fingerprint),
   };
 }
 
 function parseExecutionEvent(value: Record<string, unknown>, type: string): TaskEvent {
-  const taskId = string(value.taskId);
+  const taskId = identity(value.taskId);
   if (type === 'RunCreated') return parseRunCreated(value, taskId);
   if (type === 'AttemptCreated') return parseAttemptCreated(value, taskId);
   if (type === 'AttemptForked') return parseAttemptForked(value, taskId);
@@ -244,7 +250,7 @@ function parseExecutionEvent(value: Record<string, unknown>, type: string): Task
     exactKeys(value, ['type', 'version', 'taskId', 'idempotencyKey', 'reason']);
     if (value.reason !== 'parent-still-live') throw new Error('invalid event');
     return { type, version: 1, taskId,
-      idempotencyKey: string(value.idempotencyKey), reason: value.reason };
+      idempotencyKey: identity(value.idempotencyKey), reason: value.reason };
   }
   if (type === 'AttemptSupersessionRequested') return parseSupersessionRequested(value, taskId);
   if (type === 'AttemptSuperseded') return parseAttemptSuperseded(value, taskId);
@@ -282,8 +288,8 @@ function parseRawProviderObservationRecorded(
   exactKeys(value, [
     'type', 'version', 'taskId', 'providerSessionId', 'idempotencyKey', 'observation',
   ]);
-  const providerSessionId = string(value.providerSessionId);
-  const idempotencyKey = string(value.idempotencyKey);
+  const providerSessionId = identity(value.providerSessionId);
+  const idempotencyKey = identity(value.idempotencyKey);
   const observation = parseRawProviderObservation(value.observation);
   assertCanonicalProviderObservationIdentity(
     observation,
@@ -315,8 +321,8 @@ function parseTaskRecoveryDecided(
   const result = parseRecoveryDecisionView(value.result);
   if (result.taskId !== taskId) throw new Error('invalid recovery decision');
   return { type: 'TaskRecoveryDecided', version: 1, taskId,
-    idempotencyKey: string(value.idempotencyKey),
-    fingerprint: string(value.fingerprint), result };
+    idempotencyKey: identity(value.idempotencyKey),
+    fingerprint: fingerprint(value.fingerprint), result };
 }
 
 function parseTaskReconciled(
@@ -329,8 +335,8 @@ function parseTaskReconciled(
   const recovery = parseRecoveryView(value.recovery);
   if (recovery.taskId !== taskId) throw new Error('invalid recovery');
   return { type: 'TaskReconciled', version: 1, taskId,
-    idempotencyKey: string(value.idempotencyKey),
-    fingerprint: string(value.fingerprint), recovery };
+    idempotencyKey: identity(value.idempotencyKey),
+    fingerprint: fingerprint(value.fingerprint), recovery };
 }
 
 function parseProviderActionDecided(
@@ -352,13 +358,16 @@ function parseProviderActionDecided(
     (action === 'resume' && (decision === 'exact-reattach' || decision === 'native-resume')) ||
     (action === 'fork' && decision === 'fork')
   )) throw new Error('invalid event');
-  const idempotencyKey = string(value.idempotencyKey);
-  return { type: 'ProviderSessionActionDecided', version: 1, taskId,
-    action, providerSessionId: string(value.providerSessionId),
+  const idempotencyKey = identity(value.idempotencyKey);
+  const event: ProviderSessionActionDecidedEvent = {
+    type: 'ProviderSessionActionDecided', version: 1, taskId,
+    action, providerSessionId: identity(value.providerSessionId),
     idempotencyKey,
     correlationId: correlation(value.correlationId, idempotencyKey),
-    fingerprint: string(value.fingerprint),
+    fingerprint: fingerprint(value.fingerprint),
     outcome, decision, reason };
+  assertProviderActionFingerprint(event);
+  return event;
 }
 
 function providerAction(value: unknown): ProviderSessionAction {
@@ -390,9 +399,9 @@ function parseAttemptResumed(
     'actionKey', 'correlationId', 'plannedContext',
   ]);
   return { type: 'AttemptResumed', version: 1, taskId,
-    attempt: parseAttempt(object(value.attempt)), sourceAttemptId: string(value.sourceAttemptId),
-    sourceSessionId: string(value.sourceSessionId), actionKey: string(value.actionKey),
-    correlationId: correlation(value.correlationId, string(value.actionKey)),
+    attempt: parseAttempt(object(value.attempt)), sourceAttemptId: identity(value.sourceAttemptId),
+    sourceSessionId: identity(value.sourceSessionId), actionKey: identity(value.actionKey),
+    correlationId: correlation(value.correlationId, identity(value.actionKey)),
     plannedContext: parseContext(object(value.plannedContext)) };
 }
 
@@ -404,8 +413,8 @@ function parseSupersessionRequested(
     'type', 'version', 'taskId', 'actionKey', 'parentAttemptId', 'parentSessionId', 'reason',
   ]);
   return { type: 'AttemptSupersessionRequested', version: 1, taskId,
-    actionKey: string(value.actionKey), parentAttemptId: string(value.parentAttemptId),
-    parentSessionId: string(value.parentSessionId), reason: supersessionReason(value.reason) };
+    actionKey: identity(value.actionKey), parentAttemptId: identity(value.parentAttemptId),
+    parentSessionId: identity(value.parentSessionId), reason: supersessionReason(value.reason) };
 }
 
 function parseAttemptSuperseded(
@@ -414,7 +423,7 @@ function parseAttemptSuperseded(
 ): AttemptSupersededEvent {
   exactKeys(value, ['type', 'version', 'taskId', 'actionKey', 'attemptId', 'reason']);
   return { type: 'AttemptSuperseded', version: 1, taskId,
-    actionKey: string(value.actionKey), attemptId: string(value.attemptId),
+    actionKey: identity(value.actionKey), attemptId: identity(value.attemptId),
     reason: supersessionReason(value.reason) };
 }
 
@@ -427,11 +436,11 @@ function parseRunCreated(value: Record<string, unknown>, taskId: string): RunCre
   exactKeys(value, [
     'type', 'version', 'taskId', 'idempotencyKey', 'correlationId', 'fingerprint', 'run',
   ]);
-  const idempotencyKey = string(value.idempotencyKey);
+  const idempotencyKey = identity(value.idempotencyKey);
   return { type: 'RunCreated', version: 1, taskId,
     idempotencyKey,
     correlationId: correlation(value.correlationId, idempotencyKey),
-    fingerprint: string(value.fingerprint),
+    fingerprint: fingerprint(value.fingerprint),
     run: parseRun(object(value.run)) };
 }
 
@@ -443,9 +452,10 @@ function parseAttemptForked(value: Record<string, unknown>, taskId: string): Att
   const plannedContext = value.plannedContext === undefined
     ? undefined
     : parseContext(object(value.plannedContext));
-  const forkKey = string(value.forkKey);
+  const forkKey = identity(value.forkKey);
   return { type: 'AttemptForked', version: 1, taskId, attempt: parseAttempt(object(value.attempt)),
-    parentAttemptId: string(value.parentAttemptId), parentSessionId: string(value.parentSessionId),
+    parentAttemptId: identity(value.parentAttemptId),
+    parentSessionId: identity(value.parentSessionId),
     forkKey, correlationId: correlation(value.correlationId, forkKey),
     ...(plannedContext ? { plannedContext } : {}) };
 }
@@ -477,11 +487,11 @@ function parseCancellation(value: Record<string, unknown>, taskId: string): Canc
   exactKeys(value, [
     'type', 'version', 'taskId', 'idempotencyKey', 'correlationId', 'fingerprint', 'occurredAt',
   ]);
-  const idempotencyKey = string(value.idempotencyKey);
+  const idempotencyKey = identity(value.idempotencyKey);
   return { type: 'CancellationRequested', version: 1, taskId,
     idempotencyKey,
     correlationId: correlation(value.correlationId, idempotencyKey),
-    fingerprint: string(value.fingerprint), ...parseOptionalOccurrence(value) };
+    fingerprint: fingerprint(value.fingerprint), ...parseOptionalOccurrence(value) };
 }
 
 function parseOptionalOccurrence(
@@ -492,40 +502,41 @@ function parseOptionalOccurrence(
 }
 
 function correlation(value: unknown, legacyIdempotencyKey: string): string {
-  return value === undefined ? legacyIdempotencyKey : string(value);
+  return value === undefined ? legacyIdempotencyKey : identity(value);
 }
 
 function parseTask(value: Record<string, unknown>): TaskView {
   exactKeys(value, [
     'id', 'objective', 'project', 'repository', 'baseRef', 'provider', 'createdAt',
   ]);
-  const provider = string(value.provider);
+  const provider = eventToken(value.provider);
   if (!TASK_PROVIDER_SET.has(provider)) throw new Error('invalid event');
-  return { id: string(value.id), objective: string(value.objective), project: string(value.project),
-    repository: string(value.repository), baseRef: string(value.baseRef),
+  return { id: identity(value.id), objective: taskText(value.objective),
+    project: taskText(value.project), repository: referenceText(value.repository),
+    baseRef: referenceText(value.baseRef),
     provider: provider as TaskView['provider'],
     createdAt: parseCanonicalUtcTimestamp(value.createdAt) };
 }
 
 function parseRun(value: Record<string, unknown>): StoredRun {
   exactKeys(value, ['id', 'number']);
-  return { id: string(value.id), number: positiveInteger(value.number) };
+  return { id: identity(value.id), number: positiveInteger(value.number) };
 }
 
 function parseAttempt(value: Record<string, unknown>): StoredAttempt {
   exactKeys(value, ['id', 'number', 'state', 'exitCode']);
-  const state = string(value.state) as TaskExecutionState;
+  const state = eventToken(value.state) as TaskExecutionState;
   if (!['starting', 'running', 'completed', 'failed', 'cancelling', 'cancelled', 'superseding', 'superseded'].includes(state)) throw new Error('invalid attempt');
   const exitCode = value.exitCode === undefined ? undefined : integer(value.exitCode);
-  return { id: string(value.id), number: positiveInteger(value.number), state,
+  return { id: identity(value.id), number: positiveInteger(value.number), state,
     ...(exitCode === undefined ? {} : { exitCode }) };
 }
 
 function parseContext(value: Record<string, unknown>): StoredContext {
   exactKeys(value, ['id', 'worktreeId', 'branchName', 'baseCommit', 'processId', 'ptyId']);
-  return { id: string(value.id), worktreeId: string(value.worktreeId),
-    branchName: string(value.branchName), baseCommit: string(value.baseCommit),
-    processId: string(value.processId), ptyId: string(value.ptyId) };
+  return { id: identity(value.id), worktreeId: identity(value.worktreeId),
+    branchName: referenceText(value.branchName), baseCommit: referenceText(value.baseCommit),
+    processId: identity(value.processId), ptyId: identity(value.ptyId) };
 }
 
 function parseProviderSession(value: Record<string, unknown>): StoredProviderSession {
@@ -536,14 +547,13 @@ function parseProviderSession(value: Record<string, unknown>): StoredProviderSes
   const capabilities = object(value.capabilities);
   exactKeys(capabilities, ['resume', 'fork']);
   if (value.provider !== 'claude' || typeof capabilities.resume !== 'boolean' || typeof capabilities.fork !== 'boolean') throw new Error('invalid provider session');
-  const parentId = value.parentId;
-  if (parentId !== null && typeof parentId !== 'string') throw new Error('invalid provider session');
+  const parentId = value.parentId === null ? null : identity(value.parentId);
   const lineage = value.lineage === undefined
     ? (parentId === null ? 'new' : 'fork')
     : parseLineage(value.lineage);
-  return { id: string(value.id), provider: 'claude', nativeSessionId: string(value.nativeSessionId),
-    taskId: string(value.taskId), attemptId: string(value.attemptId),
-    executionContextId: string(value.executionContextId),
+  return { id: identity(value.id), provider: 'claude',
+    nativeSessionId: identity(value.nativeSessionId), taskId: identity(value.taskId),
+    attemptId: identity(value.attemptId), executionContextId: identity(value.executionContextId),
     capabilities: { resume: capabilities.resume, fork: capabilities.fork }, parentId, lineage };
 }
 
@@ -559,8 +569,30 @@ function object(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function string(value: unknown): string {
-  if (typeof value !== 'string' || value.length === 0 || value.length > 512) throw new Error('invalid string');
+function identity(value: unknown): string {
+  return boundedString(value, RUNTIME_IDENTIFIER_MAX_LENGTH);
+}
+
+function eventToken(value: unknown): string {
+  return boundedString(value, DURABLE_EVENT_TOKEN_MAX_LENGTH);
+}
+
+function taskText(value: unknown): string {
+  return boundedString(value, TASK_TEXT_MAX_LENGTH);
+}
+
+function referenceText(value: unknown): string {
+  return boundedString(value, RUNTIME_REFERENCE_MAX_LENGTH);
+}
+
+function fingerprint(value: unknown): string {
+  return boundedString(value, DURABLE_FINGERPRINT_MAX_LENGTH);
+}
+
+function boundedString(value: unknown, maxLength: number): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > maxLength) {
+    throw new Error('invalid string');
+  }
   return value;
 }
 

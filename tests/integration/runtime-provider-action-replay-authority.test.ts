@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { RuntimeClientSession } from '../../src/main/runtime/runtime-ports';
+import { RuntimePortError, type RuntimeClientSession } from '../../src/main/runtime/runtime-ports';
 import { TaskStorageError } from '../../src/runtime/task-storage-error';
 import { FakeClaudeCodeExecutionAdapter } from './runtime-test-fakes';
 import {
@@ -24,7 +24,42 @@ describe('durable provider action replay authority', () => {
   it('rejects conflicting same-key exact reattach correlation', rejectsConflictingCorrelation);
   it('rejects a provider action key reused across Tasks', rejectsCrossTaskActionKey);
   it('rejects an abort not bound to the pending accepted action', rejectsWrongKeyAbort);
+  it('rejects a forged fingerprint on a checksum-valid rejected decision',
+    rejectsForgedRejectedFingerprint);
+  it('replays a valid rejected decision with its original code after restart',
+    replaysValidRejectedDecision);
 });
+
+async function rejectsForgedRejectedFingerprint(): Promise<void> {
+  const { subject, runtime } = await rejectedDecisionSubject('forged-rejection');
+  const records = readTaskEvents(subject.runtimeDirectory);
+  const rejected = records.find((event) =>
+    event.type === 'ProviderSessionActionDecided' && event.outcome === 'rejected')!;
+  await runtime.disconnect();
+  await assertStableInvalidReplay(subject, records.map((event) => event !== rejected
+    ? event : { ...event, fingerprint: 'forged-rejected-fingerprint' }));
+}
+
+async function replaysValidRejectedDecision(): Promise<void> {
+  const { subject, runtime, request } = await rejectedDecisionSubject('valid-rejection');
+  await runtime.disconnect();
+  await subject.restart();
+  const restarted = await subject.connect();
+  await expect(restarted.resumeProviderSession(request))
+    .rejects.toEqual(new RuntimePortError('not-found', false));
+  await restarted.disconnect();
+}
+
+async function rejectedDecisionSubject(key: string) {
+  const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter());
+  const runtime = await subject.connect();
+  const started = await startClaude(runtime, key);
+  const request = { taskId: started.task.id, providerSessionId: 'missing-session',
+    idempotencyKey: `${key}-key` };
+  await expect(runtime.resumeProviderSession(request))
+    .rejects.toEqual(new RuntimePortError('not-found', false));
+  return { subject, runtime, request };
+}
 
 async function rejectsExactReattachCorruption(
   corruption: 'nonexistent-session' | 'wrong-fingerprint' | 'action-mismatch',

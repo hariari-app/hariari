@@ -1,4 +1,8 @@
 import { parseCanonicalUtcTimestamp } from './canonical-utc-timestamp';
+import {
+  compactDerivedRuntimeIdentifier,
+  RUNTIME_IDENTIFIER_MAX_LENGTH,
+} from './runtime-identifier';
 
 export const PROVIDER_OBSERVATION_SCHEMA = 'hariari.provider-observation' as const;
 export const RUNTIME_EVENT_SCHEMA = 'hariari.runtime.event' as const;
@@ -596,11 +600,16 @@ function indexOfField(value: unknown): number {
 }
 
 function observationId(input: ProviderObservationIdentity): string {
-  return `provider-observation:${input.taskId}:${input.providerSessionId}:${input.idempotencyKey}`;
+  return compactDerivedRuntimeIdentifier(
+    `provider-observation:${input.taskId}:${input.providerSessionId}:${input.idempotencyKey}`,
+  );
 }
 
 function normalizedEventId(input: NormalizedEventInput): string {
-  return `runtime-event:${input.kind}:${input.taskId}:${input.attemptId ?? 'none'}:${input.providerSessionId ?? input.idempotencyKey}`;
+  return compactDerivedRuntimeIdentifier(
+    `runtime-event:${input.kind}:${input.taskId}:${input.attemptId ?? 'none'}:` +
+      `${input.providerSessionId ?? input.idempotencyKey}`,
+  );
 }
 
 function exactKeys(value: Record<string, unknown>, allowed: readonly string[]): void {
@@ -618,7 +627,8 @@ function array(value: unknown): readonly unknown[] {
 }
 
 function identifier(value: unknown): string {
-  if (typeof value !== 'string' || value.length === 0 || value.length > 512) fail();
+  if (typeof value !== 'string' || value.length === 0 ||
+    value.length > RUNTIME_IDENTIFIER_MAX_LENGTH) fail();
   return value;
 }
 

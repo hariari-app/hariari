@@ -55,6 +55,7 @@ import {
 const MAX_VERSION_LENGTH = 128;
 const MAX_PROOF_LENGTH = 128;
 const MAX_TASK_FIELD_LENGTH = 512;
+const MAX_RUNTIME_REFERENCE_LENGTH = 512;
 const TASK_PROVIDER_SET = new Set<string>(TASK_PROVIDERS);
 
 export class RuntimeProtocolValidationError extends Error {
@@ -478,7 +479,7 @@ function parseContext(value: Record<string, unknown>): NonNullable<TaskExecution
     id: identifier(value.id),
     worktreeId: identifier(value.worktreeId),
     branchName: boundedString(value.branchName, MAX_TASK_FIELD_LENGTH),
-    baseCommit: identifier(value.baseCommit),
+    baseCommit: boundedString(value.baseCommit, MAX_RUNTIME_REFERENCE_LENGTH),
   };
 }
 

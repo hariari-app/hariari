@@ -28,13 +28,13 @@ export class TaskEventHistoryRepair {
   }
 
   async repair(taskId: string): Promise<void> {
+    return this.repairAll([taskId]);
+  }
+
+  async repairAll(taskIds: readonly string[]): Promise<void> {
     try {
-      while (true) {
-        const repair = this.history.nextRepair(taskId, this.dependencies.now());
-        if (!repair) break;
-        await this.dependencies.append(repair);
-      }
-      this.history.assertComplete(taskId);
+      const repairs = this.history.planRepairs(taskIds, this.dependencies.now());
+      for (const repair of repairs) await this.dependencies.append(repair);
     } catch (error) {
       if (error instanceof TaskEventHistoryError) {
         throw new TaskStorageError('event-history-invalid');

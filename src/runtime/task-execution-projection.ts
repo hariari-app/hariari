@@ -22,6 +22,7 @@ import { TaskStorageError } from './task-storage-error';
 import {
   acceptedProviderActionIdentity,
   assertAcceptedProviderActionAuthority,
+  assertProviderActionFingerprint,
 } from './provider-action-identity';
 
 export type ExecutionProjectionEvent = Extract<
@@ -136,6 +137,7 @@ export class TaskExecutionProjection {
     event: Extract<ExecutionProjectionEvent, { type: 'ProviderSessionActionDecided' }>,
   ): void {
     if (this.executionKeys.has(event.idempotencyKey)) throw new TaskStorageError('internal');
+    assertProviderActionFingerprint(event);
     if (event.outcome !== 'accepted') return;
     const execution = this.require(event.taskId);
     const sources = execution.providerSessions.filter((candidate) =>

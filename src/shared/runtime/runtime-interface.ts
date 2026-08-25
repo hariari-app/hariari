@@ -1,5 +1,7 @@
 import type { EventTimelineView } from './event-timeline-contract';
 
+export { RUNTIME_IDENTIFIER_MAX_LENGTH } from './runtime-identifier';
+
 export {
   EVENT_REDACTION_FIELDS,
   EVENT_TIMELINE_MESSAGES,
@@ -20,8 +22,6 @@ export interface RuntimeProtocolRange {
   readonly min: number;
   readonly max: number;
 }
-
-export const RUNTIME_IDENTIFIER_MAX_LENGTH = 128;
 
 export interface RuntimeHealth {
   readonly status: 'ready';
