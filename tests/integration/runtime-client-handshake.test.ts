@@ -409,9 +409,15 @@ class HandshakeConnection implements RuntimeFrameConnection {
           worktreeId: 'worktree-1',
           branchName: 'hariari/task-task-1/run-1/attempt-1',
           baseCommit: 'base-1',
-          processId: 'process-1',
-          ptyId: 'pty-1',
         },
+        executionContexts: [
+          {
+            id: 'context-1',
+            worktreeId: 'worktree-1',
+            branchName: 'hariari/task-task-1/run-1/attempt-1',
+            baseCommit: 'base-1',
+          },
+        ],
         providerSessions: [],
       },
     };

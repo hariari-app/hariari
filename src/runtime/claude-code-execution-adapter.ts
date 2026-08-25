@@ -91,6 +91,12 @@ export class ClaudeCodeExecutionAdapter implements ExecutionAdapter {
     );
   }
 
+  async stop(binding: PrivateExecutionBinding): Promise<void> {
+    const active = this.executions.get(binding.context.id);
+    if (!active) throw new GenericCliExecutionError('process-start-failed');
+    await active.stop();
+  }
+
   async launch(plan: ExecutionLaunchPlan): Promise<ActiveExecution> {
     const request = executionStartRequest(plan);
     if (request.task.provider !== 'claude') throw new GenericCliExecutionError('process-start-failed');
@@ -234,6 +240,13 @@ function activeClaudeExecution(
   return {
     context,
     providerSession: { nativeSessionId, capabilities: { resume: capabilities.resume, fork: capabilities.fork } },
+    providerObservation: {
+      provider: 'claude',
+      kind: 'provider-session-observed',
+      sessionState: 'active',
+      nativeSessionId,
+      capabilities: { resume: capabilities.resume, fork: capabilities.fork },
+    },
     isRunning: () => lifecycle.isRunning(),
     activateOutput: () => lifecycle.activateOutput(),
     activateExit: () => lifecycle.activateExit(),

@@ -16,7 +16,10 @@ import {
   type TaskOutputEvent,
   type TaskRecoveryView,
   type TaskRecoveryDecisionView,
+  type TaskTimelineView,
 } from '../shared/runtime/runtime-interface';
+import { parseTaskTimeline as parseCanonicalTaskTimeline } from '../shared/runtime/event-timeline-contract';
+import { parseCanonicalUtcTimestamp } from '../shared/runtime/canonical-utc-timestamp';
 import {
   RUNTIME_HANDSHAKE_VERSION,
   RUNTIME_HEALTH_OPERATION,
@@ -25,6 +28,7 @@ import {
   TASK_CREATE_OPERATION,
   TASK_CANCEL_OPERATION,
   TASK_EXECUTION_OPERATION,
+  TASK_TIMELINE_OPERATION,
   TASK_LIST_OPERATION,
   TASK_OUTPUT_SUBSCRIBE_OPERATION,
   TASK_START_OPERATION,
@@ -51,6 +55,7 @@ import {
 const MAX_VERSION_LENGTH = 128;
 const MAX_PROOF_LENGTH = 128;
 const MAX_TASK_FIELD_LENGTH = 512;
+const MAX_RUNTIME_REFERENCE_LENGTH = 512;
 const TASK_PROVIDER_SET = new Set<string>(TASK_PROVIDERS);
 
 export class RuntimeProtocolValidationError extends Error {
@@ -145,16 +150,35 @@ function authenticatedReplyEnvelope(
 }
 
 export function parseRequestFrame(value: unknown): RuntimeRequestFrame {
+  const { rawIdempotencyKey, ...frame } = parseRequestEnvelope(value);
+  return {
+    ...frame,
+    idempotencyKey: optionalTaskIdempotencyKey(rawIdempotencyKey),
+  };
+}
+
+export function parseInvalidIdempotencyRequestFrame(value: unknown): RuntimeRequestFrame {
+  const { rawIdempotencyKey, ...frame } = parseRequestEnvelope(value);
+  try {
+    optionalTaskIdempotencyKey(rawIdempotencyKey);
+  } catch (error) {
+    if (error instanceof RuntimeProtocolValidationError) return { ...frame, idempotencyKey: null };
+    throw error;
+  }
+  invalid();
+}
+
+function parseRequestEnvelope(value: unknown) {
   const frame = object(value);
   if (frame.kind !== 'runtime.request') invalid();
   return {
-    kind: 'runtime.request',
+    kind: 'runtime.request' as const,
     protocolVersion: positiveInteger(frame.protocolVersion),
     requestId: identifier(frame.requestId),
     operation: operation(frame.operation),
     correlationId: identifier(frame.correlationId),
     causationId: optionalIdentifier(frame.causationId),
-    idempotencyKey: optionalTaskIdempotencyKey(frame.idempotencyKey),
+    rawIdempotencyKey: frame.idempotencyKey,
     payload: object(frame.payload),
   };
 }
@@ -287,6 +311,11 @@ export function parseTaskRequest(value: unknown): CreateTaskRequest {
 }
 
 export function parseTaskView(value: Record<string, unknown>) {
+  exactKeys(value, ['id', 'objective', 'project', 'repository', 'baseRef', 'provider', 'createdAt']);
+  return parseTaskFields(value);
+}
+
+function parseTaskFields(value: Record<string, unknown>) {
   const provider = boundedString(value.provider, MAX_TASK_FIELD_LENGTH);
   if (!TASK_PROVIDER_SET.has(provider)) invalid();
   return {
@@ -301,13 +330,22 @@ export function parseTaskView(value: Record<string, unknown>) {
 }
 
 export function parseTaskList(value: Record<string, unknown>) {
+  exactKeys(value, ['tasks']);
   if (!Array.isArray(value.tasks)) invalid();
   return value.tasks.map((task) => parseTaskView(object(task)));
 }
 
 export function parseTaskExecutionView(value: Record<string, unknown>): TaskExecutionView {
+  exactKeys(value, [
+    'task', 'run', 'attempt', 'attempts', 'context', 'executionContexts',
+    'providerSession', 'providerSessions',
+  ]);
   const taskValue = object(value.task);
-  const task = parseTaskView(taskValue);
+  exactKeys(taskValue, [
+    'id', 'objective', 'project', 'repository', 'baseRef', 'provider', 'createdAt',
+    'executionState',
+  ]);
+  const task = parseTaskFields(taskValue);
   const executionState = executionStateValue(taskValue.executionState);
   const run = value.run === null ? null : parseRun(object(value.run));
   const attempt = value.attempt === null ? null : parseAttempt(object(value.attempt));
@@ -323,11 +361,36 @@ export function parseTaskExecutionView(value: Record<string, unknown>): TaskExec
   if (executionState !== 'starting' && executionState !== 'ready' && attempt === null) invalid();
   if (providerSession && (!attempt || !context || providerSession.attemptId !== attempt.id || providerSession.executionContextId !== context.id)) invalid();
   if ((attempt === null) !== (attempts.length === 0) || (attempt && !attempts.some((entry) => entry.id === attempt.id))) invalid();
-  if (providerSession && !providerSessions.some((entry) => entry.id === providerSession.id)) invalid();
+  assertExecutionOwnership(attempts, executionContexts, providerSessions);
+  if ((context && executionContexts.filter((entry) => entry.id === context.id).length !== 1) ||
+    (providerSession && providerSessions.filter((entry) => entry.id === providerSession.id).length !== 1)) {
+    invalid();
+  }
   return {
     task: { ...task, executionState }, run, attempt, attempts, context,
     executionContexts, providerSession, providerSessions,
   };
+}
+
+function assertExecutionOwnership(
+  attempts: TaskExecutionView['attempts'],
+  contexts: TaskExecutionView['executionContexts'],
+  sessions: TaskExecutionView['providerSessions'],
+): void {
+  if (new Set(attempts.map((attempt) => attempt.id)).size !== attempts.length ||
+    new Set(contexts.map((context) => context.id)).size !== contexts.length ||
+    new Set(sessions.map((session) => session.id)).size !== sessions.length) invalid();
+  if (sessions.some((session) =>
+    attempts.filter((attempt) => attempt.id === session.attemptId).length !== 1 ||
+    contexts.filter((context) => context.id === session.executionContextId).length !== 1)) invalid();
+}
+
+export function parseTaskTimelineView(value: Record<string, unknown>): TaskTimelineView {
+  try {
+    return parseCanonicalTaskTimeline(value, (status) => parseTaskExecutionView(object(status)));
+  } catch {
+    invalid();
+  }
 }
 
 export function parseTaskRecoveryView(value: Record<string, unknown>): TaskRecoveryView {
@@ -405,6 +468,7 @@ function operation(value: unknown): RuntimeOperationFrame {
     name !== TASK_RECOVER_OPERATION &&
     name !== TASK_CANCEL_OPERATION &&
     name !== TASK_EXECUTION_OPERATION &&
+    name !== TASK_TIMELINE_OPERATION &&
     name !== TASK_OUTPUT_SUBSCRIBE_OPERATION
   )
     invalid();
@@ -412,10 +476,12 @@ function operation(value: unknown): RuntimeOperationFrame {
 }
 
 function parseRun(value: Record<string, unknown>): { readonly id: string; readonly number: number } {
+  exactKeys(value, ['id', 'number']);
   return { id: identifier(value.id), number: positiveInteger(value.number) };
 }
 
 function parseAttempt(value: Record<string, unknown>): NonNullable<TaskExecutionView['attempt']> {
+  exactKeys(value, ['id', 'number', 'state', 'exitCode']);
   const state = executionStateValue(value.state);
   const exitCode = value.exitCode === undefined ? undefined : integer(value.exitCode);
   return {
@@ -427,16 +493,21 @@ function parseAttempt(value: Record<string, unknown>): NonNullable<TaskExecution
 }
 
 function parseContext(value: Record<string, unknown>): NonNullable<TaskExecutionView['context']> {
+  exactKeys(value, ['id', 'worktreeId', 'branchName', 'baseCommit']);
   return {
     id: identifier(value.id),
     worktreeId: identifier(value.worktreeId),
     branchName: boundedString(value.branchName, MAX_TASK_FIELD_LENGTH),
-    baseCommit: identifier(value.baseCommit),
+    baseCommit: boundedString(value.baseCommit, MAX_RUNTIME_REFERENCE_LENGTH),
   };
 }
 
 function parseProviderSession(value: Record<string, unknown>): NonNullable<TaskExecutionView['providerSession']> {
+  exactKeys(value, [
+    'id', 'provider', 'attemptId', 'executionContextId', 'capabilities', 'parentId', 'lineage',
+  ]);
   const capabilities = object(value.capabilities);
+  exactKeys(capabilities, ['resume', 'fork']);
   const provider = boundedString(value.provider, MAX_TASK_FIELD_LENGTH);
   if (!TASK_PROVIDER_SET.has(provider) || typeof capabilities.resume !== 'boolean' || typeof capabilities.fork !== 'boolean') invalid();
   const lineage = value.lineage === undefined
@@ -493,6 +564,10 @@ function array(value: unknown): readonly unknown[] {
   return value;
 }
 
+function exactKeys(value: Record<string, unknown>, allowed: readonly string[]): void {
+  if (Object.keys(value).some((key) => !allowed.includes(key))) invalid();
+}
+
 function boundedString(value: unknown, maximum: number): string {
   if (typeof value !== 'string' || value.length < 1 || value.length > maximum) invalid();
   return value;
@@ -507,9 +582,7 @@ function optionalIdentifier(value: unknown): string | null {
 }
 
 function optionalTaskIdempotencyKey(value: unknown): string | null {
-  if (value === null) return null;
-  if (typeof value !== 'string' || value.length === 0) invalid();
-  return value;
+  return value === null ? null : identifier(value);
 }
 
 function nonce(value: unknown): string {
@@ -524,9 +597,11 @@ function positiveInteger(value: unknown): number {
 }
 
 function timestamp(value: unknown): string {
-  const result = boundedString(value, RUNTIME_IDENTIFIER_MAX_LENGTH);
-  if (!result.endsWith('Z') || !Number.isFinite(Date.parse(result))) invalid();
-  return result;
+  try {
+    return parseCanonicalUtcTimestamp(value);
+  } catch {
+    invalid();
+  }
 }
 
 function shutdownReason(value: unknown): RuntimeShutdownRequest['reason'] {
@@ -545,6 +620,7 @@ const OPERATION_FAILURE_CODES = new Set([
   'idempotency-conflict',
   'not-found',
   'task-not-ready',
+  'event-history-invalid',
   'worktree-unavailable',
   'process-start-failed',
   'runtime-stopping',

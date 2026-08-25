@@ -133,6 +133,7 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
       readonly stopError?: Error;
       readonly stopReturnsBeforeExit?: boolean;
       readonly claudeCapabilities?: { readonly resume: boolean; readonly fork: boolean };
+      readonly providerObservation?: (request: GenericCliStartRequest) => unknown;
     } = {},
     private readonly provider: 'shell' | 'claude' = 'shell',
   ) {}
@@ -160,6 +161,14 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
       binding,
       binding.context && execution?.context.id === binding.context.id ? execution : null,
     );
+  }
+
+  async stop(binding: PrivateExecutionBinding): Promise<void> {
+    const execution = this.executions.get(binding.task.id);
+    if (!execution || execution.context.id !== binding.context.id) {
+      throw new Error('missing execution binding');
+    }
+    await execution.stop();
   }
 
   setRecoveryResources(resources: readonly ExecutionResourceObservation[]): void {
@@ -194,6 +203,7 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
       this.options.claudeCapabilities ?? { resume: true, fork: true },
       this.options.stopError,
       this.options.stopReturnsBeforeExit ?? false,
+      this.options.providerObservation,
     );
     this.executions.set(request.task.id, execution);
     this.executionsByAttempt.set(request.attempt.id, execution);
@@ -242,6 +252,31 @@ export class FakeGenericCliExecutionAdapter implements GenericCliExecutionAdapte
     return this.requests.filter((request) => request.task.id === taskId);
   }
 
+  restore(
+    request: GenericCliStartRequest,
+    state: 'live' | 'lost' = 'live',
+    effects: { readonly starts?: number; readonly stops?: number } = {},
+  ): void {
+    const recoveredRequest = { ...request, onOutput: () => undefined, onExit: () => undefined };
+    const execution = new FakeGenericCliExecution(
+      recoveredRequest,
+      this.options.autoExitOnStop ?? true,
+      () => {
+        this.stopCounts.set(request.task.id, this.stopCount(request.task.id) + 1);
+        this.signalFor(this.stops, request.task.id).resolve();
+      },
+      this.options.claudeCapabilities ?? { resume: true, fork: true },
+      this.options.stopError,
+      this.options.stopReturnsBeforeExit ?? false,
+      this.options.providerObservation,
+    );
+    if (state === 'lost') execution.lose();
+    this.executions.set(request.task.id, execution);
+    this.executionsByAttempt.set(request.attempt.id, execution);
+    this.startCounts.set(request.task.id, effects.starts ?? 0);
+    this.stopCounts.set(request.task.id, effects.stops ?? 0);
+  }
+
   hasRunning(taskId: string): boolean {
     return this.executions.get(taskId)?.isRunning() ?? false;
   }
@@ -288,6 +323,7 @@ class DeferredSignal {
 class FakeGenericCliExecution implements GenericCliExecution {
   readonly context: GenericCliExecution['context'];
   readonly providerSession: GenericCliExecution['providerSession'];
+  readonly providerObservation: unknown | null;
   private active = false;
   private exitActive = false;
   private exitDelivered = false;
@@ -307,6 +343,7 @@ class FakeGenericCliExecution implements GenericCliExecution {
     private readonly claudeCapabilities: { readonly resume: boolean; readonly fork: boolean },
     private readonly stopError: Error | undefined,
     private readonly stopReturnsBeforeExit: boolean,
+    private readonly observationFactory: ((request: GenericCliStartRequest) => unknown) | undefined,
   ) {
     this.context = {
       id: request.identities.contextId,
@@ -320,6 +357,17 @@ class FakeGenericCliExecution implements GenericCliExecution {
     };
     this.providerSession = request.task.provider === 'claude'
       ? { nativeSessionId: nativeSessionId(request), capabilities: this.claudeCapabilities }
+      : null;
+    this.providerObservation = request.task.provider === 'claude'
+      ? this.requestObservation()
+      : null;
+  }
+
+  private requestObservation(): unknown {
+    if (this.observationFactory) return this.observationFactory(this.request);
+    return this.request.task.provider === 'claude'
+      ? { provider: 'claude', kind: 'provider-session-observed', sessionState: 'active',
+          nativeSessionId: nativeSessionId(this.request), capabilities: this.claudeCapabilities }
       : null;
   }
 
@@ -685,6 +733,10 @@ class FakeRuntimeSession implements RuntimeClientSession {
     const execution = this.environment.executions.get(taskId);
     if (!execution) throw new RuntimePortError('not-found', false);
     return execution;
+  }
+
+  async getTaskTimeline(): Promise<never> {
+    throw new RuntimePortError('unsupported-operation', false);
   }
 
   async subscribeTaskOutput(

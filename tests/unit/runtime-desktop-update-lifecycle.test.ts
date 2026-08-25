@@ -122,6 +122,7 @@ function createRuntime(shutdownResult: Promise<RuntimeShutdownResult>): RuntimeF
     recoverTask: vi.fn(),
     cancelTask: vi.fn(),
     getTaskExecution: vi.fn(),
+    getTaskTimeline: vi.fn(),
     subscribeTaskOutput: vi.fn(),
   };
 }
@@ -140,6 +141,7 @@ type RuntimeFake = RuntimeInterface & {
   recoverTask: ReturnType<typeof vi.fn<RuntimeInterface['recoverTask']>>;
   cancelTask: ReturnType<typeof vi.fn<RuntimeInterface['cancelTask']>>;
   getTaskExecution: ReturnType<typeof vi.fn<RuntimeInterface['getTaskExecution']>>;
+  getTaskTimeline: ReturnType<typeof vi.fn<RuntimeInterface['getTaskTimeline']>>;
   subscribeTaskOutput: ReturnType<typeof vi.fn<RuntimeInterface['subscribeTaskOutput']>>;
 };
 

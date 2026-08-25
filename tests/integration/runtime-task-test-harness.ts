@@ -1,10 +1,17 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, vi } from 'vitest';
+import { afterEach, expect, vi } from 'vitest';
 import { NodeRuntimeClient } from '../../src/main/runtime/node-runtime-client';
 import type { RuntimeClientSession } from '../../src/main/runtime/runtime-ports';
+import type {
+  CreateTaskRequest,
+  TaskExecutionState,
+  TaskExecutionView,
+  TaskTimelineView,
+  TaskView,
+} from '../../src/shared/runtime/runtime-interface';
 import type { GenericCliExecutionAdapter } from '../../src/runtime/generic-cli-execution-adapter';
 import type { RuntimeLocalEndpoint } from '../../src/runtime/local-transport';
 import { RuntimeServer } from '../../src/runtime/runtime-server';
@@ -19,13 +26,27 @@ export const FAILED_APPEND_MODES = [
   'partial-then-zero',
   'partial-then-error',
 ] as const;
+export const APPEND_DURABILITY_MODES = ['complete', ...FAILED_APPEND_MODES] as const;
+
+export interface ExpectedAppendBoundary {
+  readonly operation: string;
+  readonly writeCall: number;
+  readonly eventType: string;
+  readonly normalizedKind?: string;
+}
+
+export interface ExpectedAppendObservation {
+  assertObserved(): void;
+}
 
 export interface RuntimeSubject {
   readonly runtimeDirectory: string;
   readonly transport: ObservedRuntimeTransport;
   connect(): Promise<RuntimeClientSession>;
+  connectWithCorrelations(correlationIds: readonly string[]): Promise<RuntimeClientSession>;
   restart(): Promise<void>;
   restartWith(adapter: GenericCliExecutionAdapter): Promise<void>;
+  stop(): Promise<void>;
 }
 
 export function registerRuntimeTaskTestCleanup(): void {
@@ -38,6 +59,7 @@ export function registerRuntimeTaskTestCleanup(): void {
 
 export async function createSubject(
   adapterFactory: (runtimeDirectory: string) => GenericCliExecutionAdapter,
+  now: () => number = () => Date.parse('2026-08-21T10:00:00.000Z'),
 ): Promise<RuntimeSubject> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hariari-start-remediation-'));
   roots.push(root);
@@ -48,18 +70,30 @@ export async function createSubject(
   let id = 0;
   const randomId = (): string => `start-remediation-${++id}-${randomUUID()}`;
   let adapter = adapterFactory(runtimeDirectory);
-  let server = serverFor(endpoint, token, transport, randomId, adapter);
+  let server = serverFor(endpoint, token, transport, randomId, adapter, now);
   servers.push(server);
   await server.start();
-  return runtimeSubject(runtimeDirectory, transport, connectSubject, restartSubject, restartWith);
+  return runtimeSubject(
+    runtimeDirectory,
+    transport,
+    connectSubject,
+    connectWithCorrelations,
+    restartSubject,
+    restartWith,
+    () => server.stop(),
+  );
 
   function connectSubject(): Promise<RuntimeClientSession> {
     return connect(endpoint, token, transport, randomId);
   }
 
+  function connectWithCorrelations(correlationIds: readonly string[]): Promise<RuntimeClientSession> {
+    return connect(endpoint, token, transport, clientIds(correlationIds));
+  }
+
   async function restartSubject(): Promise<void> {
     await server.stop();
-    server = serverFor(endpoint, token, transport, randomId, adapter);
+    server = serverFor(endpoint, token, transport, randomId, adapter, now);
     servers.push(server);
     await server.start();
   }
@@ -78,10 +112,34 @@ function runtimeSubject(
   runtimeDirectory: string,
   transport: ObservedRuntimeTransport,
   connect: () => Promise<RuntimeClientSession>,
+  connectWithCorrelations: (
+    correlationIds: readonly string[],
+  ) => Promise<RuntimeClientSession>,
   restart: () => Promise<void>,
   restartWith: (adapter: GenericCliExecutionAdapter) => Promise<void>,
+  stop: () => Promise<void>,
 ): RuntimeSubject {
-  return { runtimeDirectory, transport, connect, restart, restartWith };
+  return {
+    runtimeDirectory,
+    transport,
+    connect,
+    connectWithCorrelations,
+    restart,
+    restartWith,
+    stop,
+  };
+}
+
+function clientIds(correlationIds: readonly string[]): () => string {
+  const correlations = [...correlationIds];
+  let call = 0;
+  return () => {
+    call += 1;
+    if (call === 1) return 'authenticated-handshake-request';
+    if (call === 2) return 'authenticated-handshake-nonce';
+    if (call % 2 === 1) return `authenticated-operation-request-${(call - 1) / 2}`;
+    return correlations.shift() ?? `authenticated-query-correlation-${call}`;
+  };
 }
 
 function serverFor(
@@ -90,6 +148,7 @@ function serverFor(
   transport: ObservedRuntimeTransport,
   randomId: () => string,
   executionAdapter: GenericCliExecutionAdapter,
+  now: () => number,
 ): RuntimeServer {
   return new RuntimeServer({
     transport,
@@ -98,7 +157,7 @@ function serverFor(
     supportedProtocolRange: { min: 1, max: 1 },
     runtimeVersion: '0.6.8',
     buildId: 'start-remediation-build',
-    now: () => Date.parse('2026-08-21T10:00:00.000Z'),
+    now,
     randomId,
     randomNonce: randomId,
     handshakeDeadlineMs: 500,
@@ -149,10 +208,137 @@ export function shellTask(idempotencyKey: string, repository: string) {
   };
 }
 
+export function readTaskEvents(runtimeDirectory: string): readonly Record<string, unknown>[] {
+  const bytes = fs.readFileSync(path.join(runtimeDirectory, 'tasks', 'events.log'));
+  return decodeTaskEventFrames(bytes);
+}
+
+export function decodeTaskEventFrames(bytes: Buffer): readonly Record<string, unknown>[] {
+  const events: Record<string, unknown>[] = [];
+  let offset = 0;
+  while (offset < bytes.length) {
+    const length = bytes.readUInt32BE(offset);
+    const payloadOffset = offset + 36;
+    const payload = bytes.subarray(payloadOffset, payloadOffset + length).toString('utf8');
+    events.push(JSON.parse(payload) as Record<string, unknown>);
+    offset = payloadOffset + length;
+  }
+  return events;
+}
+
+export function appendTaskEventFrame(eventPath: string, payload: Record<string, unknown>): void {
+  fs.appendFileSync(eventPath, encodeTaskEventFrame(payload));
+}
+
+export function rewriteTaskEvents(
+  runtimeDirectory: string,
+  events: readonly Record<string, unknown>[],
+): void {
+  fs.writeFileSync(
+    path.join(runtimeDirectory, 'tasks', 'events.log'),
+    Buffer.concat(events.map(encodeTaskEventFrame)),
+  );
+}
+
+function encodeTaskEventFrame(payload: Record<string, unknown>): Buffer {
+  const body = Buffer.from(JSON.stringify(payload), 'utf8');
+  const frame = Buffer.alloc(36 + body.length);
+  frame.writeUInt32BE(body.length, 0);
+  createHash('sha256').update(body).digest().copy(frame, 4);
+  body.copy(frame, 36);
+  return frame;
+}
+
+export async function createStartedTask(
+  runtime: RuntimeClientSession,
+  request: CreateTaskRequest,
+  startKey: string,
+): Promise<{ readonly task: TaskView; readonly execution: TaskExecutionView }> {
+  const task = await runtime.createTask(request);
+  const execution = await runtime.startTask({ taskId: task.id, idempotencyKey: startKey });
+  return { task, execution };
+}
+
+export async function waitForTaskState(
+  runtime: Pick<RuntimeClientSession, 'getTaskExecution' | 'getTaskTimeline'>,
+  taskId: string,
+  expected: Extract<TaskExecutionState, 'completed' | 'failed' | 'cancelled'>,
+): Promise<TaskExecutionView> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const execution = await runtime.getTaskExecution(taskId);
+    const timeline = await runtime.getTaskTimeline(taskId);
+    if (execution.task.executionState === expected &&
+      timeline.normalizedEvents.some((event) => event.kind === `attempt-${expected}`)) {
+      return execution;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Task did not reach ${expected}`);
+}
+
+export async function assertAuthenticatedTaskReplay(
+  subject: RuntimeSubject,
+  runtime: RuntimeClientSession,
+  task: TaskView,
+  status: TaskExecutionView,
+  timeline: TaskTimelineView,
+): Promise<void> {
+  const tasks = await runtime.listTasks();
+  await runtime.disconnect();
+  fs.rmSync(path.join(subject.runtimeDirectory, 'tasks', 'projection.json'));
+  await subject.restart();
+  const restarted = await subject.connect();
+  await expect(restarted.listTasks()).resolves.toEqual(tasks);
+  await expect(restarted.getTaskExecution(task.id)).resolves.toEqual(status);
+  await expect(restarted.getTaskTimeline(task.id)).resolves.toEqual(timeline);
+  await restarted.disconnect();
+}
+
 export function corruptExecutionAppend(
   eventPath: string,
-  failedWrite: number,
+  targetWrite: number,
   mode: (typeof FAILED_APPEND_MODES)[number],
+): void {
+  installAppendBoundary(eventPath, targetWrite, mode);
+}
+
+export function observeExpectedExecutionAppend(
+  eventPath: string,
+  boundary: ExpectedAppendBoundary,
+  mode: (typeof APPEND_DURABILITY_MODES)[number],
+): ExpectedAppendObservation {
+  let observed = false;
+  let mismatch: unknown = null;
+  installAppendBoundary(
+    eventPath,
+    boundary.writeCall,
+    mode === 'complete' ? null : mode,
+    (data) => {
+      observed = true;
+      try {
+        assertExpectedAppend(data, boundary);
+      } catch (error) {
+        mismatch = error;
+      }
+    },
+  );
+  return {
+    assertObserved(): void {
+      if (!observed) {
+        throw new Error(`${boundary.operation} boundary was not reached`);
+      }
+      if (mismatch) {
+        throw mismatch;
+      }
+    },
+  };
+}
+
+function installAppendBoundary(
+  eventPath: string,
+  targetWrite: number,
+  mode: (typeof FAILED_APPEND_MODES)[number] | null,
+  observeTarget: (data: Buffer) => void = () => undefined,
 ): void {
   const open = fs.promises.open.bind(fs.promises);
   let writes = 0;
@@ -160,33 +346,48 @@ export function corruptExecutionAppend(
   vi.spyOn(fs.promises, 'open').mockImplementation(async (file, flags, permissions) => {
     const handle = await open(file, flags, permissions);
     if (file !== eventPath || flags !== 'a') return handle;
-    return failingHandle(handle, failedWrite, mode, () => ++writes, () => partial, () => {
-      partial = true;
-    });
+    return instrumentedAppendHandle(
+      handle,
+      targetWrite,
+      mode,
+      () => ++writes,
+      () => partial,
+      () => {
+        partial = true;
+      },
+      observeTarget,
+    );
   });
 }
 
-function failingHandle(
+function instrumentedAppendHandle(
   handle: fs.promises.FileHandle,
-  failedWrite: number,
-  mode: (typeof FAILED_APPEND_MODES)[number],
+  targetWrite: number,
+  mode: (typeof FAILED_APPEND_MODES)[number] | null,
   nextWrite: () => number,
   isPartial: () => boolean,
   markPartial: () => void,
+  observeTarget: (data: Buffer) => void,
 ): fs.promises.FileHandle {
   return new Proxy(handle, {
     get(target, property, receiver) {
       if (property !== 'write') return Reflect.get(target, property, receiver);
       return async (data: Buffer) => {
         const write = nextWrite();
-        if (write === failedWrite && mode === 'zero-first') {
+        if (write === targetWrite && mode === null) {
+          observeTarget(data);
+          return target.write(data);
+        }
+        if (write === targetWrite && mode === 'zero-first') {
+          observeTarget(data);
           return { bytesWritten: 0, buffer: data };
         }
-        if (write === failedWrite) {
+        if (write === targetWrite) {
+          observeTarget(data);
           markPartial();
           return target.write(data.subarray(0, 1));
         }
-        if (isPartial() && write === failedWrite + 1) {
+        if (isPartial() && write === targetWrite + 1) {
           if (mode === 'partial-then-error') throw new Error('injected append error');
           return { bytesWritten: 0, buffer: data };
         }
@@ -194,6 +395,26 @@ function failingHandle(
       };
     },
   });
+}
+
+function assertExpectedAppend(data: Buffer, boundary: ExpectedAppendBoundary): void {
+  const payloadLength = data.readUInt32BE(0);
+  const payload = JSON.parse(data.subarray(36, 36 + payloadLength).toString('utf8')) as {
+    readonly type?: unknown;
+    readonly event?: { readonly kind?: unknown };
+  };
+  if (payload.type !== boundary.eventType) {
+    throw new Error(
+      `${boundary.operation} write ${boundary.writeCall} expected ${boundary.eventType}, ` +
+      `observed ${String(payload.type)}`,
+    );
+  }
+  if (boundary.normalizedKind && payload.event?.kind !== boundary.normalizedKind) {
+    throw new Error(
+      `${boundary.operation} write ${boundary.writeCall} expected ${boundary.normalizedKind}, ` +
+      `observed ${String(payload.event?.kind)}`,
+    );
+  }
 }
 
 export function nextRuntimeTurn(): Promise<void> {

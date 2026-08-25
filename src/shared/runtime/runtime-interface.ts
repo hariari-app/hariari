@@ -1,9 +1,27 @@
+import type { EventTimelineView } from './event-timeline-contract';
+
+export { RUNTIME_IDENTIFIER_MAX_LENGTH } from './runtime-identifier';
+
+export {
+  EVENT_REDACTION_FIELDS,
+  EVENT_TIMELINE_MESSAGES,
+  EVENT_TIMELINE_SCHEMA_VERSION,
+  PROVIDER_OBSERVATION_SCHEMA,
+  RUNTIME_EVENT_SCHEMA,
+} from './event-timeline-contract';
+export type {
+  EventRedactionMetadata,
+  NormalizedRuntimeEventKind,
+  NormalizedRuntimeEventView,
+  RawProviderObservationView,
+  TaskTimelineEntry,
+  TaskTimelineMessage,
+} from './event-timeline-contract';
+
 export interface RuntimeProtocolRange {
   readonly min: number;
   readonly max: number;
 }
-
-export const RUNTIME_IDENTIFIER_MAX_LENGTH = 128;
 
 export interface RuntimeHealth {
   readonly status: 'ready';
@@ -186,6 +204,8 @@ export interface TaskExecutionView {
   readonly providerSessions: readonly ProviderSessionView[];
 }
 
+export type TaskTimelineView = EventTimelineView<TaskExecutionView>;
+
 export type TaskOutputEvent =
   | {
       readonly kind: 'data';
@@ -208,6 +228,7 @@ export type RuntimeOperationFailureCode =
   | 'idempotency-conflict'
   | 'not-found'
   | 'task-not-ready'
+  | 'event-history-invalid'
   | 'worktree-unavailable'
   | 'process-start-failed'
   | 'runtime-stopping'
@@ -275,6 +296,7 @@ export interface RuntimeInterface {
   recoverTask(request: RecoverTaskRequest): Promise<TaskRecoveryDecisionView>;
   cancelTask(request: CancelTaskRequest): Promise<TaskExecutionView>;
   getTaskExecution(taskId: string): Promise<TaskExecutionView>;
+  getTaskTimeline(taskId: string): Promise<TaskTimelineView>;
   subscribeTaskOutput(
     taskId: string,
     listener: (event: TaskOutputEvent) => void,

@@ -469,6 +469,7 @@ function crashAfterOwnershipMarker(
     capabilities: (task) => delegate.capabilities(task),
     observe: (binding) => delegate.observe(binding),
     observeRecovery: (binding) => delegate.observeRecovery(binding),
+    stop: (binding) => delegate.stop(binding),
     launch: async (plan) => {
       await delegate.launch(plan);
       boundary.resolve();

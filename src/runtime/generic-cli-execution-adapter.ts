@@ -33,6 +33,7 @@ export interface ExecutionAdapter {
   capabilities(task: TaskView): Promise<ProviderSessionCapabilities>;
   observe(binding: PrivateExecutionBinding): Promise<ExecutionObservation>;
   observeRecovery(binding: PrivateRecoveryBinding): Promise<ExecutionRecoveryObservation>;
+  stop(binding: PrivateExecutionBinding): Promise<void>;
   launch(plan: ExecutionLaunchPlan): Promise<ActiveExecution>;
 }
 
@@ -137,6 +138,7 @@ export interface ActiveExecution {
     readonly ptyId: string;
   };
   readonly providerSession: { readonly nativeSessionId: string; readonly capabilities: { readonly resume: boolean; readonly fork: boolean } } | null;
+  readonly providerObservation: unknown | null;
   isRunning(): boolean;
   activateOutput(): void;
   activateExit(): void;
@@ -208,6 +210,12 @@ export class LocalGenericCliExecutionAdapter implements ExecutionAdapter {
       recoveryObservation(allocated, this.executions.get(allocated.context.id) ?? null),
       this.worktreeRoot,
     );
+  }
+
+  async stop(binding: PrivateExecutionBinding): Promise<void> {
+    const active = this.executions.get(binding.context.id);
+    if (!active) throw new GenericCliExecutionError('process-start-failed');
+    await active.stop();
   }
 
   async launch(plan: ExecutionLaunchPlan): Promise<GenericCliExecution> {
@@ -378,6 +386,7 @@ function bufferedPtyExecution(
   return {
     context,
     providerSession: null,
+    providerObservation: null,
     isRunning: () => lifecycle.isRunning(),
     activateOutput: () => lifecycle.activateOutput(),
     activateExit: () => lifecycle.activateExit(),

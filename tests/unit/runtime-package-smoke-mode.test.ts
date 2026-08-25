@@ -94,6 +94,10 @@ class SmokeRuntime implements RuntimeInterface {
     throw new Error('not used by package smoke');
   }
 
+  async getTaskTimeline(): Promise<never> {
+    throw new Error('not used by package smoke');
+  }
+
   async subscribeTaskOutput(): Promise<never> {
     throw new Error('not used by package smoke');
   }

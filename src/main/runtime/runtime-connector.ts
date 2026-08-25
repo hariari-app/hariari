@@ -10,6 +10,7 @@ import type {
   ReconcileTaskRequest,
   RecoverTaskRequest,
   TaskExecutionView,
+  TaskTimelineView,
   TaskOutputEvent,
   TaskRecoveryView,
   TaskRecoveryDecisionView,
@@ -138,6 +139,12 @@ class RuntimeConnector implements RuntimeInterface {
   getTaskExecution(taskId: string): Promise<TaskExecutionView> {
     return this.withSession((session) =>
       session.getTaskExecution(taskId, this.dependencies.connectDeadlineMs),
+    );
+  }
+
+  getTaskTimeline(taskId: string): Promise<TaskTimelineView> {
+    return this.withSession((session) =>
+      session.getTaskTimeline(taskId, this.dependencies.connectDeadlineMs),
     );
   }
 

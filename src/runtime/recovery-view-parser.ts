@@ -13,6 +13,9 @@ import {
 /** Owns recovery result invariants shared by durable replay and wire decoding. */
 export function parseRecoveryView(value: unknown): TaskRecoveryView {
   const recovery = object(value);
+  exactKeys(recovery, [
+    'id', 'taskId', 'desiredState', 'status', 'decision', 'resources', 'attention',
+  ]);
   const status = recovery.status;
   if (status !== 'ready' && status !== 'attention') invalid();
   const decision = recovery.decision;
@@ -34,6 +37,9 @@ export function parseRecoveryView(value: unknown): TaskRecoveryView {
 /** Parses the smaller committed-decision projection with the same Attention invariant. */
 export function parseRecoveryDecisionView(value: unknown): TaskRecoveryDecisionView {
   const result = object(value);
+  exactKeys(result, [
+    'id', 'taskId', 'recoveryId', 'decision', 'status', 'attention',
+  ]);
   const status = result.status;
   if (status !== 'decided' && status !== 'attention') invalid();
   const decision = result.decision;
@@ -53,6 +59,7 @@ export function parseRecoveryDecisionView(value: unknown): TaskRecoveryDecisionV
 
 function parseResource(value: unknown): TaskRecoveryView['resources'][number] {
   const resource = object(value);
+  exactKeys(resource, ['kind', 'classification']);
   if (!isRecoveryResourceKind(resource.kind) ||
     !isRecoveryClassification(resource.classification)) invalid();
   return { kind: resource.kind, classification: resource.classification };
@@ -60,6 +67,7 @@ function parseResource(value: unknown): TaskRecoveryView['resources'][number] {
 
 function parseAttention(value: unknown): NonNullable<TaskRecoveryView['attention']> {
   const attention = object(value);
+  exactKeys(attention, ['id', 'reason']);
   if (attention.reason !== RECOVERY_ATTENTION_REASON) invalid();
   return { id: identifier(attention.id), reason: attention.reason };
 }
@@ -85,6 +93,10 @@ function object(value: unknown): Record<string, unknown> {
 function array(value: unknown): readonly unknown[] {
   if (!Array.isArray(value)) invalid();
   return value;
+}
+
+function exactKeys(value: Record<string, unknown>, allowed: readonly string[]): void {
+  if (Object.keys(value).some((key) => !allowed.includes(key))) invalid();
 }
 
 function invalid(): never {

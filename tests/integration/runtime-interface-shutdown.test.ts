@@ -237,6 +237,8 @@ function serialSession(
     cancelTask: (request, deadlineMs) => enqueue(() => session.cancelTask(request, deadlineMs)),
     getTaskExecution: (taskId, deadlineMs) =>
       enqueue(() => session.getTaskExecution(taskId, deadlineMs)),
+    getTaskTimeline: (taskId, deadlineMs) =>
+      enqueue(() => session.getTaskTimeline(taskId, deadlineMs)),
     subscribeTaskOutput: (taskId, listener, deadlineMs) =>
       session.subscribeTaskOutput(taskId, listener, deadlineMs),
     disconnect: () => session.disconnect(),
@@ -307,6 +309,8 @@ function orderedShutdownClient(client: RuntimeClientPort, gate: ShutdownGate): R
           cancelTask: (request, deadlineMs) => connection.session.cancelTask(request, deadlineMs),
           getTaskExecution: (taskId, deadlineMs) =>
             connection.session.getTaskExecution(taskId, deadlineMs),
+          getTaskTimeline: (taskId, deadlineMs) =>
+            connection.session.getTaskTimeline(taskId, deadlineMs),
           subscribeTaskOutput: (taskId, listener, deadlineMs) =>
             connection.session.subscribeTaskOutput(taskId, listener, deadlineMs),
           disconnect: () => connection.session.disconnect(),
@@ -340,6 +344,7 @@ function gatedShutdownSession(
     recoverTask: (request, deadlineMs) => session.recoverTask(request, deadlineMs),
     cancelTask: (request, deadlineMs) => session.cancelTask(request, deadlineMs),
     getTaskExecution: (taskId, deadlineMs) => session.getTaskExecution(taskId, deadlineMs),
+    getTaskTimeline: (taskId, deadlineMs) => session.getTaskTimeline(taskId, deadlineMs),
     subscribeTaskOutput: (taskId, listener, deadlineMs) =>
       session.subscribeTaskOutput(taskId, listener, deadlineMs),
     disconnect: () => session.disconnect(),
