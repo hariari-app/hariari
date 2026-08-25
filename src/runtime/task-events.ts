@@ -13,6 +13,7 @@ import {
   parseNormalizedRuntimeEvent,
   parseRawProviderObservation,
 } from '../shared/runtime/event-timeline-contract';
+import { parseCanonicalUtcTimestamp } from '../shared/runtime/canonical-utc-timestamp';
 import type {
   ProviderActionDecision,
   ProviderActionRejection,
@@ -90,6 +91,8 @@ export interface ContextAllocatedEvent {
   readonly taskId: string;
   readonly context: StoredContext;
   readonly providerSession: StoredProviderSession | null;
+  /** Missing only on legacy records written before provider observation time was durable. */
+  readonly observedAt?: string;
 }
 
 export interface RawProviderObservationRecordedEvent {
@@ -403,7 +406,10 @@ function parseContextAllocated(value: Record<string, unknown>, taskId: string): 
   const providerSession = value.providerSession === undefined || value.providerSession === null
     ? null : parseProviderSession(object(value.providerSession));
   return { type: 'ContextAllocated', version: 1, taskId,
-    context: parseContext(object(value.context)), providerSession };
+    context: parseContext(object(value.context)), providerSession,
+    ...(value.observedAt === undefined ? {} : {
+      observedAt: parseCanonicalUtcTimestamp(value.observedAt),
+    }) };
 }
 
 function parseCancellation(value: Record<string, unknown>, taskId: string): CancellationRequestedEvent {
@@ -421,11 +427,7 @@ function parseOptionalOccurrence(
   value: Record<string, unknown>,
 ): { readonly occurredAt?: string } {
   if (value.occurredAt === undefined) return {};
-  const occurredAt = string(value.occurredAt);
-  if (!occurredAt.endsWith('Z') || !Number.isFinite(Date.parse(occurredAt))) {
-    throw new Error('invalid event');
-  }
-  return { occurredAt };
+  return { occurredAt: parseCanonicalUtcTimestamp(value.occurredAt) };
 }
 
 function correlation(value: unknown, legacyIdempotencyKey: string): string {
@@ -435,7 +437,8 @@ function correlation(value: unknown, legacyIdempotencyKey: string): string {
 function parseTask(value: Record<string, unknown>): TaskView {
   return { id: string(value.id), objective: string(value.objective), project: string(value.project),
     repository: string(value.repository), baseRef: string(value.baseRef),
-    provider: string(value.provider) as TaskView['provider'], createdAt: string(value.createdAt) };
+    provider: string(value.provider) as TaskView['provider'],
+    createdAt: parseCanonicalUtcTimestamp(value.createdAt) };
 }
 
 function parseRun(value: Record<string, unknown>): StoredRun {

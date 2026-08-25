@@ -242,7 +242,8 @@ export class TaskEventTimeline {
       providerSessionId: providerSession.id,
       idempotencyKey: execution.currentOperationKey,
       correlationId: execution.currentCorrelationId,
-      observedAt: this.dependencies.now(), evidence, append: this.dependencies.append });
+      observedAt: execution.providerObservationAt ?? this.dependencies.now(),
+      evidence, append: this.dependencies.append });
   }
 
   private async appendProviderObservation(input: ProviderObservationAppend): Promise<void> {

@@ -265,8 +265,8 @@ export class TaskModule {
           type: 'ContextAllocated',
           version: 1,
           taskId,
-          context,
-          providerSession,
+          context, providerSession,
+          ...(providerSession ? { observedAt: new Date(this.now()).toISOString() } : {}),
         });
       }
       if (providerSession) {
@@ -282,7 +282,6 @@ export class TaskModule {
       return this.executionProjection.view(task);
     });
   }
-
   reserveNativeResume(request: ProviderSessionOperationRequest): Promise<NativeResumeReservation> {
     return this.enqueue(async () => {
       this.throwIfPoisoned();
@@ -717,6 +716,7 @@ export class TaskModule {
       }
       case 'ProviderSessionActionDecided':
         this.providerLifecycle.replay(event);
+        this.executionProjection.apply(event);
         return;
       case 'ProviderSessionActionAborted':
         this.providerLifecycle.replayAbort(event);

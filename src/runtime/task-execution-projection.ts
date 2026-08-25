@@ -19,6 +19,7 @@ import {
 } from './task-execution-state';
 import { isTerminalExecutionState } from './task-execution-rules';
 import { TaskStorageError } from './task-storage-error';
+import { acceptedProviderActionIdentity } from './provider-action-identity';
 
 export type ExecutionProjectionEvent = Extract<
   TaskEvent,
@@ -36,7 +37,8 @@ export type ExecutionProjectionEvent = Extract<
       | 'AttemptCompleted'
       | 'AttemptFailed'
       | 'AttemptCancelled'
-      | 'AttemptForked';
+      | 'AttemptForked'
+      | 'ProviderSessionActionDecided';
   }
 >;
 
@@ -58,20 +60,19 @@ export interface PrivateTaskExecutionView extends Omit<
 export class TaskExecutionProjection {
   private readonly executions = new Map<string, StoredExecution>();
   private readonly executionKeys = new Map<string, StoredExecution>();
+  private readonly contextOwners = new Map<string, string>();
+  private readonly providerSessionOwners = new Map<string, string>();
 
   constructor(private readonly dependencies: TaskExecutionProjectionDependencies) {}
 
   apply(event: ExecutionProjectionEvent): void {
     switch (event.type) {
       case 'RunCreated':
-        this.applyRunCreated(event);
-        return;
+        return this.applyRunCreated(event);
       case 'AttemptCreated':
-        this.applyAttemptCreated(event);
-        return;
+        return this.applyAttemptCreated(event);
       case 'ContextAllocated':
-        this.applyContextAllocated(event);
-        return;
+        return this.applyContextAllocated(event);
       case 'AttemptStarted':
         this.applyAttemptStarted(event);
         return;
@@ -108,6 +109,9 @@ export class TaskExecutionProjection {
         this.replace(event.taskId, forkExecution(execution, event));
         return;
       }
+      case 'ProviderSessionActionDecided':
+        this.applyProviderActionDecided(event);
+        return;
     }
   }
 
@@ -188,8 +192,10 @@ export class TaskExecutionProjection {
     }
     const session = event.providerSession;
     if (
+      this.contextOwners.has(event.context.id) ||
       session &&
       (
+        this.providerSessionOwners.has(session.id) ||
         session.taskId !== event.taskId ||
         session.executionContextId !== event.context.id ||
         session.attemptId !== execution.attempt.id
@@ -202,11 +208,14 @@ export class TaskExecutionProjection {
       context: event.context,
       executionContexts: [...execution.executionContexts, event.context],
       providerSession: session,
+      providerObservationAt: event.observedAt ?? null,
       providerSessions: session
         ? [...execution.providerSessions, session]
         : execution.providerSessions,
       plannedAction: null,
     });
+    this.contextOwners.set(event.context.id, event.taskId);
+    if (session) this.providerSessionOwners.set(session.id, event.context.id);
   }
 
   private applyAttemptStarted(
@@ -217,6 +226,22 @@ export class TaskExecutionProjection {
       throw new TaskStorageError('internal');
     }
     this.replaceAttempt(execution, { ...execution.attempt, state: 'running' });
+  }
+
+  private applyProviderActionDecided(
+    event: Extract<ExecutionProjectionEvent, { type: 'ProviderSessionActionDecided' }>,
+  ): void {
+    if (event.outcome !== 'accepted' || event.decision === 'exact-reattach') return;
+    const execution = this.require(event.taskId);
+    const sources = execution.providerSessions.filter((session) =>
+      session.id === event.providerSessionId);
+    if (sources.length !== 1 || execution.acceptedProviderAction) {
+      throw new TaskStorageError('internal');
+    }
+    const acceptedProviderAction = acceptedProviderActionIdentity(
+      event, sources[0]!, execution.run.id,
+    );
+    this.replace(event.taskId, { ...execution, acceptedProviderAction });
   }
 
   private applySupersessionRequested(

@@ -1,3 +1,5 @@
+import { parseCanonicalUtcTimestamp } from './canonical-utc-timestamp';
+
 export const PROVIDER_OBSERVATION_SCHEMA = 'hariari.provider-observation' as const;
 export const RUNTIME_EVENT_SCHEMA = 'hariari.runtime.event' as const;
 export const EVENT_TIMELINE_SCHEMA_VERSION = 1 as const;
@@ -76,9 +78,11 @@ export interface EventTimelineStatus {
   readonly run: { readonly id: string } | null;
   readonly attempt: { readonly id: string; readonly state: EventTimelineLifecycleState } | null;
   readonly attempts: readonly { readonly id: string; readonly state: EventTimelineLifecycleState }[];
+  readonly executionContexts: readonly { readonly id: string }[];
   readonly providerSessions: readonly {
     readonly id: string;
     readonly attemptId: string;
+    readonly executionContextId: string;
   }[];
 }
 
@@ -408,10 +412,14 @@ function validateLifecycleStatus(
   const currentState = status.attempt?.state ?? (status.run ? 'starting' : 'ready');
   if (status.task.executionState !== currentState ||
     new Set(status.attempts.map((attempt) => attempt.id)).size !== status.attempts.length ||
+    new Set(status.executionContexts.map((context) => context.id)).size !==
+      status.executionContexts.length ||
     new Set(status.providerSessions.map((session) => session.id)).size !==
       status.providerSessions.length ||
     status.providerSessions.some((session) =>
-      !status.attempts.some((attempt) => attempt.id === session.attemptId))) fail();
+      status.attempts.filter((attempt) => attempt.id === session.attemptId).length !== 1 ||
+      status.executionContexts.filter((context) =>
+        context.id === session.executionContextId).length !== 1)) fail();
   if (status.attempt) {
     const current = status.attempts.find((attempt) => attempt.id === status.attempt?.id);
     if (!current || current.state !== status.attempt.state) fail();
@@ -624,9 +632,11 @@ function positiveInteger(value: unknown): number {
 }
 
 function timestamp(value: unknown): string {
-  const result = identifier(value);
-  if (!result.endsWith('Z') || !Number.isFinite(Date.parse(result))) fail();
-  return result;
+  try {
+    return parseCanonicalUtcTimestamp(value);
+  } catch {
+    fail();
+  }
 }
 
 function fail(): never {

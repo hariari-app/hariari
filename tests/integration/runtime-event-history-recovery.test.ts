@@ -42,8 +42,10 @@ describe('authenticated Runtime event history recovery', () => {
     verifiesTerminalRecovery,
   );
 
-  it('repairs a context-only Claude start before retry and across repeated restart',
-    verifiesContextOnlyRecovery);
+  it.each(['start', 'resume', 'fork'] as const)(
+    'preserves durable provider observation time for context-only %s recovery',
+    verifiesContextOnlyRecovery,
+  );
   it('repairs a raw-only Claude observation before publication', verifiesRawOnlyRecovery);
   it('repairs a core terminal state before publication without status masking',
     verifiesTerminalPublicationRepair);
@@ -63,9 +65,32 @@ describe('authenticated Runtime event history recovery', () => {
     'preserves durable %s occurrence time when normalized repair happens after restart',
     verifiesDurableLifecycleOccurrence,
   );
-  it('uses restart time only as the explicit fallback for a legacy untimed lifecycle record',
-    verifiesLegacyLifecycleOccurrenceFallback);
+  it('uses restart time only as the explicit fallback for a legacy untimed lifecycle record', verifiesLegacyLifecycleOccurrenceFallback);
+  it('uses restart time only for a legacy untimed provider context', verifiesLegacyProviderObservationFallback);
 });
+
+async function verifiesLegacyProviderObservationFallback(): Promise<void> {
+  let clock = Date.parse('2026-08-25T10:00:00.000Z');
+  const subject = await createSubject(() => new FakeClaudeCodeExecutionAdapter(), () => clock);
+  const runtime = await subject.connect();
+  const task = await runtime.createTask(taskRequest('legacy-provider-time-create'));
+  await runtime.startTask({ taskId: task.id, idempotencyKey: 'legacy-provider-time-start' });
+  const prefix = prefixThroughLast(subject.runtimeDirectory, 'ContextAllocated').map((record) => {
+    if (record.type !== 'ContextAllocated') return record;
+    const { observedAt: _legacyMissingTime, ...legacy } = record;
+    return legacy;
+  });
+  await runtime.disconnect();
+  await subject.stop();
+  rewriteTaskEvents(subject.runtimeDirectory, prefix);
+  const restartedAt = '2026-08-25T11:00:00.000Z';
+  clock = Date.parse(restartedAt);
+  await subject.restart();
+  const restarted = await subject.connect();
+  const timeline = await restarted.getTaskTimeline(task.id);
+  expect(timeline.normalizedEvents.find((event) => event.kind === 'provider-session-observed'))
+    .toMatchObject({ occurrenceAt: restartedAt, observedAt: restartedAt });
+}
 
 async function verifiesLegacyLifecycleOccurrenceFallback(): Promise<void> {
   let clock = Date.parse('2026-08-25T10:00:00.000Z');
@@ -201,33 +226,54 @@ function prefixThroughLastNormalizedStart(runtimeDirectory: string) {
   return events.slice(0, index + 1);
 }
 
-async function verifiesContextOnlyRecovery(): Promise<void> {
+async function verifiesContextOnlyRecovery(action: 'start' | 'resume' | 'fork'): Promise<void> {
+  let clock = Date.parse('2026-08-25T10:00:00.000Z');
   const adapter = new FakeClaudeCodeExecutionAdapter();
-  const subject = await createSubject(() => adapter);
-  const runtime = await subject.connectWithCorrelations([
-    'create-correlation', 'start-correlation', 'retry-correlation',
-  ]);
-  const request = taskRequest('context-recovery-create');
+  const subject = await createSubject(() => adapter, () => clock);
+  const runtime = await subject.connect();
+  const request = taskRequest(`context-recovery-${action}-create`);
   const task = await runtime.createTask(request);
-  const start = { taskId: task.id, idempotencyKey: 'context-recovery-start' };
-  const uninterrupted = await runtime.startTask(start);
-  const prefix = prefixThrough(subject.runtimeDirectory, 'ContextAllocated');
+  const parent = action === 'start' ? null : await runtime.startTask({
+    taskId: task.id, idempotencyKey: `context-recovery-${action}-parent`,
+  });
+  if (action === 'resume') adapter.lose(task.id);
+  const observedAt = '2026-08-25T10:30:00.000Z';
+  clock = Date.parse(observedAt);
+  const operationKey = `context-recovery-${action}-child`;
+  const uninterrupted = await callContextRecoveryAction(
+    runtime, action, task.id, parent?.providerSession?.id ?? null, operationKey,
+  );
+  const prefix = prefixThroughLast(subject.runtimeDirectory, 'ContextAllocated');
+  expect(prefix.at(-1)).toMatchObject({ observedAt });
   await runtime.disconnect();
   await subject.stop();
   rewriteTaskEvents(subject.runtimeDirectory, prefix);
+  clock = Date.parse('2026-08-25T11:00:00.000Z');
   await subject.restart();
   await subject.restart();
   const restarted = await subject.connect();
-  await expect(restarted.startTask(start)).resolves.toEqual(uninterrupted);
-  await expect(restarted.getTaskTimeline(task.id)).resolves.toMatchObject({
-    status: uninterrupted,
-    normalizedEvents: [
-      { kind: 'task-created' },
-      { kind: 'provider-session-observed' },
-      { kind: 'attempt-started' },
-    ],
+  const retried = callContextRecoveryAction(
+    restarted, action, task.id, parent?.providerSession?.id ?? null, operationKey,
+  );
+  await expect(retried).resolves.toEqual(uninterrupted);
+  const timeline = await restarted.getTaskTimeline(task.id);
+  expect(timeline.normalizedEvents.find((event) => event.kind === 'provider-session-observed' &&
+    event.attemptId === uninterrupted.attempt?.id)).toMatchObject({
+    occurrenceAt: observedAt, observedAt,
   });
-  expect(adapter.startCount(task.id)).toBe(1);
+  expect(adapter.startCount(task.id)).toBe(action === 'start' ? 1 : 2);
+}
+
+function callContextRecoveryAction(
+  runtime: RuntimeClientSession,
+  action: 'start' | 'resume' | 'fork',
+  taskId: string,
+  providerSessionId: string | null,
+  idempotencyKey: string,
+): Promise<TaskExecutionView> {
+  if (action === 'start') return runtime.startTask({ taskId, idempotencyKey });
+  if (!providerSessionId) throw new Error('missing provider session');
+  return callProviderAction(runtime, action, { taskId, providerSessionId, idempotencyKey });
 }
 
 async function verifiesRawOnlyRecovery(): Promise<void> {
@@ -569,6 +615,16 @@ function callProviderAction(
 function prefixThrough(runtimeDirectory: string, eventType: string) {
   const events = readTaskEvents(runtimeDirectory);
   const index = events.findIndex((event) => event.type === eventType);
+  if (index < 0) throw new Error(`missing ${eventType}`);
+  return events.slice(0, index + 1);
+}
+
+function prefixThroughLast(runtimeDirectory: string, eventType: string) {
+  const events = readTaskEvents(runtimeDirectory);
+  let index = -1;
+  for (const [candidate, event] of events.entries()) {
+    if (event.type === eventType) index = candidate;
+  }
   if (index < 0) throw new Error(`missing ${eventType}`);
   return events.slice(0, index + 1);
 }

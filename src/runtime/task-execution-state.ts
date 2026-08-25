@@ -19,6 +19,10 @@ import type {
 } from './task-events';
 import { isTerminalExecutionState } from './task-execution-rules';
 import { TaskStorageError } from './task-storage-error';
+import {
+  providerChildOperation,
+  type AcceptedProviderActionIdentity,
+} from './provider-action-identity';
 
 export interface StoredExecution {
   readonly taskId: string;
@@ -34,6 +38,8 @@ export interface StoredExecution {
   readonly executionContexts: readonly StoredContext[];
   readonly providerSession: StoredProviderSession | null;
   readonly providerSessions: readonly StoredProviderSession[];
+  readonly providerObservationAt: string | null;
+  readonly acceptedProviderAction: AcceptedProviderActionIdentity | null;
   readonly supersession: {
     readonly actionKey: string;
     readonly reason: 'native-resume' | 'fork';
@@ -90,6 +96,8 @@ export function executionFromRun(event: RunCreatedEvent): StoredExecution {
     executionContexts: [],
     providerSession: null,
     providerSessions: [],
+    providerObservationAt: null,
+    acceptedProviderAction: null,
     supersession: null,
     plannedAction: null,
     cancellation: null,
@@ -100,6 +108,7 @@ export function resumeExecution(
   execution: StoredExecution,
   event: AttemptResumedEvent,
 ): StoredExecution {
+  const operation = providerChildOperation(execution.acceptedProviderAction, event);
   if (
     !execution.attempt ||
     execution.attempt.id !== event.sourceAttemptId ||
@@ -114,6 +123,8 @@ export function resumeExecution(
     attempts: [...execution.attempts, event.attempt],
     context: null,
     providerSession: null,
+    providerObservationAt: null,
+    acceptedProviderAction: null,
     cancellation: null,
     supersession: null,
     plannedAction: {
@@ -123,10 +134,9 @@ export function resumeExecution(
       sourceSessionId: event.sourceSessionId,
       plannedContext: event.plannedContext,
     },
-    currentOperationKey: event.actionKey,
-    currentCorrelationId: event.correlationId,
-    attemptOperations: [...execution.attemptOperations,
-      attemptOperation(execution, event.attempt.id, event.actionKey, event.correlationId)],
+    currentOperationKey: operation.idempotencyKey,
+    currentCorrelationId: operation.correlationId,
+    attemptOperations: [...execution.attemptOperations, operation],
   };
 }
 
@@ -170,6 +180,7 @@ export function abortProviderActionExecution(execution: StoredExecution): Stored
     attempt,
     attempts: execution.attempts.map((stored) => stored.id === attempt.id ? attempt : stored),
     supersession: null,
+    acceptedProviderAction: null,
   };
 }
 
@@ -237,6 +248,7 @@ export function forkExecution(
   execution: StoredExecution,
   event: AttemptForkedEvent,
 ): StoredExecution {
+  const operation = providerChildOperation(execution.acceptedProviderAction, event);
   if (
     !execution.attempt ||
     !execution.context ||
@@ -259,12 +271,13 @@ export function forkExecution(
     ],
     context: null,
     providerSession: null,
+    providerObservationAt: null,
+    acceptedProviderAction: null,
     cancellation: null,
     supersession: null,
-    currentOperationKey: event.forkKey,
-    currentCorrelationId: event.correlationId,
-    attemptOperations: [...execution.attemptOperations,
-      attemptOperation(execution, event.attempt.id, event.forkKey, event.correlationId)],
+    currentOperationKey: operation.idempotencyKey,
+    currentCorrelationId: operation.correlationId,
+    attemptOperations: [...execution.attemptOperations, operation],
     plannedAction: event.plannedContext
       ? {
           kind: 'fork',

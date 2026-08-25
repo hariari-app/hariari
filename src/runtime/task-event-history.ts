@@ -15,6 +15,11 @@ import type {
   TaskCreatedEvent,
   TaskEvent,
 } from './task-events';
+import {
+  acceptedProviderActionIdentity,
+  providerChildOperation,
+  type AcceptedProviderActionIdentity,
+} from './provider-action-identity';
 
 type RepairableEvent = Extract<TaskEvent, {
   type: 'RawProviderObservationRecorded' | 'NormalizedRuntimeEventRecorded' | 'AttemptStarted';
@@ -42,6 +47,16 @@ interface TaskHistoryAnalysis {
   readonly task: TaskCreatedEvent;
   readonly attempts: readonly AttemptHistory[];
   readonly normalized: readonly NormalizedRuntimeEventView[];
+}
+
+interface HistoryScan {
+  readonly attempts: AttemptHistory[];
+  readonly attemptsById: Map<string, AttemptHistory>;
+  readonly sessions: Map<string, AttemptHistory>;
+  readonly acceptedActions: Map<string, AcceptedProviderActionIdentity>;
+  readonly normalized: NormalizedRuntimeEventView[];
+  operation: OperationIdentity | null;
+  current: AttemptHistory | null;
 }
 
 interface NormalizedDescriptor {
@@ -76,6 +91,8 @@ export class TaskEventHistory {
 
   nextRepair(taskId: string, now: string): RepairableEvent | null {
     const analysis = this.analyze(taskId);
+    const descriptors = normalizedDescriptors(analysis);
+    assertNormalizedPrefix(analysis.normalized, descriptors);
     const missingObservation = analysis.attempts.find((attempt) =>
       attempt.context?.providerSession && !attempt.observation);
     if (missingObservation) {
@@ -85,8 +102,6 @@ export class TaskEventHistory {
       return recoveredObservation(missingObservation, now);
     }
 
-    const descriptors = normalizedDescriptors(analysis);
-    assertNormalizedPrefix(analysis.normalized, descriptors);
     if (analysis.normalized.length < descriptors.length) {
       return {
         type: 'NormalizedRuntimeEventRecorded',
@@ -128,51 +143,85 @@ export class TaskEventHistory {
     const taskEvents = this.events.filter((event) => eventTaskId(event) === taskId);
     const task = taskEvents.find((event): event is TaskCreatedEvent => event.type === 'TaskCreated');
     if (!task) throw new TaskEventHistoryError();
-    const attempts: AttemptHistory[] = [];
-    const attemptsById = new Map<string, AttemptHistory>();
-    const sessions = new Map<string, AttemptHistory>();
-    const normalized: NormalizedRuntimeEventView[] = [];
-    let operation: OperationIdentity | null = null;
-    let current: AttemptHistory | null = null;
-    for (const event of taskEvents) {
-      if (event.type === 'RunCreated') {
-        operation = operationIdentity(event.run.id, event.idempotencyKey, event.correlationId);
-      } else if (event.type === 'AttemptCreated') {
-        current = addAttempt(event.attempt.id, operation, attempts, attemptsById);
-      } else if (event.type === 'AttemptResumed') {
-        operation = operationIdentity(requiredRun(operation), event.actionKey, event.correlationId);
-        current = addAttempt(event.attempt.id, operation, attempts, attemptsById);
-      } else if (event.type === 'AttemptForked') {
-        operation = operationIdentity(requiredRun(operation), event.forkKey, event.correlationId);
-        current = addAttempt(event.attempt.id, operation, attempts, attemptsById);
-      } else if (event.type === 'ContextAllocated') {
-        current = requiredAttempt(current);
-        current.context = event;
-        if (event.providerSession) sessions.set(event.providerSession.id, current);
-      } else if (event.type === 'RawProviderObservationRecorded') {
-        const owner = sessions.get(event.providerSessionId) ?? requiredAttempt(current);
-        if (owner.observation) throw new TaskEventHistoryError();
-        owner.observation = event;
-      } else if (event.type === 'AttemptStarted') {
-        current = requiredAttempt(current);
-        if (current.started) throw new TaskEventHistoryError();
-        current.started = event;
-      } else if (event.type === 'CancellationRequested') {
-        current = requiredAttempt(current);
-        if (current.cancellation) throw new TaskEventHistoryError();
-        current.cancellation = event;
-      } else if (event.type === 'AttemptCompleted') {
-        setTerminal(requiredAttempt(current), event);
-      } else if (event.type === 'AttemptFailed') {
-        setTerminal(requiredAttempt(current), event);
-      } else if (event.type === 'AttemptCancelled') {
-        setTerminal(requiredAttempt(current), event);
-      } else if (event.type === 'NormalizedRuntimeEventRecorded') {
-        normalized.push(event.event);
-      }
-    }
-    return { task, attempts, normalized };
+    const scan: HistoryScan = { attempts: [], attemptsById: new Map(), sessions: new Map(),
+      acceptedActions: new Map(), normalized: [], operation: null, current: null };
+    for (const event of taskEvents) acceptHistoryEvent(scan, event, taskId);
+    return { task, attempts: scan.attempts, normalized: scan.normalized };
   }
+}
+
+function acceptHistoryEvent(scan: HistoryScan, event: TaskEvent, taskId: string): void {
+  if (event.type === 'RunCreated') {
+    scan.operation = operationIdentity(event.run.id, event.idempotencyKey, event.correlationId);
+  } else if (event.type === 'AttemptCreated') {
+    scan.current = addAttempt(event.attempt.id, scan.operation, scan.attempts, scan.attemptsById);
+  } else if (event.type === 'ProviderSessionActionDecided') {
+    acceptProviderDecision(scan, event);
+  } else if (event.type === 'AttemptResumed' || event.type === 'AttemptForked') {
+    acceptProviderChild(scan, event);
+  } else if (event.type === 'ContextAllocated') {
+    acceptContext(scan, event, taskId);
+  } else if (event.type === 'RawProviderObservationRecorded') {
+    acceptObservation(scan, event);
+  } else if (event.type === 'AttemptStarted') {
+    const current = requiredAttempt(scan.current);
+    if (current.started) throw new TaskEventHistoryError();
+    current.started = event;
+  } else if (event.type === 'CancellationRequested') {
+    const current = requiredAttempt(scan.current);
+    if (current.cancellation) throw new TaskEventHistoryError();
+    current.cancellation = event;
+  } else if (event.type === 'AttemptCompleted' || event.type === 'AttemptFailed' ||
+    event.type === 'AttemptCancelled') {
+    setTerminal(requiredAttempt(scan.current), event);
+  } else if (event.type === 'NormalizedRuntimeEventRecorded') {
+    scan.normalized.push(event.event);
+  }
+}
+
+function acceptProviderDecision(
+  scan: HistoryScan,
+  event: Extract<TaskEvent, { type: 'ProviderSessionActionDecided' }>,
+): void {
+  const owner = scan.sessions.get(event.providerSessionId);
+  const runId = event.outcome === 'accepted' && event.decision !== 'exact-reattach'
+    ? requiredRun(scan.operation) : '';
+  const accepted = acceptedProviderActionIdentity(
+    event, owner?.context?.providerSession ?? null, runId,
+  );
+  if (!accepted) return;
+  if (scan.acceptedActions.has(accepted.actionKey)) throw new TaskEventHistoryError();
+  scan.acceptedActions.set(accepted.actionKey, accepted);
+}
+
+function acceptProviderChild(
+  scan: HistoryScan,
+  event: Extract<TaskEvent, { type: 'AttemptResumed' | 'AttemptForked' }>,
+): void {
+  const key = event.type === 'AttemptResumed' ? event.actionKey : event.forkKey;
+  const operation = providerChildOperation(scan.acceptedActions.get(key) ?? null, event);
+  scan.acceptedActions.delete(key);
+  scan.operation = operationIdentity(operation.runId, operation.idempotencyKey,
+    operation.correlationId);
+  scan.current = addAttempt(event.attempt.id, scan.operation, scan.attempts, scan.attemptsById);
+}
+
+function acceptContext(scan: HistoryScan, event: ContextAllocatedEvent, taskId: string): void {
+  const current = requiredAttempt(scan.current);
+  const session = event.providerSession;
+  if (current.context || (session && (session.taskId !== taskId ||
+    session.attemptId !== current.id || session.executionContextId !== event.context.id ||
+    scan.sessions.has(session.id)))) throw new TaskEventHistoryError();
+  current.context = event;
+  if (session) scan.sessions.set(session.id, current);
+}
+
+function acceptObservation(scan: HistoryScan, event: RawProviderObservationRecordedEvent): void {
+  const owner = scan.sessions.get(event.providerSessionId);
+  if (!owner || owner.observation || event.idempotencyKey !== owner.operation.idempotencyKey ||
+    (owner.context?.observedAt !== undefined &&
+      event.observation.observedAt !== owner.context.observedAt)) throw new TaskEventHistoryError();
+  owner.observation = event;
 }
 
 function addAttempt(
@@ -350,7 +399,7 @@ function recoveredObservation(attempt: AttemptHistory, now: string): RepairableE
     taskId: session.taskId,
     providerSessionId: session.id,
     idempotencyKey: attempt.operation.idempotencyKey,
-    observedAt: now,
+    observedAt: attempt.context?.observedAt ?? now,
     evidence: {
       provider: session.provider,
       kind: 'provider-session-observed',

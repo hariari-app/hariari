@@ -19,6 +19,7 @@ import {
   type TaskTimelineView,
 } from '../shared/runtime/runtime-interface';
 import { parseTaskTimeline as parseCanonicalTaskTimeline } from '../shared/runtime/event-timeline-contract';
+import { parseCanonicalUtcTimestamp } from '../shared/runtime/canonical-utc-timestamp';
 import {
   RUNTIME_HANDSHAKE_VERSION,
   RUNTIME_HEALTH_OPERATION,
@@ -326,11 +327,28 @@ export function parseTaskExecutionView(value: Record<string, unknown>): TaskExec
   if (executionState !== 'starting' && executionState !== 'ready' && attempt === null) invalid();
   if (providerSession && (!attempt || !context || providerSession.attemptId !== attempt.id || providerSession.executionContextId !== context.id)) invalid();
   if ((attempt === null) !== (attempts.length === 0) || (attempt && !attempts.some((entry) => entry.id === attempt.id))) invalid();
-  if (providerSession && !providerSessions.some((entry) => entry.id === providerSession.id)) invalid();
+  assertExecutionOwnership(attempts, executionContexts, providerSessions);
+  if ((context && executionContexts.filter((entry) => entry.id === context.id).length !== 1) ||
+    (providerSession && providerSessions.filter((entry) => entry.id === providerSession.id).length !== 1)) {
+    invalid();
+  }
   return {
     task: { ...task, executionState }, run, attempt, attempts, context,
     executionContexts, providerSession, providerSessions,
   };
+}
+
+function assertExecutionOwnership(
+  attempts: TaskExecutionView['attempts'],
+  contexts: TaskExecutionView['executionContexts'],
+  sessions: TaskExecutionView['providerSessions'],
+): void {
+  if (new Set(attempts.map((attempt) => attempt.id)).size !== attempts.length ||
+    new Set(contexts.map((context) => context.id)).size !== contexts.length ||
+    new Set(sessions.map((session) => session.id)).size !== sessions.length) invalid();
+  if (sessions.some((session) =>
+    attempts.filter((attempt) => attempt.id === session.attemptId).length !== 1 ||
+    contexts.filter((context) => context.id === session.executionContextId).length !== 1)) invalid();
 }
 
 export function parseTaskTimelineView(value: Record<string, unknown>): TaskTimelineView {
@@ -536,9 +554,11 @@ function positiveInteger(value: unknown): number {
 }
 
 function timestamp(value: unknown): string {
-  const result = boundedString(value, RUNTIME_IDENTIFIER_MAX_LENGTH);
-  if (!result.endsWith('Z') || !Number.isFinite(Date.parse(result))) invalid();
-  return result;
+  try {
+    return parseCanonicalUtcTimestamp(value);
+  } catch {
+    invalid();
+  }
 }
 
 function shutdownReason(value: unknown): RuntimeShutdownRequest['reason'] {
